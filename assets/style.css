@@ -13,6 +13,7 @@
     --text-muted: #5b6b7d;
     --header-h: 58px;
     --footer-h: 44px;
+    --page-pad: 18px;   /* Seitenabstand des Tab-Bereichs */
 }
 
 * { box-sizing: border-box; }
@@ -77,19 +78,27 @@ html, body {
 
 /* ---------------------------------------------------------------- Main */
 .app-main {
-    padding: calc(var(--header-h) + 20px) 24px calc(var(--footer-h) + 24px);
+    /* Seitenabstand bewusst schmal: die Tabelle soll die volle Breite nutzen.
+       Dieses Padding ist zugleich der "leichte Abstand zum linken Rand". */
+    padding: calc(var(--header-h) + 20px) var(--page-pad) calc(var(--footer-h) + 24px);
     min-height: 100vh;
 }
-.tab-content { max-width: 1400px; margin: 0 auto; }
+/* Volle Seitenbreite (früher zentriert auf max-width) */
+.tab-content { width: 100%; }
 
 /* ---------------------------------------------------------------- KPI-Kacheln */
 .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    /* Flex statt Grid: die Kacheln behalten ihre Breite und sammeln sich
+       links, statt sich über die ganze Zeile zu strecken. */
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
     gap: 16px;
     margin-bottom: 22px;
 }
 .kpi-tile {
+    flex: 0 0 auto;
+    min-width: 190px;
     border: none;
     border-radius: 14px;
     padding: 18px 20px;
@@ -108,6 +117,20 @@ html, body {
 .kpi-tile:active { transform: translateY(0); }
 .kpi-value { font-size: 32px; font-weight: 800; line-height: 1.1; }
 .kpi-label { font-size: 13px; opacity: 0.95; margin-top: 6px; }
+
+/* Aktive Kachel = deren Filter gerade greift. Erneuter Klick hebt ihn auf.
+   Nach den :hover-Regeln definiert, damit der Ring beim Hovern bestehen bleibt. */
+.kpi-tile--active,
+.kpi-tile--active:hover {
+    box-shadow: 0 0 0 2px var(--bg),
+                0 0 0 4px var(--primary-dark),
+                0 4px 14px rgba(0, 0, 0, 0.22);
+}
+.kpi-tile--active .kpi-label::after {
+    content: " ×";
+    font-weight: 700;
+    opacity: 0.85;
+}
 
 /* ---------------------------------------------------------------- Tabellenkarte */
 .table-card {

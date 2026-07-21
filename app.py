@@ -57,6 +57,9 @@ def serve_layout() -> html.Div:
             dcc.Store(id=IDS.STORE_FILTERS, storage_type="session"),
             dcc.Store(id=IDS.STORE_ACTIVE_TAB, storage_type="session",
                       data=IDS.TAB_OVERVIEW),
+            # Wird von assets/empty_click.js gesetzt (Klick auf leere Fläche).
+            # Bewusst "memory": ein Klick ist ein Ereignis, kein Zustand.
+            dcc.Store(id=IDS.STORE_EMPTY_CLICK),
             # ---- geteiltes Chrome ----
             header_layout(),
             nav_sidebar(),

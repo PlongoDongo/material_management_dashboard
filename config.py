@@ -64,6 +64,7 @@ class IDS:
     # Stores (zentraler, persistenter State)
     STORE_FILTERS = "store-filters"       # kanonischer Filterzustand (session)
     STORE_ACTIVE_TAB = "store-active-tab" # aktiver Tab (session)
+    STORE_EMPTY_CLICK = "store-empty-click"  # Klick auf leere Fläche (assets/empty_click.js)
 
     # Tabs (Footer)
     TAB_OVERVIEW = "data-overview"

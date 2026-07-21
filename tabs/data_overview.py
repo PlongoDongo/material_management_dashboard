@@ -64,6 +64,33 @@ def _table_columns():
     return cols
 
 
+# Mindestbreite je Spalte (px). Summe = Breite, ab der horizontal gescrollt
+# wird; darüber verteilen sich die Spalten auf die volle Tabellenbreite.
+_COL_MIN_WIDTH = {
+    "material_nr": 130,
+    "bezeichnung": 220,
+    "warengruppe": 160,
+    "werk": 140,
+    "status": 150,
+    "einheit": 90,
+    "bestand": 110,
+    "geaendert": 120,
+}
+
+
+def _column_width_conditional():
+    """Pro Spalte eine Mindestbreite -> erzwingt bei Bedarf den Scrollbalken."""
+    styles = []
+    for c in COLUMNS:
+        styles.append({
+            "if": {"column_id": c},
+            "minWidth": f"{_COL_MIN_WIDTH[c]}px",
+            "width": f"{_COL_MIN_WIDTH[c]}px",
+        })
+    styles.append({"if": {"column_id": "bestand"}, "textAlign": "right"})
+    return styles
+
+
 def _status_style_conditional():
     """Färbt den Status-Text passend zur Statusfarbe (Punkt-Ersatz)."""
     from config import STATUS_COLORS
@@ -86,7 +113,10 @@ def material_table() -> dash_table.DataTable:
         page_size=15,
         sort_action="native",
         style_as_list_view=True,
-        style_table={"overflowX": "auto"},
+        # width 100% + minWidth 100%: die Tabelle füllt die Karte aus; passen
+        # die Spalten (s. _COL_MIN_WIDTH) nicht mehr hinein, scrollt sie
+        # horizontal INNERHALB der Karte statt die Seite zu verbreitern.
+        style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
         style_header={
             "backgroundColor": "#f4f7fa",
             "fontWeight": "700",
@@ -104,10 +134,13 @@ def material_table() -> dash_table.DataTable:
             "borderBottom": "1px solid #eef1f4",
             "color": "#1b2733",
             "textAlign": "left",
+            # Kein Umbruch -> Spalten behalten ihre Breite, statt sich beim
+            # Schrumpfen mehrzeilig zu stapeln.
+            "whiteSpace": "nowrap",
+            "overflow": "hidden",
+            "textOverflow": "ellipsis",
         },
-        style_cell_conditional=[
-            {"if": {"column_id": "bestand"}, "textAlign": "right"},
-        ],
+        style_cell_conditional=_column_width_conditional(),
         style_data_conditional=_status_style_conditional(),
     )
 
