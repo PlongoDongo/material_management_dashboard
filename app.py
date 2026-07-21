@@ -36,6 +36,7 @@ from tabs.manage_data import manage_data_content
 from tabs.apply_mappings import apply_mappings_content
 from callbacks.filter_callbacks import register_filter_callbacks
 from callbacks.tab_callbacks import register_tab_callbacks
+from kpi.kpi_rules import kpi_filter_map
 
 app = Dash(__name__, title=APP_TITLE, suppress_callback_exceptions=True)
 server = app.server  # für Gunicorn / Deployment
@@ -60,6 +61,10 @@ def serve_layout() -> html.Div:
             # Wird von assets/empty_click.js gesetzt (Klick auf leere Fläche).
             # Bewusst "memory": ein Klick ist ein Ereignis, kein Zustand.
             dcc.Store(id=IDS.STORE_EMPTY_CLICK),
+            # Statische Regeltabelle für assets/kpi_highlight.js. Damit kennt
+            # der Browser die KPI-Filter, ohne sie beim Server nachzufragen --
+            # die Regel selbst bleibt in kpi/kpi_rules.py.
+            dcc.Store(id=IDS.STORE_KPI_FILTERS, data=kpi_filter_map()),
             # ---- geteiltes Chrome ----
             header_layout(),
             nav_sidebar(),

@@ -65,6 +65,7 @@ class IDS:
     STORE_FILTERS = "store-filters"       # kanonischer Filterzustand (session)
     STORE_ACTIVE_TAB = "store-active-tab" # aktiver Tab (session)
     STORE_EMPTY_CLICK = "store-empty-click"  # Klick auf leere Fläche (assets/empty_click.js)
+    STORE_KPI_FILTERS = "store-kpi-filters"  # KPI-Regeln für assets/kpi_highlight.js
 
     # Tabs (Footer)
     TAB_OVERVIEW = "data-overview"

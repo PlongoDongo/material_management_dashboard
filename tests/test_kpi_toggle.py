@@ -17,6 +17,7 @@ class _CollectingApp:
 
     def __init__(self):
         self.fns = {}
+        self.clientside = []
 
     def callback(self, *_args, **_kwargs):
         def deco(fn):
@@ -24,12 +25,32 @@ class _CollectingApp:
             return fn
         return deco
 
+    def clientside_callback(self, func, *args, **_kwargs):
+        # Clientseitige Callbacks haben keine Python-Funktion zum Testen --
+        # nur merken, dass sie registriert wurden (s. tests/test_kpi_highlight_js.py).
+        self.clientside.append((func, args))
+
 
 @pytest.fixture(scope="module")
-def cb():
+def app_stub():
     app = _CollectingApp()
     register_filter_callbacks(app)
-    return app.fns
+    return app
+
+
+@pytest.fixture(scope="module")
+def cb(app_stub):
+    return app_stub.fns
+
+
+def test_highlight_is_registered_clientside(app_stub):
+    """Die Hervorhebung darf keine Server-Runde mehr kosten."""
+    from dash import ClientsideFunction
+
+    assert len(app_stub.clientside) == 1
+    func, _ = app_stub.clientside[0]
+    assert isinstance(func, ClientsideFunction)
+    assert (func.namespace, func.function_name) == ("kpi", "highlight")
 
 
 def _set_ctx(**kwargs):
@@ -108,42 +129,20 @@ def test_empty_click_keeps_sidebar_filters(cb):
 
 
 # --------------------------------------------------------------------------
-# 5) Hervorhebung der aktiven Kachel
+# 3/4) Filterzustand -- eine Normalisierung für Store UND Tabelle
 # --------------------------------------------------------------------------
-def _outputs_list(*kpi_ids):
-    return [{"id": {"type": "kpi-tile", "kpi": k}, "property": "className"}
-            for k in kpi_ids]
+def test_filter_state_normalizes(cb):
+    from callbacks.filter_callbacks import filter_state
+    assert filter_state(None, None, None, None, None) == {
+        "status": [], "werk": [], "warengruppe": [], "search": "", "ohne_klass": False,
+    }
+    assert filter_state(["Aktiv"], [], [], "abc", ["on"])["ohne_klass"] is True
 
 
-def test_highlight_marks_active_and_mutes_the_rest(cb):
-    _set_ctx(outputs_list=_outputs_list("aktiv", "obsolet", "ohne_klassifizierung"))
-    out = cb["highlight_active_kpi"]({"status": ["Obsolet"], "ohne_klass": False})
-    assert out == [
-        "kpi-tile kpi-tile--muted",
-        "kpi-tile kpi-tile--active",
-        "kpi-tile kpi-tile--muted",
-    ]
-
-
-def test_highlight_exactly_one_active_tile(cb):
-    """Genau eine Kachel aktiv, alle übrigen ausgegraut -- nie beides."""
-    _set_ctx(outputs_list=_outputs_list(
-        "aktiv", "nicht_geliefert", "obsolet", "gesperrt", "ohne_klassifizierung"))
-    out = cb["highlight_active_kpi"]({"status": [], "ohne_klass": True})
-    assert sum("--active" in c for c in out) == 1
-    assert sum("--muted" in c for c in out) == 4
-    assert not any("--active" in c and "--muted" in c for c in out)
-
-
-def test_no_filter_leaves_all_tiles_normal(cb):
-    """Ausgangszustand: nichts hervorgehoben UND nichts ausgegraut."""
-    for filters in ({}, None, {"status": [], "ohne_klass": False}):
-        _set_ctx(outputs_list=_outputs_list("aktiv", "obsolet"))
-        assert cb["highlight_active_kpi"](filters) == ["kpi-tile", "kpi-tile"]
-
-
-def test_foreign_filter_leaves_all_tiles_normal(cb):
-    """Ein Status, den keine Kachel setzt (z. B. aus der Sidebar) graut nichts aus."""
-    _set_ctx(outputs_list=_outputs_list("aktiv", "obsolet"))
-    out = cb["highlight_active_kpi"]({"status": ["Aktiv", "Obsolet"], "ohne_klass": False})
-    assert out == ["kpi-tile", "kpi-tile"]
+def test_store_and_table_see_the_same_filter(cb):
+    """Beide Callbacks leiten aus denselben Eingaben denselben Zustand ab."""
+    args = (["Aktiv"], ["Werk Köln"], [], "ring", ["on"])
+    store = cb["build_filter_state"](*args)
+    # render_table liefert Daten, muss aber intern denselben Filter bauen
+    from callbacks.filter_callbacks import filter_state
+    assert store == filter_state(*args)

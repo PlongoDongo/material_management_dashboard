@@ -95,6 +95,16 @@ KPI_DEFINITIONS = [
 ]
 
 
+def kpi_filter_map() -> dict[str, dict]:
+    """KPI-ID -> Filter-Update.
+
+    Wird an zwei Stellen gebraucht: serverseitig für den Toggle und -- über
+    einen Store -- clientseitig für die Hervorhebung der Kacheln. Beide holen
+    sich die Regel hier ab, damit es nur EINE Wahrheit gibt.
+    """
+    return {k["id"]: k["filter"] for k in KPI_DEFINITIONS}
+
+
 def compute_kpis(df: pl.DataFrame) -> list[dict]:
     """Berechnet alle KPI-Werte für den übergebenen Datensatz.
 

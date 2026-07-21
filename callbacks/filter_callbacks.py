@@ -3,9 +3,11 @@ Filter-Callbacks -- das Herzstück der Filter-/KPI-Interaktion.
 
 Datenfluss (bewusst zyklusfrei):
 
-    [Filter-Steuerelemente]  ──►  store-filters  ──►  [Tabelle + Zähler]
-            ▲   ▲   ▲                      │
-            │   │   │                      └─────►  [aktive KPI-Kachel]
+                                     ┌──►  store-filters   (kanonisch, session)
+                                     │
+    [Filter-Steuerelemente]  ─────────┼──►  [Tabelle + Zähler]
+            ▲   ▲   ▲                │
+            │   │   │                └──►  [KPI-Kacheln aktiv/inaktiv]  ← im Browser
             │   │   └──── Klick auf KPI-Kachel  (setzt Status/Flag,
             │   │                                erneuter Klick hebt auf)
             │   └──────── Klick auf leere Fläche (hebt den KPI-Filter auf)
@@ -13,23 +15,52 @@ Datenfluss (bewusst zyklusfrei):
 
 Die Steuerelemente in der rechten Sidebar sind die einzige Wahrheitsquelle
 des Filters. KPI-Klick und Reset schreiben NUR in diese Steuerelemente; von
-dort fließt es weiter in den Store und in die Tabelle. Dadurch gibt es keinen
-Rückkanal Store -> Steuerelement und damit keinen Callback-Zyklus.
+dort fließt es weiter. Dadurch gibt es keinen Rückkanal zurück in die
+Steuerelemente und damit keinen Callback-Zyklus.
 
-Der Store fließt zusätzlich in die *Darstellung* der Kacheln (welche ist
-aktiv?) -- das ist eine Sackgasse und schließt den Kreis nicht.
+Zur Latenz: Store, Tabelle und Kacheln hängen alle DIREKT an den
+Steuerelementen und laufen damit parallel. Früher war es eine Kette
+(Steuerelement -> Store -> Tabelle -> Kacheln); jede Stufe kostete eine
+eigene Server-Runde, was sich beim Klick als spürbare Verzögerung summierte.
+Die Kachel-Hervorhebung ist reine Darstellung und läuft clientseitig -- also
+ganz ohne Server-Runde (assets/kpi_highlight.js).
 """
 from __future__ import annotations
 
-from dash import ALL, Input, Output, State, ctx, no_update
+from dash import ALL, ClientsideFunction, Input, Output, State, ctx, no_update
 
 from config import IDS
 from data.filtering import apply_filters
 from data.repository import get_materials
-from kpi.kpi_rules import KPI_DEFINITIONS
+from kpi.kpi_rules import kpi_filter_map
 
 # Schneller Lookup: KPI-ID -> Filter-Update
-_KPI_FILTER = {k["id"]: k["filter"] for k in KPI_DEFINITIONS}
+_KPI_FILTER = kpi_filter_map()
+
+# Die fünf Steuerelemente, aus denen sich der Filter zusammensetzt. Store und
+# Tabelle hängen beide direkt hier dran, damit sie parallel laufen.
+_FILTER_INPUTS = (
+    Input(IDS.F_STATUS, "value"),
+    Input(IDS.F_WERK, "value"),
+    Input(IDS.F_WARENGRUPPE, "value"),
+    Input(IDS.F_SEARCH, "value"),
+    Input(IDS.F_OHNE_KLASS, "value"),
+)
+
+
+def filter_state(status, werk, warengruppe, search, ohne_klass) -> dict:
+    """Steuerelement-Werte -> kanonischer Filterzustand.
+
+    Eine Funktion für beide Verbraucher (Store und Tabelle), damit die
+    Normalisierung nicht auseinanderlaufen kann.
+    """
+    return {
+        "status": status or [],
+        "werk": werk or [],
+        "warengruppe": warengruppe or [],
+        "search": search or "",
+        "ohne_klass": bool(ohne_klass),  # ["on"] -> True, [] -> False
+    }
 
 
 def _kpi_is_active(kpi_id: str, status, ohne_klass) -> bool:
@@ -123,57 +154,47 @@ def register_filter_callbacks(app) -> None:
     # ---------------------------------------------------------------
     @app.callback(
         Output(IDS.STORE_FILTERS, "data"),
-        Input(IDS.F_STATUS, "value"),
-        Input(IDS.F_WERK, "value"),
-        Input(IDS.F_WARENGRUPPE, "value"),
-        Input(IDS.F_SEARCH, "value"),
-        Input(IDS.F_OHNE_KLASS, "value"),
+        *_FILTER_INPUTS,
     )
     def build_filter_state(status, werk, warengruppe, search, ohne_klass):
-        return {
-            "status": status or [],
-            "werk": werk or [],
-            "warengruppe": warengruppe or [],
-            "search": search or "",
-            "ohne_klass": bool(ohne_klass),  # ["on"] -> True, [] -> False
-        }
+        return filter_state(status, werk, warengruppe, search, ohne_klass)
 
     # ---------------------------------------------------------------
-    # 4) Filterzustand  ->  gefilterte Tabelle + Datensatz-Zähler
+    # 4) Steuerelemente  ->  gefilterte Tabelle + Datensatz-Zähler
+    #
+    #    Hängt bewusst an den Steuerelementen und NICHT am Store: sonst
+    #    wäre die Kette Klick -> Filter -> Store -> Tabelle drei serielle
+    #    Server-Runden lang. So laufen Store und Tabelle parallel, und die
+    #    Tabelle ist eine Runde früher da. `store-filters` bleibt der
+    #    kanonische, session-persistente Zustand -- die Tabelle wartet nur
+    #    nicht mehr darauf.
     # ---------------------------------------------------------------
     @app.callback(
         Output(IDS.TABLE, "data"),
         Output(IDS.RECORD_COUNTER, "children"),
-        Input(IDS.STORE_FILTERS, "data"),
+        *_FILTER_INPUTS,
     )
-    def render_table(filters):
+    def render_table(status, werk, warengruppe, search, ohne_klass):
+        filters = filter_state(status, werk, warengruppe, search, ohne_klass)
         df_all = get_materials()
         df = apply_filters(df_all, filters)
         counter = f"{df.height} / {df_all.height} Datensätze"
         return df.to_dicts(), counter
 
     # ---------------------------------------------------------------
-    # 5) Filterzustand  ->  aktive KPI-Kachel hervorheben
-    #    Reine Anzeige (Store -> className), schreibt nicht in die
-    #    Steuerelemente zurück -> kein Zyklus. Macht den Toggle sichtbar.
+    # 5) Steuerelemente  ->  aktive/inaktive KPI-Kacheln   (CLIENTSEITIG)
+    #
+    #    Reine Darstellung, also im Browser statt auf dem Server: die
+    #    Kacheln schalten um, sobald der Klick-Callback zurück ist, ohne
+    #    eine weitere Server-Runde und ohne auf das Neurendern der
+    #    DataTable zu warten. Die Regel (welcher Filter zu welcher Kachel
+    #    gehört) reicht `store-kpi-filters` aus kpi/kpi_rules.py herein.
+    #    Implementierung: assets/kpi_highlight.js
     # ---------------------------------------------------------------
-    @app.callback(
+    app.clientside_callback(
+        ClientsideFunction(namespace="kpi", function_name="highlight"),
         Output({"type": "kpi-tile", "kpi": ALL}, "className"),
-        Input(IDS.STORE_FILTERS, "data"),
+        Input(IDS.F_STATUS, "value"),
+        Input(IDS.F_OHNE_KLASS, "value"),
+        State(IDS.STORE_KPI_FILTERS, "data"),
     )
-    def highlight_active_kpi(filters):
-        filters = filters or {}
-        status = filters.get("status") or []
-        ohne_klass = filters.get("ohne_klass")
-        active = [
-            _kpi_is_active(spec["id"]["kpi"], status, ohne_klass)
-            for spec in ctx.outputs_list
-        ]
-        # Ohne aktive Kachel bleiben alle im Normalzustand -- sonst sähe das
-        # Dashboard im Ausgangszustand dauerhaft "deaktiviert" aus.
-        if not any(active):
-            return ["kpi-tile"] * len(active)
-        return [
-            "kpi-tile kpi-tile--active" if a else "kpi-tile kpi-tile--muted"
-            for a in active
-        ]
