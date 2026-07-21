@@ -165,9 +165,15 @@ def register_filter_callbacks(app) -> None:
         filters = filters or {}
         status = filters.get("status") or []
         ohne_klass = filters.get("ohne_klass")
-        return [
-            "kpi-tile kpi-tile--active"
-            if _kpi_is_active(spec["id"]["kpi"], status, ohne_klass)
-            else "kpi-tile"
+        active = [
+            _kpi_is_active(spec["id"]["kpi"], status, ohne_klass)
             for spec in ctx.outputs_list
+        ]
+        # Ohne aktive Kachel bleiben alle im Normalzustand -- sonst sähe das
+        # Dashboard im Ausgangszustand dauerhaft "deaktiviert" aus.
+        if not any(active):
+            return ["kpi-tile"] * len(active)
+        return [
+            "kpi-tile kpi-tile--active" if a else "kpi-tile kpi-tile--muted"
+            for a in active
         ]

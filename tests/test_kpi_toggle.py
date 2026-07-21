@@ -115,14 +115,35 @@ def _outputs_list(*kpi_ids):
             for k in kpi_ids]
 
 
-def test_highlight_marks_only_the_matching_tile(cb):
+def test_highlight_marks_active_and_mutes_the_rest(cb):
     _set_ctx(outputs_list=_outputs_list("aktiv", "obsolet", "ohne_klassifizierung"))
     out = cb["highlight_active_kpi"]({"status": ["Obsolet"], "ohne_klass": False})
-    assert out == ["kpi-tile", "kpi-tile kpi-tile--active", "kpi-tile"]
+    assert out == [
+        "kpi-tile kpi-tile--muted",
+        "kpi-tile kpi-tile--active",
+        "kpi-tile kpi-tile--muted",
+    ]
 
 
-def test_highlight_none_without_filter(cb):
+def test_highlight_exactly_one_active_tile(cb):
+    """Genau eine Kachel aktiv, alle übrigen ausgegraut -- nie beides."""
+    _set_ctx(outputs_list=_outputs_list(
+        "aktiv", "nicht_geliefert", "obsolet", "gesperrt", "ohne_klassifizierung"))
+    out = cb["highlight_active_kpi"]({"status": [], "ohne_klass": True})
+    assert sum("--active" in c for c in out) == 1
+    assert sum("--muted" in c for c in out) == 4
+    assert not any("--active" in c and "--muted" in c for c in out)
+
+
+def test_no_filter_leaves_all_tiles_normal(cb):
+    """Ausgangszustand: nichts hervorgehoben UND nichts ausgegraut."""
+    for filters in ({}, None, {"status": [], "ohne_klass": False}):
+        _set_ctx(outputs_list=_outputs_list("aktiv", "obsolet"))
+        assert cb["highlight_active_kpi"](filters) == ["kpi-tile", "kpi-tile"]
+
+
+def test_foreign_filter_leaves_all_tiles_normal(cb):
+    """Ein Status, den keine Kachel setzt (z. B. aus der Sidebar) graut nichts aus."""
     _set_ctx(outputs_list=_outputs_list("aktiv", "obsolet"))
-    assert cb["highlight_active_kpi"]({}) == ["kpi-tile", "kpi-tile"]
-    _set_ctx(outputs_list=_outputs_list("aktiv", "obsolet"))
-    assert cb["highlight_active_kpi"](None) == ["kpi-tile", "kpi-tile"]
+    out = cb["highlight_active_kpi"]({"status": ["Aktiv", "Obsolet"], "ohne_klass": False})
+    assert out == ["kpi-tile", "kpi-tile"]

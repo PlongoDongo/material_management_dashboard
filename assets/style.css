@@ -106,7 +106,7 @@ html, body {
     text-align: left;
     cursor: pointer;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-    transition: transform 0.12s, box-shadow 0.12s, filter 0.12s;
+    transition: transform 0.12s, box-shadow 0.12s, filter 0.18s, opacity 0.18s;
     font-family: inherit;
 }
 .kpi-tile:hover {
@@ -118,19 +118,53 @@ html, body {
 .kpi-value { font-size: 32px; font-weight: 800; line-height: 1.1; }
 .kpi-label { font-size: 13px; opacity: 0.95; margin-top: 6px; }
 
-/* Aktive Kachel = deren Filter gerade greift. Erneuter Klick hebt ihn auf.
-   Nach den :hover-Regeln definiert, damit der Ring beim Hovern bestehen bleibt. */
+/* Auswahlzustand der Kacheln.
+   Solange KEINE Kachel aktiv ist, tragen alle nur .kpi-tile -- das Dashboard
+   sieht im Ausgangszustand also normal aus. Sobald eine Kachel aktiv wird,
+   bekommt sie .kpi-tile--active und ALLE anderen .kpi-tile--muted.
+   Beides steht bewusst NACH den :hover-Regeln, damit der Zustand beim
+   Überfahren nicht von der generischen Hover-Regel überschrieben wird. */
+
+/* -- aktiv: hervorgehoben durch Ring + leichtes Anheben ------------------ */
 .kpi-tile--active,
 .kpi-tile--active:hover {
     box-shadow: 0 0 0 2px var(--bg),
                 0 0 0 4px var(--primary-dark),
-                0 4px 14px rgba(0, 0, 0, 0.22);
+                0 6px 18px rgba(0, 0, 0, 0.26);
+    transform: translateY(-2px);
+    filter: saturate(1.08);
 }
+/* "×" signalisiert: erneuter Klick hebt den Filter auf. */
 .kpi-tile--active .kpi-label::after {
     content: " ×";
     font-weight: 700;
     opacity: 0.85;
 }
+
+/* -- inaktiv: entsättigt und flach --------------------------------------
+   Das "Nicht aktiv"-Signal trägt vor allem die Entsättigung, nicht die
+   Transparenz: die Kacheln haben weiße Schrift, und zu viel Transparenz auf
+   hellem Hintergrund macht sie unlesbar. Die Werte unten halten den
+   Textkontrast etwa auf dem Niveau der farbigen Originalkacheln. */
+.kpi-tile--muted {
+    filter: grayscale(0.85) brightness(0.9);
+    opacity: 0.85;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    transform: none;
+}
+/* Beim Überfahren wieder fast normal -- zeigt, dass die Kachel weiterhin
+   anklickbar ist (Umschalten auf einen anderen Filter). */
+.kpi-tile--muted:hover {
+    filter: grayscale(0.15) brightness(1.02);
+    opacity: 0.92;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+/* Klick-Feedback erhalten: die :hover-Regeln oben würden das generische
+   .kpi-tile:active sonst überstimmen (gleiche Spezifität, aber später). */
+.kpi-tile--active:active,
+.kpi-tile--muted:active { transform: translateY(0); }
 
 /* ---------------------------------------------------------------- Tabellenkarte */
 .table-card {
