@@ -1,0 +1,5 @@
+dash>=2.16
+polars>=0.20
+pytest>=8.0
+# Für Neo4j später (aktuell nicht importiert, da nur Mock-Daten):
+# neo4j>=5.0
