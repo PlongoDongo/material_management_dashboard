@@ -8,7 +8,27 @@ Herkunft der Daten. Dadurch bleibt der Neo4j-Wechsel eine Ein-Datei-Änderung.
 """
 from __future__ import annotations
 
+import logging
+
 import polars as pl
+
+log = logging.getLogger(__name__)
+
+# Cypher für die Materialdaten. Muss dieselben Spalten wie COLUMNS liefern,
+# dann funktioniert der Rest der App unverändert.
+_CYPHER = """
+MATCH (m:Material)
+OPTIONAL MATCH (m)-[:HAS_WARENGRUPPE]->(w:Warengruppe)
+OPTIONAL MATCH (m)-[:LOCATED_IN]->(werk:Werk)
+RETURN m.nr        AS material_nr,
+       m.name      AS bezeichnung,
+       w.name      AS warengruppe,
+       werk.name   AS werk,
+       m.status    AS status,
+       m.einheit   AS einheit,
+       m.bestand   AS bestand,
+       m.geaendert AS geaendert
+"""
 
 # Spaltenreihenfolge wie in der Tabelle (Mockup)
 COLUMNS = [
@@ -83,34 +103,28 @@ def _make_mock_frame(n: int = 64) -> pl.DataFrame:
 
 
 def load_materials() -> pl.DataFrame:
-    """Lädt die Materialdaten.
+    """Lädt die Materialdaten über den aktiven Neo4jManager.
 
-    >>> HIER später Neo4j einstecken. <<<
-    Beispiel (mit dem offiziellen neo4j-Treiber):
+    Die Instanz kommt aus `get_manager()` -- es ist GENAU der Treiber, den
+    app.py über `with Neo4jManager(...)` geöffnet hat (Details dort und in
+    data/neo4j_manager.py).
 
-        from neo4j import GraphDatabase
-        driver = GraphDatabase.driver(URI, auth=(USER, PW))
-        cypher = '''
-            MATCH (m:Material)
-            OPTIONAL MATCH (m)-[:HAS_WARENGRUPPE]->(w:Warengruppe)
-            OPTIONAL MATCH (m)-[:LOCATED_IN]->(werk:Werk)
-            RETURN m.nr        AS material_nr,
-                   m.name      AS bezeichnung,
-                   w.name      AS warengruppe,
-                   werk.name   AS werk,
-                   m.status    AS status,
-                   m.einheit   AS einheit,
-                   m.bestand   AS bestand,
-                   m.geaendert AS geaendert
-        '''
-        with driver.session() as session:
-            records = session.run(cypher).data()
-        return pl.DataFrame(records, schema_overrides={"bestand": pl.Int64})
-
-    Wichtig: Rückgabe muss dieselben Spalten (`COLUMNS`) liefern, dann
-    funktioniert der Rest der App unverändert.
+    Fällt auf Mock-Daten zurück, wenn kein Manager aktiv ist (z. B. lokal
+    ohne NEO4J_URI), damit die App auch ohne Datenbank läuft.
     """
-    return _make_mock_frame()
+    from data.neo4j_manager import get_manager
+
+    try:
+        manager = get_manager()
+    except RuntimeError:
+        log.warning("Kein aktiver Neo4jManager -- lade Mock-Daten.")
+        return _make_mock_frame()
+
+    df = manager.fetch_dataframe(_CYPHER)
+    # bestand als Ganzzahl -- Neo4j kann je nach Property auch Float liefern.
+    if "bestand" in df.columns:
+        df = df.with_columns(pl.col("bestand").cast(pl.Int64, strict=False))
+    return df.select(COLUMNS)
 
 
 # --------------------------------------------------------------------------

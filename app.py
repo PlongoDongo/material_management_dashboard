@@ -23,9 +23,12 @@ Details/Alternativen (inkl. Plotly Pages) stehen im README.md.
 """
 from __future__ import annotations
 
+import os
+
 from dash import Dash, dcc, html
 
 from config import IDS, APP_TITLE
+from data.neo4j_manager import Neo4jManager
 from components.header_layout import header_layout
 from components.header_callbacks import register_header_callbacks
 from components.nav_sidebar import nav_sidebar
@@ -87,4 +90,15 @@ register_tab_callbacks(app)      # Tab-Umschaltung
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8050)
+    # Verwalteter Neo4j-Treiber: einmal geöffnet, garantiert geschlossen.
+    # load_materials() (data/repository.py) greift über get_manager() auf
+    # GENAU diese Instanz zu. Ohne NEO4J_URI bleibt der Manager im Leerlauf
+    # und die App läuft mit Mock-Daten weiter.
+    #
+    # Hinweis: Dieser Block läuft nur bei `python app.py`. Für ein Deployment
+    # über gunicorn (app:server) müsste der Treiber beim Import initialisiert
+    # werden -- bewusst noch nicht umgesetzt (Dev reicht erstmal).
+    with Neo4jManager(uri=os.getenv("NEO4J_URI"),
+                      auth=os.getenv("NEO4J_AUTH"),
+                      db_name=os.getenv("NEO4J_DB", "neo4j")) as db:
+        app.run(debug=True, host="0.0.0.0", port=8050)
