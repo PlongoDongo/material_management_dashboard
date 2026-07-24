@@ -21,9 +21,9 @@ material_management_dashboard/
 ├── assets/style.css           # Design (Dash lädt assets/ automatisch)
 │
 ├── components/                # Geteiltes "Chrome"
-│   ├── header_layout.py       #   Header (Menü-Icon | Titel | Filter-Icon)  -> WIEDERVERWENDBAR
+│   ├── header_layout.py       #   Team-Header (Restriction|Burger|Logo|Titel|Filter) -> WIEDERVERWENDBAR
 │   ├── header_callbacks.py    #   Sidebar-Toggles                            -> WIEDERVERWENDBAR
-│   ├── nav_sidebar.py         #   linke Navigations-Sidebar
+│   ├── nav_sidebar.py         #   linke Navigations-Sidebar (Inhalt = Python-Liste)
 │   ├── filter_sidebar.py      #   rechte Filter-Sidebar (Wahrheitsquelle der Filter)
 │   └── footer_tabs.py         #   blaue Footer-Tab-Leiste
 │
@@ -180,10 +180,25 @@ unverändert, weil alles nur `get_materials()` kennt.
 
 ## Header wiederverwenden
 
-`components/header_layout.py` und `header_callbacks.py` sind bewusst wie bei
-deinem vorherigen Dashboard aufgebaut (parametrisiertes Layout +
-`register_header_callbacks(app)`). Gleiche einfach die Element-IDs mit deiner
-bestehenden Version ab, dann ist der Header ein Drop-in.
+`components/header_layout.py` nutzt die Team-Klassen (`team-header`, `panel`,
+`button-icon`, `divider` …) und Material Icons (per Stylesheet-Link, in
+`app.py` als `external_stylesheets`) -- Icons also über Namen
+(`html.I("menu", className="material-icons-outlined")`) statt kopierter
+Sonderzeichen. `header_layout(title=…, subtitle=…, logo_src=…)` ist
+parametrisiert; die Öffnen/Schließen-Logik steht in `header_callbacks.py`
+(`register_header_callbacks(app)`).
+
+Der Header enthält **keine** Sidebars -- die sind eigene Komponenten
+(`nav_sidebar.py`, `filter_sidebar.py`) und liegen im Top-Level-Layout. Pro
+Dashboard passt man nur deren **Python-Inhalt** an (z. B.
+`nav_sidebar(items=[("dashboard", "Übersicht"), …])`); Slide-in, Overlay und
+Farben stehen zentral in `assets/style.css`, sodass niemand im Team CSS
+anfassen muss.
+
+Die Basis-Styles der Team-Klassen liegen in `assets/style.css` und lassen sich
+von einem zentralen Team-Stylesheet überschreiben. Material Icons kommen per
+CDN-Link; in abgeschotteten Umgebungen (Proxy/Offline) lässt sich die Schrift
+selbst hosten (Kommentar in `app.py`).
 
 ## RBAC
 

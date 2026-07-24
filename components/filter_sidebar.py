@@ -53,8 +53,10 @@ def filter_sidebar() -> html.Div:
                         className="sidebar-header",
                         children=[
                             html.Span("Filter", className="sidebar-title"),
-                            html.Button("×", id=IDS.FILTER_CLOSE, n_clicks=0,
-                                        className="sidebar-close"),
+                            html.Button(
+                                html.I("close", className="material-icons-outlined"),
+                                id=IDS.FILTER_CLOSE, n_clicks=0,
+                                className="sidebar-close", title="Schließen"),
                         ],
                     ),
                     html.Div(

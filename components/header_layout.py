@@ -1,66 +1,135 @@
 """
-Wiederverwendbare Header-Zeile (Unternehmensblau).
+Wiederverwendbarer Header (Team-Standard).
 
-Aufbau (wie im Mockup):
-  links   : Menü-Icon (Hamburger)  -> öffnet die linke Nav-Sidebar
-  mitte   : Titel + Untertitel + Firmenlogo-Chip
-  rechts  : Filter-Icon             -> öffnet die rechte Filter-Sidebar
+Aufbau (Reihenfolge wie gehabt):
 
-Diese Datei ist bewusst parametrisiert (title/subtitle), damit sie -- wie
-bei deinem vorherigen Dashboard -- 1:1 wiederverwendet werden kann. Die
-IDs (MENU_BTN, FILTER_BTN) sind stabil; die zugehörigen Callbacks liegen in
-`header_callbacks.py`. Wenn du bereits eine header_layout.py hast, gleiche
-einfach die IDs ab, dann greifen die Callbacks unverändert.
+    ┌─ Restriction-Mini-Leiste ("Restricted") ─────────────────────────────┐
+    ├───────────────────────────────────────────────────────────────────────┤
+    │ [☰ Menü] │ Logo │ Titel/Untertitel        …Filler…        │ [⛃ Filter] │
+    └───────────────────────────────────────────────────────────────────────┘
+
+Wiederverwendung in anderen Dashboards
+--------------------------------------
+`header_layout()` ist bewusst parametrisiert -- Titel, Untertitel, Logo und
+Restriction-Text kommen als Argumente herein, die Button-IDs sind einstellbar.
+Ein neues Dashboard ruft einfach `header_layout(title=..., subtitle=...)` auf;
+die zugehörigen Öffnen/Schließen-Callbacks stehen in `header_callbacks.py`.
+
+Der Header enthält bewusst KEINE Sidebars mehr. Nav- und Filter-Sidebar sind
+eigene Komponenten (components/nav_sidebar.py, filter_sidebar.py) und liegen
+im Top-Level-Layout. So bleibt der Header schlank und in jedem Dashboard
+gleich, während jede App ihre eigenen Sidebars daneben hängt.
+
+Icons
+-----
+Material Icons werden über ein Stylesheet (in app.py als external_stylesheet
+verlinkt) geladen und per Ligatur-Namen referenziert -- also
+`html.I("menu", className="material-icons-outlined")` statt eines
+Sonderzeichens im String. Damit hängt die Darstellung nicht an einem
+kopierten Glyphen und bleibt konsistent.
+
+Styling
+-------
+Die verwendeten Klassen (`team-header`, `main-header`, `panel`, `button-icon`,
+`divider` …) sind euer Team-Standard. Eine schlanke Basis-Definition liegt in
+assets/style.css und kann von eurem zentralen Stylesheet überschrieben werden.
 """
 from __future__ import annotations
 
 from dash import html
 
-from config import IDS, APP_TITLE, APP_SUBTITLE
+from config import IDS, APP_TITLE, APP_SUBTITLE, RESTRICTION_TEXT, LOGO_SRC
 
 
-def _icon_button(btn_id: str, glyph: str, title: str, side: str) -> html.Button:
-    return html.Button(
-        glyph,
-        id=btn_id,
-        title=title,
-        n_clicks=0,
-        className=f"header-icon-btn header-icon-{side}",
+def _icon_button(btn_id: str, icon: str, title: str) -> html.Li:
+    """Ein Icon-Button in einer <li> -- passt in die icon-list des Headers."""
+    return html.Li(
+        html.Button(
+            html.I(icon, className="material-icons-outlined"),
+            id=btn_id,
+            n_clicks=0,
+            title=title,
+            className="button-icon",
+        )
     )
 
 
-def header_layout(title: str = APP_TITLE, subtitle: str = APP_SUBTITLE) -> html.Header:
+def _divider() -> html.Div:
+    return html.Div(className="divider divider-v")
+
+
+def header_layout(
+    title: str = APP_TITLE,
+    subtitle: str = APP_SUBTITLE,
+    logo_src: str = LOGO_SRC,
+    restriction_text: str = RESTRICTION_TEXT,
+    menu_btn_id: str = IDS.MENU_BTN,
+    filter_btn_id: str = IDS.FILTER_BTN,
+) -> html.Header:
     return html.Header(
-        className="app-header",
+        className="team-header dark",
         children=[
-            # Linke Seite: Menü-Icon + Titelblock
+            # Restriction-Mini-Leiste darüber
+            html.Div(restriction_text, className="restriction-header"),
+            # Hauptzeile
             html.Div(
-                className="header-left",
+                className="main-header horizontal",
                 children=[
-                    _icon_button(IDS.MENU_BTN, "☰", "Navigationsmenü", "left"),  # ☰
+                    # Navigationsmenü (Burger) -> linke Nav-Sidebar
                     html.Div(
-                        className="header-titles",
+                        className="panel panel-content",
                         children=[
-                            html.Span(title, className="header-title"),
-                            html.Span("|", className="header-divider"),
-                            html.Span(subtitle, className="header-subtitle"),
+                            html.Ul(
+                                className="icon-list",
+                                children=[
+                                    _icon_button(menu_btn_id, "menu",
+                                                 "Navigationsmenü"),
+                                ],
+                            )
                         ],
                     ),
-                ],
-            ),
-            # Rechte Seite: Logo-Chip + Filter-Icon
-            html.Div(
-                className="header-right",
-                children=[
+                    _divider(),
+                    # Logo
                     html.Div(
-                        className="header-logo-chip",
+                        className="panel panel-content",
                         children=[
-                            html.Span("◆", className="logo-diamond"),  # ◆
-                            html.Span("ACME", className="logo-name"),
-                            html.Span("Industries", className="logo-sub"),
+                            html.Div(
+                                className="logo-container",
+                                children=[html.Img(src=logo_src, className="logo",
+                                                   alt="Logo")],
+                            )
                         ],
                     ),
-                    _icon_button(IDS.FILTER_BTN, "≡", "Filter", "right"),  # ≡ (Filter)
+                    _divider(),
+                    # Titel + Untertitel
+                    html.Div(
+                        className="panel panel-fixed-300",
+                        children=[
+                            html.Div(
+                                className="title-container",
+                                children=[
+                                    html.H1(title, className="dashboard-title"),
+                                    html.H2(subtitle, className="page-title"),
+                                ],
+                            )
+                        ],
+                    ),
+                    # Filler schiebt die rechte Seite ans Ende
+                    html.Div(className="panel panel-stretch"),
+                    _divider(),
+                    # Filtermenü -> rechte Filter-Sidebar
+                    html.Div(
+                        className="panel panel-content",
+                        children=[
+                            html.Ul(
+                                className="icon-list",
+                                children=[
+                                    _icon_button(filter_btn_id, "filter_alt",
+                                                 "Globale Filter"),
+                                ],
+                            )
+                        ],
+                    ),
                 ],
             ),
         ],

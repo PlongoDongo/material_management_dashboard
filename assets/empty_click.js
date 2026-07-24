@@ -22,7 +22,7 @@
         ".table-card",     // Tabelle inkl. Toolbar, Sortierung, Pagination
         ".sidebar",        // beide Sidebars
         ".sidebar-overlay",
-        ".app-header",
+        ".team-header",
         ".app-footer",
         ".placeholder-card",
     ].join(",");

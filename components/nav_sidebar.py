@@ -1,9 +1,16 @@
 """
 Linke Navigations-Sidebar (initial geschlossen, öffnet über das Menü-Icon).
 
-Inhalt ist hier nur Platzhalter -- die eigentliche Navigation (z. B. zu
-weiteren Modulen/Dashboards) kannst du nach Bedarf ergänzen. Für die
-aktuellen Anforderungen genügt das reine Gerüst.
+Anpassen pro Dashboard -- rein in Python
+----------------------------------------
+Der Inhalt ist eine schlichte Liste `(icon, label)`. Für ein anderes
+Dashboard übergibt man einfach eine eigene Liste:
+
+    nav_sidebar(items=[("dashboard", "Übersicht"), ("upload", "Import")])
+
+`icon` ist ein Material-Icons-Name (Ligatur), `label` der Anzeigetext. Das
+Styling (Slide-in, Overlay, Farben) steckt zentral in assets/style.css --
+darum muss sich niemand im Team kümmern.
 """
 from __future__ import annotations
 
@@ -12,14 +19,27 @@ from dash import html
 from config import IDS
 
 
-_NAV_ITEMS = [
-    ("▤", "Material Management"),
-    ("◷", "Stammdaten-Historie"),
-    ("⚙", "Einstellungen"),
+# (Material-Icons-Name, Beschriftung)
+_DEFAULT_NAV_ITEMS = [
+    ("inventory_2", "Material Management"),
+    ("history", "Stammdaten-Historie"),
+    ("settings", "Einstellungen"),
 ]
 
 
-def nav_sidebar() -> html.Div:
+def _nav_item(icon: str, label: str, active: bool = False) -> html.Button:
+    return html.Button(
+        [
+            html.I(icon, className="material-icons-outlined nav-item-icon"),
+            html.Span(label),
+        ],
+        className="nav-item" + (" active" if active else ""),
+        n_clicks=0,
+    )
+
+
+def nav_sidebar(items: list[tuple[str, str]] | None = None) -> html.Div:
+    items = items if items is not None else _DEFAULT_NAV_ITEMS
     return html.Div(
         [
             # Halbtransparentes Overlay hinter der Sidebar (Klick = schließen)
@@ -32,20 +52,18 @@ def nav_sidebar() -> html.Div:
                         className="sidebar-header",
                         children=[
                             html.Span("Navigation", className="sidebar-title"),
-                            html.Button("×", id=IDS.NAV_CLOSE, n_clicks=0,
-                                        className="sidebar-close"),
+                            html.Button(
+                                html.I("close", className="material-icons-outlined"),
+                                id=IDS.NAV_CLOSE, n_clicks=0,
+                                className="sidebar-close", title="Schließen",
+                            ),
                         ],
                     ),
                     html.Div(
                         className="sidebar-body",
                         children=[
-                            html.Button(
-                                [html.Span(icon, className="nav-item-icon"),
-                                 html.Span(label)],
-                                className="nav-item" + (" active" if i == 0 else ""),
-                                n_clicks=0,
-                            )
-                            for i, (icon, label) in enumerate(_NAV_ITEMS)
+                            _nav_item(icon, label, active=(i == 0))
+                            for i, (icon, label) in enumerate(items)
                         ],
                     ),
                 ],

@@ -40,8 +40,9 @@ STATUS_COLORS = {
 # Element-IDs (eine Wahrheit für Layout UND Callbacks)
 # --------------------------------------------------------------------------
 class IDS:
-    # Header
-    MENU_BTN = "menu-btn"                 # Hamburger links -> linke Nav-Sidebar
+    # Header (wiederverwendbar -- IDs stabil halten, dann greifen die
+    # Header-Callbacks in jedem Dashboard unverändert)
+    MENU_BTN = "menu-btn"                 # Burger links  -> linke Nav-Sidebar
     FILTER_BTN = "filter-btn"             # Filter-Icon rechts -> rechte Filter-Sidebar
 
     # Sidebars
@@ -51,7 +52,14 @@ class IDS:
     FILTER_SIDEBAR = "filter-sidebar"
     FILTER_OVERLAY = "filter-overlay"
     FILTER_CLOSE = "filter-close"
-    FILTER_OPEN_INLINE = "filter-open-inline"   # "Filter"-Button neben der Tabelle
+
+    # Spaltenauswahl (Popover am Tabellen-Button, ersetzt den früheren
+    # Inline-"Filter"-Button -- der gehört visuell zur Tabelle)
+    COLS_BTN = "columns-btn"              # öffnet das Spalten-Popover
+    COLS_MENU = "columns-menu"            # das Popover-Panel selbst
+    COLS_CHECKLIST = "columns-checklist"  # an-/abwählbare Spalten
+    COLS_ALL = "columns-all"              # "Alle" einblenden
+    COLS_NONE = "columns-none"            # "Keine" (nur die fixierten bleiben)
 
     # Filtersteuerung (rechte Sidebar) -- das sind die "Wahrheitsquellen" des Filters
     F_STATUS = "filter-status"
@@ -93,3 +101,15 @@ TABS = [
 APP_TITLE = "Material Management"
 APP_SUBTITLE = "Stammdaten-Cockpit"
 APP_VERSION = "v0.1"
+
+# --------------------------------------------------------------------------
+# Header-Bausteine (zentral, damit der Header pro Dashboard nur hier bzw. über
+# die Funktionsargumente von header_layout() angepasst werden muss)
+# --------------------------------------------------------------------------
+RESTRICTION_TEXT = "Restricted"          # Mini-Leiste über dem Header
+LOGO_SRC = "/assets/logo.svg"            # eigenes Logo: hier ersetzen
+
+# Spalten, die in der Materialtabelle IMMER sichtbar und beim horizontalen
+# Scrollen links fixiert bleiben. Alle übrigen Spalten sind über das
+# Spalten-Popover an-/abwählbar.
+FIXED_COLUMNS = ("material_nr", "bezeichnung")

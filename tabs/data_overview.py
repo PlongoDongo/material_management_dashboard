@@ -17,9 +17,13 @@ from __future__ import annotations
 from dash import dash_table, dcc, html
 from dash.dash_table.Format import Format, Group
 
-from config import IDS
+from config import IDS, FIXED_COLUMNS
 from data.repository import COLUMN_LABELS, COLUMNS, get_materials
 from kpi.kpi_rules import compute_kpis
+
+# Spalten, die der User über das Popover an-/abwählen kann (alle außer den
+# fixierten Material-Nr. / Bezeichnung).
+_TOGGLEABLE_COLUMNS = [c for c in COLUMNS if c not in FIXED_COLUMNS]
 
 
 # --------------------------------------------------------------------------
@@ -112,6 +116,13 @@ def material_table() -> dash_table.DataTable:
         data=[],  # wird per Callback aus dem gefilterten Polars-DF gefüllt
         page_size=15,
         sort_action="native",
+        # Sichtbarkeit der Spalten steuert das Spalten-Popover (Callback ->
+        # hidden_columns). Initial sind alle sichtbar.
+        hidden_columns=[],
+        # Material-Nr. und Bezeichnung bleiben beim horizontalen Scrollen links
+        # stehen. `data` = Anzahl der von links fixierten Datenspalten; sie
+        # stehen in COLUMNS ganz vorn (= FIXED_COLUMNS).
+        fixed_columns={"headers": True, "data": len(FIXED_COLUMNS)},
         style_as_list_view=True,
         # width 100% + minWidth 100%: die Tabelle füllt die Karte aus; passen
         # die Spalten (s. _COL_MIN_WIDTH) nicht mehr hinein, scrollt sie
@@ -146,6 +157,68 @@ def material_table() -> dash_table.DataTable:
 
 
 # --------------------------------------------------------------------------
+# Spaltenauswahl-Popover (gehört visuell zur Tabelle)
+# --------------------------------------------------------------------------
+def _column_menu() -> html.Div:
+    """Button + aufklappbares Panel zum Ein-/Ausblenden von Spalten.
+
+    Öffnen/Schließen und das Ableiten von hidden_columns laufen clientseitig
+    (assets/column_menu.js, callbacks/column_callbacks.py) -- kein Server-
+    Roundtrip, damit es sich unmittelbar anfühlt.
+    """
+    fixed_labels = " und ".join(COLUMN_LABELS[c] for c in FIXED_COLUMNS)
+    return html.Div(
+        className="col-menu",
+        children=[
+            html.Button(
+                [
+                    html.I("view_column", className="material-icons-outlined"),
+                    html.Span("Spalten"),
+                ],
+                id=IDS.COLS_BTN, n_clicks=0, className="inline-filter-btn",
+                title="Spalten ein-/ausblenden",
+            ),
+            html.Div(
+                id=IDS.COLS_MENU,
+                className="col-menu-panel",  # ohne "open" = zu
+                children=[
+                    html.Div(
+                        className="col-menu-head",
+                        children=[
+                            html.Span("Spalten anzeigen", className="col-menu-title"),
+                            html.Div(
+                                className="col-menu-actions",
+                                children=[
+                                    html.Button("Alle", id=IDS.COLS_ALL,
+                                                n_clicks=0, className="col-menu-link"),
+                                    html.Button("Keine", id=IDS.COLS_NONE,
+                                                n_clicks=0, className="col-menu-link"),
+                                ],
+                            ),
+                        ],
+                    ),
+                    dcc.Checklist(
+                        id=IDS.COLS_CHECKLIST,
+                        options=[{"label": COLUMN_LABELS[c], "value": c}
+                                 for c in _TOGGLEABLE_COLUMNS],
+                        value=list(_TOGGLEABLE_COLUMNS),  # initial alle sichtbar
+                        className="col-menu-list",
+                        persistence=True, persistence_type="session",
+                    ),
+                    html.Div(
+                        [
+                            html.I("push_pin", className="material-icons-outlined"),
+                            html.Span(f"{fixed_labels} bleiben immer sichtbar."),
+                        ],
+                        className="col-menu-note",
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+# --------------------------------------------------------------------------
 # Gesamter Tab-Inhalt
 # --------------------------------------------------------------------------
 def data_overview_content() -> html.Div:
@@ -169,11 +242,7 @@ def data_overview_content() -> html.Div:
                                               className="record-counter"),
                                 ],
                             ),
-                            html.Button(
-                                [html.Span("⛁ ", className="filter-btn-icon"), "Filter"],
-                                id=IDS.FILTER_OPEN_INLINE, n_clicks=0,
-                                className="inline-filter-btn",
-                            ),
+                            _column_menu(),
                         ],
                     ),
                     material_table(),

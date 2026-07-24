@@ -44,20 +44,22 @@ def register_header_callbacks(app) -> None:
         return _classes("sidebar sidebar-nav", "sidebar-overlay", is_open)
 
     # ---- Rechte Filter-Sidebar -------------------------------------------
+    # Wird nur noch über das Filter-Icon im Header geöffnet. Der frühere
+    # "Filter"-Button an der Tabelle steuert jetzt die Spaltenauswahl
+    # (tabs/data_overview.py) und nicht mehr diese globale Sidebar.
     @app.callback(
         Output(IDS.FILTER_SIDEBAR, "className"),
         Output(IDS.FILTER_OVERLAY, "className"),
         Input(IDS.FILTER_BTN, "n_clicks"),
-        Input(IDS.FILTER_OPEN_INLINE, "n_clicks"),
         Input(IDS.FILTER_OVERLAY, "n_clicks"),
         Input(IDS.FILTER_CLOSE, "n_clicks"),
         State(IDS.FILTER_SIDEBAR, "className"),
         prevent_initial_call=True,
     )
-    def toggle_filter(_icon, _inline, _overlay, _close, current_cls):
+    def toggle_filter(_icon, _overlay, _close, current_cls):
         trigger = ctx.triggered_id
         is_open = "open" in (current_cls or "")
-        if trigger in (IDS.FILTER_BTN, IDS.FILTER_OPEN_INLINE):
+        if trigger == IDS.FILTER_BTN:
             is_open = not is_open
         else:
             is_open = False

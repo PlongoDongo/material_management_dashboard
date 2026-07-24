@@ -11,7 +11,9 @@
     --border: #dbe2ea;
     --text: #1b2733;
     --text-muted: #5b6b7d;
-    --header-h: 58px;
+    --restriction-h: 22px;              /* Restriction-Mini-Leiste */
+    --main-header-h: 56px;              /* eigentliche Header-Zeile */
+    --header-h: 78px;                   /* Summe = Offset für Main/Sidebars */
     --footer-h: 44px;
     --page-pad: 18px;   /* Seitenabstand des Tab-Bereichs */
 }
@@ -28,53 +30,114 @@ html, body {
 
 .app-shell { min-height: 100vh; }
 
-/* ---------------------------------------------------------------- Header */
-.app-header {
+/* ---------------------------------------------------------------- Header
+   Team-Standard-Header. Diese Basis-Definitionen sind bewusst schlank; euer
+   zentrales Team-Stylesheet darf sie überschreiben. Klassennamen bleiben
+   unverändert (team-header, main-header, panel, divider, button-icon …),
+   damit derselbe Header in jedem Dashboard funktioniert. */
+.team-header {
     position: fixed;
     top: 0; left: 0; right: 0;
-    height: var(--header-h);
-    background: var(--primary);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
     z-index: 1000;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
-.header-left, .header-right { display: flex; align-items: center; gap: 14px; }
+.team-header.dark { color: #fff; }
 
-.header-icon-btn {
-    background: transparent;
-    border: none;
+.restriction-header {
+    height: var(--restriction-h);
+    background: var(--primary-dark);
     color: #fff;
-    font-size: 22px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 8px 10px;
-    border-radius: 8px;
-    transition: background 0.15s;
-}
-.header-icon-btn:hover { background: rgba(255, 255, 255, 0.15); }
-
-.header-titles { display: flex; align-items: center; gap: 12px; }
-.header-title { font-size: 18px; font-weight: 700; letter-spacing: 0.2px; }
-.header-divider { opacity: 0.5; font-weight: 300; }
-.header-subtitle { font-size: 14px; opacity: 0.9; font-weight: 400; }
-
-.header-logo-chip {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: #fff;
-    color: var(--primary-dark);
-    padding: 6px 12px;
-    border-radius: 8px;
-    font-size: 13px;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
 }
-.logo-diamond { color: #2e9e5b; }
-.logo-name { font-weight: 700; letter-spacing: 0.5px; }
-.logo-sub { color: var(--text-muted); font-style: italic; }
+
+.main-header {
+    height: var(--main-header-h);
+    background: var(--primary);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 14px;
+}
+.main-header.horizontal { flex-direction: row; }
+
+/* Panels = logische Bausteine der Header-Zeile */
+.panel { display: flex; align-items: center; }
+.panel-content { flex: 0 0 auto; }
+.panel-fixed-300 { flex: 0 1 auto; min-width: 0; }
+.panel-stretch { flex: 1 1 auto; }   /* Filler */
+
+.divider-v {
+    width: 1px;
+    align-self: stretch;
+    margin: 12px 2px;
+    background: rgba(255, 255, 255, 0.25);
+}
+
+/* Logo */
+.logo-container { display: flex; align-items: center; }
+.logo { height: 30px; width: auto; display: block; }
+
+/* Titel */
+.title-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.15;
+    min-width: 0;
+}
+.dashboard-title {
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.page-title {
+    font-size: 12px;
+    font-weight: 400;
+    opacity: 0.85;
+    margin: 0;
+    white-space: nowrap;
+}
+
+/* Icon-Buttons im Header */
+.icon-list, .info-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.button-icon {
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+}
+.button-icon:hover { background: rgba(255, 255, 255, 0.15); }
+
+/* Material-Icons einheitlich ausrichten/größen */
+.material-icons, .material-icons-outlined {
+    font-size: 22px;
+    line-height: 1;
+    vertical-align: middle;
+    user-select: none;
+}
 
 /* ---------------------------------------------------------------- Main */
 .app-main {
@@ -197,7 +260,80 @@ html, body {
     transition: background 0.15s, border-color 0.15s;
 }
 .inline-filter-btn:hover { background: #f4f7fa; border-color: var(--primary); }
+.inline-filter-btn .material-icons-outlined { font-size: 18px; color: var(--primary); }
 .filter-btn-icon { color: var(--primary); }
+
+/* ------------------------------------------------- Spaltenauswahl-Popover */
+.col-menu { position: relative; }
+
+.col-menu-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 500;
+    width: 260px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(15, 23, 33, 0.18);
+    padding: 12px 14px;
+    /* geschlossen: unsichtbar und nicht klickbar */
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+}
+.col-menu-panel.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.col-menu-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.col-menu-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.col-menu-actions { display: flex; gap: 4px; }
+.col-menu-link {
+    background: transparent;
+    border: none;
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+.col-menu-link:hover { background: #eef4fc; }
+
+/* Checkliste der Spalten */
+.col-menu-list label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: 6px;
+}
+.col-menu-list label:hover { background: #f4f7fa; }
+.col-menu-list input[type="checkbox"] { accent-color: var(--primary); cursor: pointer; }
+
+.col-menu-note {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+.col-menu-note .material-icons-outlined { font-size: 15px; color: var(--text-muted); }
 
 /* ---------------------------------------------------------------- Sidebars */
 .sidebar {
@@ -238,12 +374,17 @@ html, body {
 .sidebar-close {
     background: transparent;
     border: none;
-    font-size: 22px;
     line-height: 1;
     color: var(--text-muted);
     cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 6px;
 }
-.sidebar-close:hover { color: var(--text); }
+.sidebar-close .material-icons-outlined { font-size: 20px; }
+.sidebar-close:hover { color: var(--text); background: #f4f7fa; }
 .sidebar-body { padding: 16px 18px; overflow-y: auto; }
 
 /* Nav-Items */
@@ -263,7 +404,7 @@ html, body {
 }
 .nav-item:hover { background: #f4f7fa; }
 .nav-item.active { background: #e3edfa; color: var(--primary-dark); font-weight: 600; }
-.nav-item-icon { width: 20px; text-align: center; color: var(--primary); }
+.nav-item-icon { font-size: 20px; color: var(--primary); }
 
 /* Filterfelder */
 .filter-field { margin-bottom: 16px; }

@@ -39,9 +39,20 @@ from tabs.manage_data import manage_data_content
 from tabs.apply_mappings import apply_mappings_content
 from callbacks.filter_callbacks import register_filter_callbacks
 from callbacks.tab_callbacks import register_tab_callbacks
+from callbacks.column_callbacks import register_column_callbacks
 from kpi.kpi_rules import kpi_filter_map
 
-app = Dash(__name__, title=APP_TITLE, suppress_callback_exceptions=True)
+# Material Icons als Ligatur-Schrift laden. Icons werden dann per Namen
+# referenziert (html.I("menu", className="material-icons-outlined")) statt als
+# kopiertes Sonderzeichen -- robuster und einheitlich.
+# Hinweis für abgeschottete Umgebungen (Proxy/Offline): die Schrift lässt sich
+# auch selbst hosten (Datei nach assets/ legen und @font-face in style.css).
+MATERIAL_ICONS = (
+    "https://fonts.googleapis.com/icon?family=Material+Icons+Outlined|Material+Icons"
+)
+
+app = Dash(__name__, title=APP_TITLE, suppress_callback_exceptions=True,
+           external_stylesheets=[MATERIAL_ICONS])
 server = app.server  # für Gunicorn / Deployment
 
 
@@ -87,6 +98,7 @@ app.layout = serve_layout
 register_header_callbacks(app)   # Sidebar-Toggles (Menü-/Filter-Icon)
 register_filter_callbacks(app)   # Filter, KPI-Klick, Tabelle
 register_tab_callbacks(app)      # Tab-Umschaltung
+register_column_callbacks(app)   # Spaltenauswahl-Popover (clientseitig)
 
 
 if __name__ == "__main__":
