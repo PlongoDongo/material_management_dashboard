@@ -1,22 +1,29 @@
 """
 Header-Callbacks: Öffnen/Schließen der beiden Sidebars.
 
-Bewusst als `register_callbacks(app)`-Funktion, damit dieselbe Header-Logik
-in mehreren Apps/Dashboards wiederverwendet werden kann (genau wie bei deinem
-vorherigen Dashboard). In app.py rufst du einmal
-`register_header_callbacks(app)` auf.
+Bewusst als `register_header_callbacks(app)`-Funktion, damit dieselbe Header-
+Logik in mehreren Apps/Dashboards wiederverwendet werden kann. In app.py ruft
+man einmal `register_header_callbacks(app)` auf.
+
+Warum clientseitig?
+-------------------
+Es ist reine Darstellung -- die Sidebar (und ihr Overlay) bekommen bzw.
+verlieren nur die CSS-Klasse `open`. Dafür braucht es keinen Server. Früher lief
+das als Server-Callback und kostete pro Klick eine HTTP-Runde, bevor die
+Animation überhaupt anlief; bei hoher Netz-Latenz war das spürbar träge. Jetzt
+schaltet es im Browser sofort um (assets/sidebar_toggle.js), sichtbar bleibt nur
+noch die CSS-Transition.
 
 Toggle-Muster
 -------------
-Statt einen booleschen Zustand zu speichern, leiten wir die Sichtbarkeit aus
-der CSS-Klasse ab (`... open`). Ein einziger Callback pro Sidebar reagiert auf
-alle relevanten Trigger (Icon, Overlay, Schließen-Button) und entscheidet über
-`dash.ctx`, ob geöffnet oder geschlossen wird. Das ist robust und kommt ohne
-zusätzlichen Store aus.
+Statt einen booleschen Zustand zu speichern, leiten wir die Sichtbarkeit aus der
+CSS-Klasse ab (`... open`). Ein einziger Callback pro Sidebar reagiert auf alle
+relevanten Trigger (Icon, Overlay, Schließen-Button) und entscheidet über den
+`callback_context`, ob geöffnet oder geschlossen wird.
 """
 from __future__ import annotations
 
-from dash import Input, Output, State, ctx
+from dash import ClientsideFunction, Input, Output, State
 
 from config import IDS
 
@@ -24,7 +31,8 @@ from config import IDS
 def register_header_callbacks(app) -> None:
 
     # ---- Linke Navigations-Sidebar ---------------------------------------
-    @app.callback(
+    app.clientside_callback(
+        ClientsideFunction(namespace="sidebar", function_name="toggleNav"),
         Output(IDS.NAV_SIDEBAR, "className"),
         Output(IDS.NAV_OVERLAY, "className"),
         Input(IDS.MENU_BTN, "n_clicks"),
@@ -33,21 +41,12 @@ def register_header_callbacks(app) -> None:
         State(IDS.NAV_SIDEBAR, "className"),
         prevent_initial_call=True,
     )
-    def toggle_nav(_menu, _overlay, _close, current_cls):
-        trigger = ctx.triggered_id
-        is_open = "open" in (current_cls or "")
-        # Menü-Icon = umschalten; Overlay/Schließen = immer schließen
-        if trigger == IDS.MENU_BTN:
-            is_open = not is_open
-        else:
-            is_open = False
-        return _classes("sidebar sidebar-nav", "sidebar-overlay", is_open)
 
     # ---- Rechte Filter-Sidebar -------------------------------------------
-    # Wird nur noch über das Filter-Icon im Header geöffnet. Der frühere
-    # "Filter"-Button an der Tabelle steuert jetzt die Spaltenauswahl
-    # (tabs/data_overview.py) und nicht mehr diese globale Sidebar.
-    @app.callback(
+    # Wird nur über das Filter-Icon im Header geöffnet. Der frühere "Filter"-
+    # Button an der Tabelle steuert jetzt die Spaltenauswahl (data_overview.py).
+    app.clientside_callback(
+        ClientsideFunction(namespace="sidebar", function_name="toggleFilter"),
         Output(IDS.FILTER_SIDEBAR, "className"),
         Output(IDS.FILTER_OVERLAY, "className"),
         Input(IDS.FILTER_BTN, "n_clicks"),
@@ -56,17 +55,3 @@ def register_header_callbacks(app) -> None:
         State(IDS.FILTER_SIDEBAR, "className"),
         prevent_initial_call=True,
     )
-    def toggle_filter(_icon, _overlay, _close, current_cls):
-        trigger = ctx.triggered_id
-        is_open = "open" in (current_cls or "")
-        if trigger == IDS.FILTER_BTN:
-            is_open = not is_open
-        else:
-            is_open = False
-        return _classes("sidebar sidebar-filter", "sidebar-overlay", is_open)
-
-
-def _classes(sidebar_base: str, overlay_base: str, is_open: bool):
-    if is_open:
-        return f"{sidebar_base} open", f"{overlay_base} open"
-    return sidebar_base, overlay_base
