@@ -535,9 +535,18 @@ html, body {
     display: flex;
     flex-direction: column;
 }
-.table-card .dash-spreadsheet-container {
+/* Der Scroll-Container soll die Kartenhöhe füllen. dash-table setzt per
+   eigenem Stylesheet ein height/max-height (aus dem Inhalt berechnet) auf
+   .dash-spreadsheet-container und -inner -- das deckelt die Höhe, sodass
+   flex:1 sonst wirkungslos bleibt und darunter card-farbener Leerraum stünde.
+   Deshalb hier den Deckel lösen (max-height:none) und auf volle Höhe zwingen;
+   flex passt die Höhe an den Platz neben der Pagination an. */
+.table-card .dash-spreadsheet-container,
+.table-card .dash-spreadsheet-inner {
     flex: 1 1 auto;
     min-height: 0;
+    height: 100%;
+    max-height: none !important;
 }
 .table-card .previous-next-container {
     flex: 0 0 auto;

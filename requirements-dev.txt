@@ -1,0 +1,8 @@
+# Entwicklungs-/Test-Abhängigkeiten (nicht für den Betrieb der App nötig).
+#   pip install -r requirements-dev.txt
+#   python -m playwright install chromium      # einmalig, lädt den Browser
+#
+# playwright treibt einen echten (headless) Browser -> Frontend-/Layout-Tests
+# und Screenshots via scripts/ui_probe.py.
+-r requirements.txt
+playwright>=1.40
