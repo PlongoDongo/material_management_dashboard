@@ -14,6 +14,7 @@ spiegelt sie in den kanonischen `store-filters` (siehe callbacks/).
 from __future__ import annotations
 
 from dash import dcc, html
+from dash.development.base_component import Component
 
 from config import IDS
 from data.repository import distinct_values
@@ -34,7 +35,7 @@ def _multi_dropdown(cid: str, placeholder: str, options: list[str]) -> dcc.Dropd
     )
 
 
-def _field(label: str, control) -> html.Div:
+def _field(label: str, control: Component) -> html.Div:
     return html.Div(
         className="filter-field",
         children=[html.Label(label, className="filter-label"), control],

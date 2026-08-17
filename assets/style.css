@@ -13,8 +13,7 @@
     --text-muted: #5b6b7d;
     --restriction-h: 22px;              /* Restriction-Mini-Leiste */
     --main-header-h: 56px;              /* eigentliche Header-Zeile */
-    --header-h: 78px;                   /* Summe = Offset für Main/Sidebars */
-    --footer-h: 44px;
+    --footer-h: 44px;                   /* Höhe der Footer-Tab-Leiste */
     --page-pad: 18px;   /* Seitenabstand des Tab-Bereichs */
 }
 
@@ -23,12 +22,24 @@
 html, body {
     margin: 0;
     padding: 0;
+    height: 100%;
     background: var(--bg);
     color: var(--text);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-.app-shell { min-height: 100vh; }
+/* Die App besitzt exakt die Viewport-Höhe und ist eine Flex-Spalte:
+   Header (natürliche Höhe) | Main (dehnbar) | Footer (feste Höhe).
+   `overflow: hidden` heißt: die SEITE scrollt nie -- Header und Footer bleiben
+   ohne `position: fixed` immer sichtbar, gescrollt wird nur INNERHALB der
+   Tabelle. Das ersetzt die früheren geratenen Offsets (--header-h/--footer-h),
+   deren Ungenauigkeit den leeren Bereich und das Extra-Scrollen verursacht hat. */
+.app-shell {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
 
 /* ---------------------------------------------------------------- Header
    Team-Standard-Header. Diese Basis-Definitionen sind bewusst schlank; euer
@@ -36,9 +47,9 @@ html, body {
    unverändert (team-header, main-header, panel, divider, button-icon …),
    damit derselbe Header in jedem Dashboard funktioniert. */
 .team-header {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    z-index: 1000;
+    position: relative;   /* im Fluss der Flex-Spalte, nicht mehr fixed */
+    flex: 0 0 auto;
+    z-index: 1000;        /* Schatten liegt über dem Main-Bereich */
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 .team-header.dark { color: #fff; }
@@ -139,15 +150,30 @@ html, body {
     user-select: none;
 }
 
-/* ---------------------------------------------------------------- Main */
+/* ---------------------------------------------------------------- Main
+   Dehnbarer Bereich zwischen Header und Footer -- füllt als Flex-Kind die
+   restliche Höhe (kein geratener Offset mehr). Selbst eine Flex-Spalte, damit
+   der sichtbare Tab-Inhalt die Höhe voll ausnutzt. Gescrollt wird nur INNERHALB
+   der Tabelle; Footer, Pagination und der horizontale Scrollbalken der Tabelle
+   bleiben dadurch immer sichtbar. */
 .app-main {
-    /* Seitenabstand bewusst schmal: die Tabelle soll die volle Breite nutzen.
-       Dieses Padding ist zugleich der "leichte Abstand zum linken Rand". */
-    padding: calc(var(--header-h) + 20px) var(--page-pad) calc(var(--footer-h) + 24px);
-    min-height: 100vh;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 20px var(--page-pad);
+    overflow: hidden;
 }
-/* Volle Seitenbreite (früher zentriert auf max-width) */
-.tab-content { width: 100%; }
+/* Tab-Inhalt füllt die Main-Höhe; KPI-Reihe oben, Tabellenkarte darunter
+   dehnbar. Sichtbarkeit schaltet tab_callbacks über display: flex/none --
+   flex:1 (Höhe füllen) und flex-direction:column kommen aus dieser Klasse. */
+.tab-content {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
 
 /* ---------------------------------------------------------------- KPI-Kacheln */
 .kpi-row {
@@ -158,6 +184,7 @@ html, body {
     justify-content: flex-start;
     gap: 16px;
     margin-bottom: 22px;
+    flex: 0 0 auto;          /* natürliche Höhe, nicht mitdehnen */
 }
 .kpi-tile {
     flex: 0 0 auto;
@@ -233,14 +260,22 @@ html, body {
 .table-card {
     background: var(--surface);
     border-radius: 12px;
-    padding: 18px 20px 8px;
+    padding: 18px 20px 12px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    /* füllt die restliche Höhe unter der KPI-Reihe und ist damit unten am
+       Footer verankert; der Innenaufbau ist eine Spalte:
+       Toolbar (fix) | Tabelle (dehnbar, scrollt) | Pagination (fix). */
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 .table-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 12px;
+    flex: 0 0 auto;
 }
 .table-heading { display: flex; align-items: baseline; gap: 12px; }
 .table-title { font-size: 17px; font-weight: 700; }
@@ -437,8 +472,8 @@ html, body {
 
 /* ---------------------------------------------------------------- Footer-Tabs */
 .app-footer {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
+    position: relative;   /* im Fluss der Flex-Spalte, nicht mehr fixed */
+    flex: 0 0 auto;
     height: var(--footer-h);
     background: var(--primary);
     display: flex;
@@ -487,5 +522,24 @@ html, body {
 .placeholder-text { color: var(--text-muted); margin: 0; }
 
 /* DataTable Feinschliff */
-.dash-table-container { margin-top: 4px; }
 .dash-spreadsheet-container .dash-spreadsheet-inner td { cursor: default; }
+
+/* Tabelle füllt die Karte: äußerer Container als Spalte, die eigentliche
+   Tabelle (scrollbar) dehnbar, die Pagination-Leiste unten fix. So sind
+   Pagination und horizontaler Scrollbalken immer sichtbar, während der
+   Tabellenkörper INNERHALB scrollt (Kopf-/Filterzeile bleiben via fixed_rows
+   oben stehen). */
+.table-card .dash-table-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.table-card .dash-spreadsheet-container {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+.table-card .previous-next-container {
+    flex: 0 0 auto;
+    margin-top: 8px;
+}

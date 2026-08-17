@@ -171,12 +171,22 @@ Store → Steuerelement und damit **keinen Callback-Zyklus**.
 
 ---
 
-## Neo4j einstecken (späterer Schritt)
+## Neo4j einstecken
 
-Nur `data/repository.py::load_materials()` anfassen: den Cypher ausführen und
-einen Polars-DataFrame mit denselben Spalten (`COLUMNS`) zurückgeben. Ein
-fertiges Beispiel steht als Docstring in der Funktion. Der Rest der App bleibt
-unverändert, weil alles nur `get_materials()` kennt.
+Der Treiber wird in `app.py` einmal pro Prozess erzeugt und an Flasks
+Standardstelle abgelegt (`server.extensions["neo4j_driver"]`, via
+`data/neo4j.py::make_driver`). `data/repository.py` holt ihn über
+`flask.current_app`, öffnet pro Abfrage eine Session und ruft den reinen Kern
+`_materials_from_session(session)` -- letzterer ist per Dependency Injection
+ohne echten Server testbar. Ohne `NEO4J_URI` bleibt der Eintrag `None` und die
+App läuft mit Mock-Daten (auch außerhalb eines Flask-Kontexts, z. B. in Tests).
+
+Nötige Umgebungsvariablen: `NEO4J_URI`, `NEO4J_AUTH` (`user/passwort`,
+`user:passwort` oder Tupel), optional `NEO4J_DB` (Default `neo4j`).
+
+**Spalten** ändern? Ausschließlich in `data/schema.py` (`MATERIAL_COLUMNS`) --
+`COLUMNS`, `COLUMN_LABELS`, Breiten, fixierte/numerische Spalten werden daraus
+abgeleitet.
 
 ## Header wiederverwenden
 

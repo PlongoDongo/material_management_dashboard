@@ -16,3 +16,8 @@ htmlcov/
 # Editor
 .vscode/
 .idea/
+
+# Claude Code / lokale Dev-Tooling (persönlich, nicht ins Repo)
+.claude/
+.mcp.json
+test-artifacts/

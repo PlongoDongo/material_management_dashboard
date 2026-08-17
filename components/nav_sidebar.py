@@ -19,7 +19,7 @@ from dash import html
 from config import IDS
 
 
-# (Material-Icons-Name, Beschriftung)
+# Je Eintrag: Material-Icons-Name plus Beschriftung
 _DEFAULT_NAV_ITEMS = [
     ("inventory_2", "Material Management"),
     ("history", "Stammdaten-Historie"),
@@ -27,7 +27,7 @@ _DEFAULT_NAV_ITEMS = [
 ]
 
 
-def _nav_item(icon: str, label: str, active: bool = False) -> html.Button:
+def _nav_item(icon: str, label: str, *, active: bool = False) -> html.Button:
     return html.Button(
         [
             html.I(icon, className="material-icons-outlined nav-item-icon"),

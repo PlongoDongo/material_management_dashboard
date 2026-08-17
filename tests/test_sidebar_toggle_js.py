@@ -26,7 +26,7 @@ console.log(JSON.stringify(
 """
 
 
-def _call(fn, trigger, cls):
+def _call(fn: str, trigger: str, cls: str) -> list[str]:
     # args: (btn, overlay, close, currentClassName) -- nur cls ist relevant
     script = _HARNESS % {
         "source": ASSET.read_text(encoding="utf-8"),
@@ -40,33 +40,33 @@ def _call(fn, trigger, cls):
 
 
 # -- Nav-Sidebar ------------------------------------------------------------
-def test_menu_click_opens_when_closed():
+def test_menu_click_opens_when_closed() -> None:
     assert _call("toggleNav", "menu-btn.n_clicks", "sidebar sidebar-nav") == [
         "sidebar sidebar-nav open", "sidebar-overlay open"]
 
 
-def test_menu_click_closes_when_open():
+def test_menu_click_closes_when_open() -> None:
     assert _call("toggleNav", "menu-btn.n_clicks", "sidebar sidebar-nav open") == [
         "sidebar sidebar-nav", "sidebar-overlay"]
 
 
-def test_overlay_click_always_closes():
+def test_overlay_click_always_closes() -> None:
     assert _call("toggleNav", "nav-overlay.n_clicks", "sidebar sidebar-nav open") == [
         "sidebar sidebar-nav", "sidebar-overlay"]
 
 
-def test_close_button_always_closes():
+def test_close_button_always_closes() -> None:
     assert _call("toggleNav", "nav-close.n_clicks", "sidebar sidebar-nav open") == [
         "sidebar sidebar-nav", "sidebar-overlay"]
 
 
 # -- Filter-Sidebar ---------------------------------------------------------
-def test_filter_icon_opens_when_closed():
+def test_filter_icon_opens_when_closed() -> None:
     assert _call("toggleFilter", "filter-btn.n_clicks", "sidebar sidebar-filter") == [
         "sidebar sidebar-filter open", "sidebar-overlay open"]
 
 
-def test_filter_overlay_closes():
+def test_filter_overlay_closes() -> None:
     assert _call("toggleFilter", "filter-overlay.n_clicks",
                  "sidebar sidebar-filter open") == [
         "sidebar sidebar-filter", "sidebar-overlay"]

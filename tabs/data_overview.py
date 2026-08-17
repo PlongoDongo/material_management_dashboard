@@ -17,8 +17,16 @@ from __future__ import annotations
 from dash import dash_table, dcc, html
 from dash.dash_table.Format import Format, Group
 
-from config import IDS, FIXED_COLUMNS
-from data.repository import COLUMN_LABELS, COLUMNS, get_materials
+from config import IDS, STATUS_COLORS
+from data.schema import (
+    COL_MIN_WIDTH,
+    COLUMN_LABELS,
+    COLUMNS,
+    FIXED_COLUMNS,
+    MATERIAL_COLUMNS,
+    NUMERIC_COLUMNS,
+)
+from data.repository import get_materials
 from kpi.kpi_rules import compute_kpis
 
 # Spalten, die der User über das Popover an-/abwählen kann (alle außer den
@@ -55,11 +63,12 @@ def kpi_row() -> html.Div:
 # --------------------------------------------------------------------------
 # Materialtabelle
 # --------------------------------------------------------------------------
-def _table_columns():
+def _table_columns() -> list[dict]:
+    """DataTable-Spalten aus dem zentralen Schema (data/schema.py)."""
     cols = []
-    for c in COLUMNS:
-        col = {"name": COLUMN_LABELS[c].upper(), "id": c}
-        if c == "bestand":
+    for c in MATERIAL_COLUMNS:
+        col = {"name": c.label.upper(), "id": c.id}
+        if c.numeric:
             col.update(
                 type="numeric",
                 format=Format(group=Group.yes, groups=3, group_delimiter="."),
@@ -68,45 +77,32 @@ def _table_columns():
     return cols
 
 
-# Mindestbreite je Spalte (px). Summe = Breite, ab der horizontal gescrollt
-# wird; darüber verteilen sich die Spalten auf die volle Tabellenbreite.
-_COL_MIN_WIDTH = {
-    "material_nr": 130,
-    "bezeichnung": 220,
-    "warengruppe": 160,
-    "werk": 140,
-    "status": 150,
-    "einheit": 90,
-    "bestand": 110,
-    "geaendert": 120,
-}
-
-
-def _column_width_conditional():
-    """Pro Spalte eine Mindestbreite -> erzwingt bei Bedarf den Scrollbalken."""
-    styles = []
-    for c in COLUMNS:
-        styles.append({
+def _column_width_conditional() -> list[dict]:
+    """Mindestbreite je Spalte (aus dem Schema) -> erzwingt bei Bedarf den
+    Scrollbalken. Numerische Spalten rechtsbündig."""
+    styles = [
+        {
             "if": {"column_id": c},
-            "minWidth": f"{_COL_MIN_WIDTH[c]}px",
-            "width": f"{_COL_MIN_WIDTH[c]}px",
-        })
-    styles.append({"if": {"column_id": "bestand"}, "textAlign": "right"})
+            "minWidth": f"{COL_MIN_WIDTH[c]}px",
+            "width": f"{COL_MIN_WIDTH[c]}px",
+        }
+        for c in COLUMNS
+    ]
+    styles += [{"if": {"column_id": c}, "textAlign": "right"}
+               for c in NUMERIC_COLUMNS]
     return styles
 
 
-def _status_style_conditional():
+def _status_style_conditional() -> list[dict]:
     """Färbt den Status-Text passend zur Statusfarbe (Punkt-Ersatz)."""
-    from config import STATUS_COLORS
-
-    styles = []
-    for status, color in STATUS_COLORS.items():
-        styles.append({
+    return [
+        {
             "if": {"filter_query": f'{{status}} = "{status}"', "column_id": "status"},
             "color": color,
             "fontWeight": "600",
-        })
-    return styles
+        }
+        for status, color in STATUS_COLORS.items()
+    ]
 
 
 def material_table() -> dash_table.DataTable:
@@ -114,8 +110,14 @@ def material_table() -> dash_table.DataTable:
         id=IDS.TABLE,
         columns=_table_columns(),
         data=[],  # wird per Callback aus dem gefilterten Polars-DF gefüllt
-        page_size=15,
+        page_size=20,
         sort_action="native",
+        # Automatische Filterzeile unter den Spaltenköpfen (neben den Sortier-
+        # pfeilen). Native = Textfilter mit Operatoren (=, >, contains, ...),
+        # case-insensitiv. Ergänzt die globalen Sidebar-Filter; siehe
+        # Erläuterung im Chat zur Werte-Auswahl.
+        filter_action="native",
+        filter_options={"case": "insensitive", "placeholder_text": "filtern …"},
         # Sichtbarkeit der Spalten steuert das Spalten-Popover (Callback ->
         # hidden_columns). Initial sind alle sichtbar.
         hidden_columns=[],
@@ -123,11 +125,19 @@ def material_table() -> dash_table.DataTable:
         # stehen. `data` = Anzahl der von links fixierten Datenspalten; sie
         # stehen in COLUMNS ganz vorn (= FIXED_COLUMNS).
         fixed_columns={"headers": True, "data": len(FIXED_COLUMNS)},
+        # Kopf- + Filterzeile bleiben beim vertikalen Scrollen oben stehen; der
+        # Tabellenkörper scrollt INNERHALB der Tabelle (Höhe kommt aus dem
+        # Flex-Layout der Karte, siehe style.css / .table-card).
+        fixed_rows={"headers": True},
         style_as_list_view=True,
-        # width 100% + minWidth 100%: die Tabelle füllt die Karte aus; passen
-        # die Spalten (s. _COL_MIN_WIDTH) nicht mehr hinein, scrollt sie
-        # horizontal INNERHALB der Karte statt die Seite zu verbreitern.
-        style_table={"overflowX": "auto", "width": "100%", "minWidth": "100%"},
+        # overflow auto in beide Richtungen: vertikal scrollt der Körper (dank
+        # fixed_rows), horizontal die zu breiten Spalten -- beides INNERHALB der
+        # Tabelle. Die HÖHE gibt bewusst das Flex-Layout der Karte vor (siehe
+        # style.css) und NICHT height:100% -- sonst verdrängte die Tabelle die
+        # darunterliegende Pagination aus der Karte.
+        style_table={"overflowY": "auto", "overflowX": "auto",
+                     "width": "100%", "minWidth": "100%"},
+        style_filter={"backgroundColor": "#fbfcfd"},
         style_header={
             "backgroundColor": "#f4f7fa",
             "fontWeight": "700",
@@ -153,6 +163,12 @@ def material_table() -> dash_table.DataTable:
         },
         style_cell_conditional=_column_width_conditional(),
         style_data_conditional=_status_style_conditional(),
+        # Sobald hidden_columns gesetzt ist, blendet die DataTable von sich aus
+        # ihr eigenes "Toggle Columns"-Menü ein (.dash-spreadsheet-menu). Das
+        # Ein-/Ausblenden übernimmt bereits unser Spalten-Popover, darum das
+        # eingebaute Menü ausblenden. `css` wird von der Komponente selbst
+        # injiziert -> robuster als eine globale Regel.
+        css=[{"selector": ".dash-spreadsheet-menu", "rule": "display: none;"}],
     )
 
 

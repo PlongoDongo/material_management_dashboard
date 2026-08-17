@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from callbacks.filter_callbacks import _kpi_is_active
 from kpi.kpi_rules import kpi_filter_map
 
 ASSET = Path(__file__).resolve().parents[1] / "assets" / "kpi_highlight.js"
@@ -36,7 +37,11 @@ console.log(JSON.stringify(
 """
 
 
-def highlight(status, ohne_klass, kpi_ids=None):
+def highlight(
+    status: list[str] | None,
+    ohne_klass: list[str] | None,
+    kpi_ids: list[str] | None = None,
+) -> list[str]:
     """Ruft die JS-Funktion auf und gibt die classNames zurück."""
     kpi_ids = kpi_ids or list(kpi_filter_map())
     script = _HARNESS % {
@@ -51,14 +56,14 @@ def highlight(status, ohne_klass, kpi_ids=None):
     return json.loads(proc.stdout)
 
 
-def _state(classes):
+def _state(classes: list[str]) -> list[str]:
     """['kpi-tile kpi-tile--active', ...] -> ['active', 'muted', ...]"""
     return [c.replace("kpi-tile", "").replace("--", "").strip() or "normal"
             for c in classes]
 
 
 # --------------------------------------------------------------------------
-def test_active_tile_is_marked_and_rest_is_muted():
+def test_active_tile_is_marked_and_rest_is_muted() -> None:
     out = _state(highlight(["Obsolet"], []))
     ids = list(kpi_filter_map())
     assert out[ids.index("obsolet")] == "active"
@@ -66,38 +71,36 @@ def test_active_tile_is_marked_and_rest_is_muted():
     assert out.count("muted") == len(ids) - 1
 
 
-def test_ohne_klassifizierung_tile():
+def test_ohne_klassifizierung_tile() -> None:
     out = _state(highlight([], ["on"]))
     ids = list(kpi_filter_map())
     assert out[ids.index("ohne_klassifizierung")] == "active"
     assert out.count("active") == 1
 
 
-def test_no_filter_leaves_all_tiles_normal():
+def test_no_filter_leaves_all_tiles_normal() -> None:
     """Ausgangszustand: nichts hervorgehoben UND nichts ausgegraut."""
     assert set(_state(highlight([], []))) == {"normal"}
     assert set(_state(highlight(None, None))) == {"normal"}
 
 
-def test_foreign_filter_leaves_all_tiles_normal():
+def test_foreign_filter_leaves_all_tiles_normal() -> None:
     """Ein Status, den keine Kachel setzt (z. B. aus der Sidebar)."""
     assert set(_state(highlight(["Aktiv", "Obsolet"], []))) == {"normal"}
 
 
-def test_status_order_does_not_matter():
+def test_status_order_does_not_matter() -> None:
     """Mengenvergleich, nicht Listenvergleich."""
     assert _state(highlight(["Aktiv"], [])) == _state(highlight(["Aktiv"], []))
 
 
-def test_status_match_requires_matching_flag():
+def test_status_match_requires_matching_flag() -> None:
     """Status passt, aber das Klassifizierungs-Flag steht quer -> nicht aktiv."""
     assert set(_state(highlight(["Aktiv"], ["on"]))) == {"normal"}
 
 
-def test_matches_python_rule_for_every_tile():
+def test_matches_python_rule_for_every_tile() -> None:
     """JS-Vergleich und _kpi_is_active (Python) müssen übereinstimmen."""
-    from callbacks.filter_callbacks import _kpi_is_active
-
     for kpi_id, flt in kpi_filter_map().items():
         status = list(flt.get("status", []))
         ohne = ["on"] if flt.get("ohne_klass") else []

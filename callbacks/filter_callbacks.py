@@ -27,12 +27,28 @@ ganz ohne Server-Runde (assets/kpi_highlight.js).
 """
 from __future__ import annotations
 
-from dash import ALL, ClientsideFunction, Input, Output, State, ctx, no_update
+from typing import Any
+
+from dash import (
+    ALL,
+    ClientsideFunction,
+    Dash,
+    Input,
+    NoUpdate,
+    Output,
+    State,
+    ctx,
+    no_update,
+)
 
 from config import IDS
 from data.filtering import apply_filters
 from data.repository import get_materials
 from kpi.kpi_rules import kpi_filter_map
+
+# Wert eines Filter-Steuerelements, wie ein Callback ihn zurückgibt: die neue
+# Auswahl -- oder `no_update`, wenn das Element unangetastet bleiben soll.
+Selection = list[str] | NoUpdate
 
 # Schneller Lookup: KPI-ID -> Filter-Update
 _KPI_FILTER = kpi_filter_map()
@@ -48,7 +64,13 @@ _FILTER_INPUTS = (
 )
 
 
-def filter_state(status, werk, warengruppe, search, ohne_klass) -> dict:
+def filter_state(
+    status: list[str] | None,
+    werk: list[str] | None,
+    warengruppe: list[str] | None,
+    search: str | None,
+    ohne_klass: list[str] | None,
+) -> dict:
     """Steuerelement-Werte -> kanonischer Filterzustand.
 
     Eine Funktion für beide Verbraucher (Store und Tabelle), damit die
@@ -63,7 +85,9 @@ def filter_state(status, werk, warengruppe, search, ohne_klass) -> dict:
     }
 
 
-def _kpi_is_active(kpi_id: str, status, ohne_klass) -> bool:
+def _kpi_is_active(
+    kpi_id: str, status: list[str] | None, ohne_klass: list[str] | None
+) -> bool:
     """Greift der Filter dieser Kachel gerade genau so, wie sie ihn setzen würde?
 
     Die Aktivität wird bewusst aus dem GEGENWÄRTIGEN Filterzustand abgeleitet
@@ -81,7 +105,7 @@ def _kpi_is_active(kpi_id: str, status, ohne_klass) -> bool:
     )
 
 
-def register_filter_callbacks(app) -> None:
+def register_filter_callbacks(app: Dash) -> None:
 
     # ---------------------------------------------------------------
     # 1) Klick auf eine KPI-Kachel  ->  Filter setzen ODER (bei erneutem
@@ -95,7 +119,11 @@ def register_filter_callbacks(app) -> None:
         State(IDS.F_OHNE_KLASS, "value"),
         prevent_initial_call=True,
     )
-    def kpi_click_to_filter(_clicks, cur_status, cur_ohne_klass):
+    def kpi_click_to_filter(
+        _clicks: list[int | None],
+        cur_status: list[str] | None,
+        cur_ohne_klass: list[str] | None,
+    ) -> tuple[Selection, Selection]:
         trigger = ctx.triggered_id
         if not trigger or "kpi" not in trigger:
             return no_update, no_update
@@ -126,7 +154,11 @@ def register_filter_callbacks(app) -> None:
         State(IDS.F_OHNE_KLASS, "value"),
         prevent_initial_call=True,
     )
-    def empty_click_clears_kpi_filter(_ts, cur_status, cur_ohne_klass):
+    def empty_click_clears_kpi_filter(
+        _ts: Any,
+        cur_status: list[str] | None,
+        cur_ohne_klass: list[str] | None,
+    ) -> tuple[Selection, Selection]:
         # Nichts aktiv -> nichts tun (spart einen überflüssigen Tabellen-Rerender).
         if not cur_status and not cur_ohne_klass:
             return no_update, no_update
@@ -144,7 +176,9 @@ def register_filter_callbacks(app) -> None:
         Input(IDS.F_RESET, "n_clicks"),
         prevent_initial_call=True,
     )
-    def reset_filters(_n):
+    def reset_filters(
+        _n: int | None,
+    ) -> tuple[list[str], list[str], list[str], str, list[str]]:
         return [], [], [], "", []
 
     # ---------------------------------------------------------------
@@ -156,7 +190,13 @@ def register_filter_callbacks(app) -> None:
         Output(IDS.STORE_FILTERS, "data"),
         *_FILTER_INPUTS,
     )
-    def build_filter_state(status, werk, warengruppe, search, ohne_klass):
+    def build_filter_state(
+        status: list[str] | None,
+        werk: list[str] | None,
+        warengruppe: list[str] | None,
+        search: str | None,
+        ohne_klass: list[str] | None,
+    ) -> dict:
         return filter_state(status, werk, warengruppe, search, ohne_klass)
 
     # ---------------------------------------------------------------
@@ -174,7 +214,13 @@ def register_filter_callbacks(app) -> None:
         Output(IDS.RECORD_COUNTER, "children"),
         *_FILTER_INPUTS,
     )
-    def render_table(status, werk, warengruppe, search, ohne_klass):
+    def render_table(
+        status: list[str] | None,
+        werk: list[str] | None,
+        warengruppe: list[str] | None,
+        search: str | None,
+        ohne_klass: list[str] | None,
+    ) -> tuple[list[dict], str]:
         filters = filter_state(status, werk, warengruppe, search, ohne_klass)
         df_all = get_materials()
         df = apply_filters(df_all, filters)
@@ -189,7 +235,7 @@ def register_filter_callbacks(app) -> None:
     #    eine weitere Server-Runde und ohne auf das Neurendern der
     #    DataTable zu warten. Die Regel (welcher Filter zu welcher Kachel
     #    gehört) reicht `store-kpi-filters` aus kpi/kpi_rules.py herein.
-    #    Implementierung: assets/kpi_highlight.js
+    #    Implementiert in assets/kpi_highlight.js
     # ---------------------------------------------------------------
     app.clientside_callback(
         ClientsideFunction(namespace="kpi", function_name="highlight"),

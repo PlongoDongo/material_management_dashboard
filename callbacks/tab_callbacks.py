@@ -16,11 +16,14 @@ würde der Seiteninhalt bei jedem Wechsel ausgetauscht (siehe README).
 """
 from __future__ import annotations
 
-from dash import Input, Output
+from dash import Dash, Input, Output, ctx
 
 from config import IDS, TABS
 
-_VISIBLE = {"display": "block"}
+# Sichtbar = flex: .tab-content ist ein Spalten-Flex-Container (Höhe füllen,
+# Tabelle unten am Footer verankert). Ein Inline-"block" würde das
+# CSS-Layout überschreiben, darum hier bewusst "flex".
+_VISIBLE = {"display": "flex"}
 _HIDDEN = {"display": "none"}
 
 # Zuordnung Tab-ID -> Inhaltscontainer-ID
@@ -31,7 +34,7 @@ _TAB_CONTENT = {
 }
 
 
-def register_tab_callbacks(app) -> None:
+def register_tab_callbacks(app: Dash) -> None:
 
     @app.callback(
         Output(IDS.STORE_ACTIVE_TAB, "data"),
@@ -46,8 +49,9 @@ def register_tab_callbacks(app) -> None:
         Input(IDS.TAB_MAPPINGS, "n_clicks"),
         prevent_initial_call=True,
     )
-    def switch_tab(_a, _b, _c):
-        from dash import ctx
+    def switch_tab(
+        _a: int | None, _b: int | None, _c: int | None
+    ) -> tuple[str, dict, dict, dict, str, str, str]:
         active = ctx.triggered_id or IDS.TAB_OVERVIEW
 
         styles = [

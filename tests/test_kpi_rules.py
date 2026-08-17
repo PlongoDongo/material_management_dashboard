@@ -14,7 +14,7 @@ from kpi.kpi_rules import (
 
 
 @pytest.fixture
-def df():
+def df() -> pl.DataFrame:
     return pl.DataFrame(
         {
             "status": ["Aktiv", "Aktiv", "Gesperrt", "Obsolet", "Nicht geliefert"],
@@ -23,19 +23,19 @@ def df():
     )
 
 
-def test_count_status(df):
+def test_count_status(df: pl.DataFrame) -> None:
     assert count_aktiv(df) == 2
     assert count_gesperrt(df) == 1
     assert count_obsolet(df) == 1
     assert count_nicht_geliefert(df) == 1
 
 
-def test_count_ohne_klassifizierung(df):
+def test_count_ohne_klassifizierung(df: pl.DataFrame) -> None:
     # None + "" -> 2
     assert count_ohne_klassifizierung(df) == 2
 
 
-def test_compute_kpis_shape(df):
+def test_compute_kpis_shape(df: pl.DataFrame) -> None:
     kpis = compute_kpis(df)
     assert len(kpis) == len(KPI_DEFINITIONS)
     for k in kpis:
@@ -43,7 +43,7 @@ def test_compute_kpis_shape(df):
         assert isinstance(k["value"], int)
 
 
-def test_kpi_click_filters_are_valid():
+def test_kpi_click_filters_are_valid() -> None:
     """Jede KPI trägt ein anwendbares Filter-Update."""
     for k in KPI_DEFINITIONS:
         assert "status" in k["filter"]

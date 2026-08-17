@@ -13,8 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from config import FIXED_COLUMNS
-from data.repository import COLUMNS
+from data.schema import COLUMNS, FIXED_COLUMNS
 
 ASSET = Path(__file__).resolve().parents[1] / "assets" / "column_menu.js"
 
@@ -35,7 +34,7 @@ console.log(JSON.stringify(
 """
 
 
-def _run(fn, args, triggered=None):
+def _run(fn: str, args: list, triggered: list[dict] | None = None) -> list[str]:
     script = _HARNESS % {
         "source": ASSET.read_text(encoding="utf-8"),
         "triggered": json.dumps(triggered or []),
@@ -48,21 +47,21 @@ def _run(fn, args, triggered=None):
 
 
 # -- applyVisibility --------------------------------------------------------
-def test_all_checked_hides_nothing():
+def test_all_checked_hides_nothing() -> None:
     assert _run("applyVisibility", [list(_TOGGLEABLE), _OPTIONS]) == []
 
 
-def test_none_checked_hides_all_toggleable():
+def test_none_checked_hides_all_toggleable() -> None:
     assert sorted(_run("applyVisibility", [[], _OPTIONS])) == sorted(_TOGGLEABLE)
 
 
-def test_partial_selection_hides_complement():
+def test_partial_selection_hides_complement() -> None:
     keep = _TOGGLEABLE[:2]
     hidden = _run("applyVisibility", [keep, _OPTIONS])
     assert sorted(hidden) == sorted(_TOGGLEABLE[2:])
 
 
-def test_fixed_columns_never_hidden():
+def test_fixed_columns_never_hidden() -> None:
     """Die fixierten Spalten tauchen gar nicht in den Optionen auf ->
     können also nie ausgeblendet werden, egal was angehakt ist."""
     hidden = _run("applyVisibility", [[], _OPTIONS])
@@ -71,13 +70,13 @@ def test_fixed_columns_never_hidden():
 
 
 # -- selectAll --------------------------------------------------------------
-def test_select_all_returns_every_toggleable():
+def test_select_all_returns_every_toggleable() -> None:
     out = _run("selectAll", [1, 0, _OPTIONS],
                triggered=[{"prop_id": "columns-all.n_clicks"}])
     assert sorted(out) == sorted(_TOGGLEABLE)
 
 
-def test_select_none_returns_empty():
+def test_select_none_returns_empty() -> None:
     out = _run("selectAll", [0, 1, _OPTIONS],
                triggered=[{"prop_id": "columns-none.n_clicks"}])
     assert out == []

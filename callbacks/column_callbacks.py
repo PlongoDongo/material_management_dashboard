@@ -15,12 +15,12 @@ toggelt, Klick daneben schließt).
 """
 from __future__ import annotations
 
-from dash import ClientsideFunction, Input, Output, State
+from dash import ClientsideFunction, Dash, Input, Output, State
 
 from config import IDS
 
 
-def register_column_callbacks(app) -> None:
+def register_column_callbacks(app: Dash) -> None:
     # 1) Angehakte Spalten -> hidden_columns (alle nicht angehakten toggelbaren)
     app.clientside_callback(
         ClientsideFunction(namespace="cols", function_name="applyVisibility"),

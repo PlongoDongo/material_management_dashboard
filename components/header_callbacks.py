@@ -23,12 +23,12 @@ relevanten Trigger (Icon, Overlay, Schließen-Button) und entscheidet über den
 """
 from __future__ import annotations
 
-from dash import ClientsideFunction, Input, Output, State
+from dash import ClientsideFunction, Dash, Input, Output, State
 
 from config import IDS
 
 
-def register_header_callbacks(app) -> None:
+def register_header_callbacks(app: Dash) -> None:
 
     # ---- Linke Navigations-Sidebar ---------------------------------------
     app.clientside_callback(

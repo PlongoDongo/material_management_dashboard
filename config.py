@@ -19,7 +19,7 @@ COLORS = {
     "text_muted": "#5b6b7d",
 }
 
-# KPI-Kachelfarben (Reihenfolge = Anzeige-Reihenfolge)
+# KPI-Kachelfarben -- die Reihenfolge ist zugleich die Anzeige-Reihenfolge
 KPI_COLORS = {
     "green":  "#2e9e5b",   # Aktive Materialien
     "orange": "#ef6c00",   # Nicht gelieferte Teile
@@ -75,7 +75,7 @@ class IDS:
     STORE_EMPTY_CLICK = "store-empty-click"  # Klick auf leere Fläche (assets/empty_click.js)
     STORE_KPI_FILTERS = "store-kpi-filters"  # KPI-Regeln für assets/kpi_highlight.js
 
-    # Tabs (Footer)
+    # Tabs im Footer
     TAB_OVERVIEW = "data-overview"
     TAB_MANAGE = "manage-data"
     TAB_MAPPINGS = "apply-data-mappings"
@@ -109,7 +109,5 @@ APP_VERSION = "v0.1"
 RESTRICTION_TEXT = "Restricted"          # Mini-Leiste über dem Header
 LOGO_SRC = "/assets/logo.svg"            # eigenes Logo: hier ersetzen
 
-# Spalten, die in der Materialtabelle IMMER sichtbar und beim horizontalen
-# Scrollen links fixiert bleiben. Alle übrigen Spalten sind über das
-# Spalten-Popover an-/abwählbar.
-FIXED_COLUMNS = ("material_nr", "bezeichnung")
+# Hinweis: Das Spaltenschema (inkl. FIXED_COLUMNS, Labels, Breiten) ist EINE
+# Wahrheit in data/schema.py -- dort anpassen, nicht hier.

@@ -9,8 +9,18 @@ Herkunft der Daten. Dadurch bleibt der Neo4j-Wechsel eine Ein-Datei-Änderung.
 from __future__ import annotations
 
 import logging
+import random
+from typing import TYPE_CHECKING
 
 import polars as pl
+from flask import current_app, has_app_context
+
+# Spaltenschema = EINE Wahrheit (data/schema.py). Re-Export, damit bestehende
+# Importe `from data.repository import COLUMNS` gültig bleiben.
+from data.schema import COLUMN_LABELS, COLUMNS  # noqa: F401
+
+if TYPE_CHECKING:  # nur für Typannotation -- kein Import zur Laufzeit nötig
+    from neo4j import Session
 
 log = logging.getLogger(__name__)
 
@@ -30,29 +40,7 @@ RETURN m.nr        AS material_nr,
        m.geaendert AS geaendert
 """
 
-# Spaltenreihenfolge wie in der Tabelle (Mockup)
-COLUMNS = [
-    "material_nr",
-    "bezeichnung",
-    "warengruppe",
-    "werk",
-    "status",
-    "einheit",
-    "bestand",
-    "geaendert",
-]
-
-# Anzeigeüberschriften -> Spaltennamen (für DataTable)
-COLUMN_LABELS = {
-    "material_nr": "Material-Nr.",
-    "bezeichnung": "Bezeichnung",
-    "warengruppe": "Warengruppe",
-    "werk": "Werk",
-    "status": "Status",
-    "einheit": "Einheit",
-    "bestand": "Bestand",
-    "geaendert": "Geändert",
-}
+# COLUMNS / COLUMN_LABELS kommen aus data/schema.py (oben importiert).
 
 _WARENGRUPPEN = [
     "Betriebsstoffe", "Rohstoffe", "Fertigerzeugnisse", "Verpackung",
@@ -73,8 +61,6 @@ _BEZEICHNUNGEN = [
 
 def _make_mock_frame(n: int = 64) -> pl.DataFrame:
     """Erzeugt deterministische Mock-Daten (fester Seed -> reproduzierbar)."""
-    import random
-
     rng = random.Random(42)
     rows = []
     for i in range(n):
@@ -103,24 +89,34 @@ def _make_mock_frame(n: int = 64) -> pl.DataFrame:
 
 
 def load_materials() -> pl.DataFrame:
-    """Lädt die Materialdaten über den aktiven Neo4jManager.
+    """Lädt die Materialdaten über den Neo4j-Treiber aus app.server.extensions.
 
-    Die Instanz kommt aus `get_manager()` -- es ist GENAU der Treiber, den
-    app.py über `with Neo4jManager(...)` geöffnet hat (Details dort und in
-    data/neo4j_manager.py).
+    Der Treiber wird in app.py angelegt (`server.extensions["neo4j_driver"]`);
+    hier holen wir ihn über `flask.current_app` -- ohne app.py zu importieren
+    (kein Zirkelimport).
 
-    Fällt auf Mock-Daten zurück, wenn kein Manager aktiv ist (z. B. lokal
-    ohne NEO4J_URI), damit die App auch ohne Datenbank läuft.
+    Fällt auf Mock-Daten zurück, wenn kein Treiber vorhanden ist (kein
+    NEO4J_URI) ODER außerhalb eines Flask-App-Kontexts (z. B. Tests/Skripte),
+    damit die App auch ohne Datenbank läuft.
     """
-    from data.neo4j_manager import get_manager
-
-    try:
-        manager = get_manager()
-    except RuntimeError:
-        log.warning("Kein aktiver Neo4jManager -- lade Mock-Daten.")
+    driver = current_app.extensions.get("neo4j_driver") if has_app_context() else None
+    if driver is None:
+        log.warning("Kein Neo4j-Treiber aktiv -- lade Mock-Daten.")
         return _make_mock_frame()
 
-    df = manager.fetch_dataframe(_CYPHER)
+    db_name = current_app.config.get("NEO4J_DB", "neo4j")
+    with driver.session(database=db_name) as session:
+        return _materials_from_session(session)
+
+
+def _materials_from_session(session: "Session") -> pl.DataFrame:
+    """Reiner Kern: bekommt eine Session herein und liefert den DataFrame.
+
+    Durch die injizierte Session ohne echten Server testbar -- Tests übergeben
+    eine Fake-Session (kein Patchen von current_app/Treiber nötig).
+    """
+    result = session.run(_CYPHER)
+    df = pl.DataFrame([record.data() for record in result])
     # bestand als Ganzzahl -- Neo4j kann je nach Property auch Float liefern.
     if "bestand" in df.columns:
         df = df.with_columns(pl.col("bestand").cast(pl.Int64, strict=False))
@@ -132,14 +128,15 @@ def load_materials() -> pl.DataFrame:
 # Für Live-Neo4j-Daten kannst du hier eine TTL/Refresh-Logik einbauen
 # oder `get_materials(force_reload=True)` aufrufen.
 # --------------------------------------------------------------------------
-_CACHE: pl.DataFrame | None = None
+# Container statt eines nackten Modul-Namens: so wird der Cache befüllt, ohne
+# dass die Funktion den Modulnamen per `global` neu binden muss.
+_CACHE: dict[str, pl.DataFrame] = {}
 
 
-def get_materials(force_reload: bool = False) -> pl.DataFrame:
-    global _CACHE
-    if _CACHE is None or force_reload:
-        _CACHE = load_materials()
-    return _CACHE
+def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
+    if force_reload or "materials" not in _CACHE:
+        _CACHE["materials"] = load_materials()
+    return _CACHE["materials"]
 
 
 def distinct_values(column: str) -> list[str]:
