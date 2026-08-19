@@ -13,7 +13,8 @@ Wiederverwendung in anderen Dashboards
 `header_layout()` ist bewusst parametrisiert -- Titel, Untertitel, Logo und
 Restriction-Text kommen als Argumente herein, die Button-IDs sind einstellbar.
 Ein neues Dashboard ruft einfach `header_layout(title=..., subtitle=...)` auf;
-die zugehörigen Öffnen/Schließen-Callbacks stehen in `header_callbacks.py`.
+die zugehörigen Öffnen/Schließen-Callbacks stehen in
+`callbacks/header_callbacks.py`.
 
 Der Header enthält bewusst KEINE Sidebars mehr. Nav- und Filter-Sidebar sind
 eigene Komponenten (components/nav_sidebar.py, filter_sidebar.py) und liegen

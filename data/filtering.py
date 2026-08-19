@@ -40,30 +40,46 @@ def normalize_filters(raw: dict | None) -> dict:
     }
 
 
+# Spalten, die per Mehrfachauswahl gefiltert werden -- alle nach genau demselben
+# Muster (`Spalte is_in gewählte Werte`). Weil sie gleich sind, stehen sie
+# datengetrieben hier: eine weitere solche Spalte = ein Eintrag mehr, keine neue
+# if-Verzweigung. Die beiden Sonderfälle unten (ohne_klass, search) folgen
+# bewusst NICHT diesem Muster und bleiben deshalb ausgeschrieben.
+_MULTISELECT_COLUMNS = ("status", "werk", "warengruppe")
+
+
+def _search_predicate(needle: str) -> pl.Expr:
+    """Freitextsuche über Material-Nr. ODER Bezeichnung (case-insensitiv)."""
+    needle = needle.lower()
+    return (
+        pl.col("material_nr").str.to_lowercase().str.contains(needle, literal=True)
+        | pl.col("bezeichnung").str.to_lowercase().str.contains(needle, literal=True)
+    )
+
+
 def apply_filters(df: pl.DataFrame, raw_filters: dict | None) -> pl.DataFrame:
-    """Wendet den Filterzustand auf den DataFrame an und gibt das Ergebnis zurück."""
+    """Wendet den Filterzustand auf den DataFrame an und gibt das Ergebnis zurück.
+
+    Sammelt die aktiven Bedingungen als Liste von Polars-Ausdrücken und wendet sie
+    in EINEM `filter`-Aufruf an. Ein leerer Filter (keine aktive Bedingung) gibt
+    den DataFrame unverändert zurück.
+    """
     f = normalize_filters(raw_filters)
-    out = df
 
-    if f["status"]:
-        out = out.filter(pl.col("status").is_in(f["status"]))
-
-    if f["werk"]:
-        out = out.filter(pl.col("werk").is_in(f["werk"]))
-
-    if f["warengruppe"]:
-        out = out.filter(pl.col("warengruppe").is_in(f["warengruppe"]))
-
+    predicates: list[pl.Expr] = [
+        pl.col(col).is_in(f[col]) for col in _MULTISELECT_COLUMNS if f[col]
+    ]
     if f["ohne_klass"]:
-        out = out.filter(
+        predicates.append(
             pl.col("warengruppe").is_null() | (pl.col("warengruppe") == "")
         )
-
     if f["search"]:
-        needle = f["search"].lower()
-        out = out.filter(
-            pl.col("material_nr").str.to_lowercase().str.contains(needle, literal=True)
-            | pl.col("bezeichnung").str.to_lowercase().str.contains(needle, literal=True)
-        )
+        predicates.append(_search_predicate(f["search"]))
 
-    return out
+    if not predicates:
+        return df
+
+    combined = predicates[0]
+    for predicate in predicates[1:]:
+        combined = combined & predicate
+    return df.filter(combined)

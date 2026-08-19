@@ -30,13 +30,13 @@ from dash import Dash, dcc, html
 from config import IDS, APP_TITLE
 from data.neo4j import make_driver
 from components.header_layout import header_layout
-from components.header_callbacks import register_header_callbacks
 from components.nav_sidebar import nav_sidebar
 from components.filter_sidebar import filter_sidebar
 from components.footer_tabs import footer_tabs
 from tabs.data_overview import data_overview_content
 from tabs.manage_data import manage_data_content
 from tabs.apply_mappings import apply_mappings_content
+from callbacks.header_callbacks import register_header_callbacks
 from callbacks.filter_callbacks import register_filter_callbacks
 from callbacks.tab_callbacks import register_tab_callbacks
 from callbacks.column_callbacks import register_column_callbacks

@@ -121,13 +121,20 @@ def material_table() -> dash_table.DataTable:
         # Sichtbarkeit der Spalten steuert das Spalten-Popover (Callback ->
         # hidden_columns). Initial sind alle sichtbar.
         hidden_columns=[],
-        # Material-Nr. und Bezeichnung bleiben beim horizontalen Scrollen links
-        # stehen. `data` = Anzahl der von links fixierten Datenspalten; sie
-        # stehen in COLUMNS ganz vorn (= FIXED_COLUMNS).
-        fixed_columns={"headers": True, "data": len(FIXED_COLUMNS)},
         # Kopf- + Filterzeile bleiben beim vertikalen Scrollen oben stehen; der
         # Tabellenkörper scrollt INNERHALB der Tabelle (Höhe kommt aus dem
         # Flex-Layout der Karte, siehe style.css / .table-card).
+        #
+        # Bewusst KEIN fixed_columns (Einfrieren der linken Spalten beim
+        # horizontalen Scrollen): dessen geteilte Render-Struktur zerlegt in
+        # zwei häufigen Zuständen die Kopfzeile -- bei leerer Tabelle
+        # (Filter ohne Treffer) verschwinden ALLE Spaltennamen, und wenn nur die
+        # zwei nicht-abwählbaren Spalten übrig sind, fehlt der zweiten der
+        # Header. Ohne fixed_columns rendern beide Fälle korrekt. Material-Nr.
+        # und Bezeichnung bleiben trotzdem "immer sichtbar", weil sie im
+        # Spalten-Popover nicht abwählbar sind -- nur das Einfrieren beim
+        # Horizontal-Scrollen entfällt (greift ohnehin nur bei schmalen
+        # Fenstern; siehe Chat für die Abwägung/Alternative).
         fixed_rows={"headers": True},
         style_as_list_view=True,
         # overflow auto in beide Richtungen: vertikal scrollt der Körper (dank

@@ -20,9 +20,8 @@ material_management_dashboard/
 ├── config.py                  # Farben, Element-IDs (eine Wahrheit), Tab-Liste
 ├── assets/style.css           # Design (Dash lädt assets/ automatisch)
 │
-├── components/                # Geteiltes "Chrome"
+├── components/                # Geteiltes "Chrome" (nur Layout-Bausteine)
 │   ├── header_layout.py       #   Team-Header (Restriction|Burger|Logo|Titel|Filter) -> WIEDERVERWENDBAR
-│   ├── header_callbacks.py    #   Sidebar-Toggles                            -> WIEDERVERWENDBAR
 │   ├── nav_sidebar.py         #   linke Navigations-Sidebar (Inhalt = Python-Liste)
 │   ├── filter_sidebar.py      #   rechte Filter-Sidebar (Wahrheitsquelle der Filter)
 │   └── footer_tabs.py         #   blaue Footer-Tab-Leiste
@@ -39,8 +38,10 @@ material_management_dashboard/
 ├── kpi/
 │   └── kpi_rules.py           # regelbasierte KPI-Berechnung (rein, testbar)
 │
-├── callbacks/
+├── callbacks/                 # register_*(app)-Funktionen (Verhalten)
+│   ├── header_callbacks.py    # Sidebar-Toggles (Menü-/Filter-Icon)  -> WIEDERVERWENDBAR
 │   ├── filter_callbacks.py    # Filter, KPI-Klick, Tabellen-Rendering
+│   ├── column_callbacks.py    # Spaltenauswahl-Popover (clientseitig)
 │   └── tab_callbacks.py       # Tab-Umschaltung
 │
 └── tests/                     # PyTest für filtering + kpi_rules
