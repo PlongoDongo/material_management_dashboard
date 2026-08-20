@@ -1,23 +1,38 @@
-# Python
+# --- Python ---------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
 venv/
+.python-version
 
-# Test / Tooling
+# --- Abhaengigkeiten ------------------------------------------------------
+node_modules/
+package-lock.json
+
+# --- Test / Tooling -------------------------------------------------------
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
+test-artifacts/
 
-# macOS
+# --- Konfiguration mit Zugangsdaten ---------------------------------------
+# .env enthaelt Neo4j-/Postgres-Zugangsdaten und gehoert NIEMALS ins Repo.
+# Die Vorlage .env.example wird dagegen versioniert.
+.env
+.env.local
+*.env
+!.env.example
+!*.env.example
+
+# --- macOS / Editor -------------------------------------------------------
 .DS_Store
-
-# Editor
 .vscode/
 .idea/
+*.swp
 
-# Claude Code / lokale Dev-Tooling (persönlich, nicht ins Repo)
+# --- Lokale Dev-Tooling (persoenlich, nicht ins Repo) ----------------------
 .claude/
 .mcp.json
-test-artifacts/

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Test / Tooling
+.pytest_cache/
+.coverage
+htmlcov/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Claude Code / lokale Dev-Tooling (persönlich, nicht ins Repo)
+.claude/
+.mcp.json
+test-artifacts/
