@@ -1,152 +1,157 @@
 """
-Datenzugriffsschicht (Repository).
+Datenzugriffsschicht des Dashboards.
 
-Aktuell: synthetische Mock-Daten als Polars DataFrame.
-Später: Hier steckst du deine Neo4j-Abfrage ein -- siehe `load_materials()`.
-Der Rest der App ruft NUR `get_materials()` auf und weiß nichts von der
-Herkunft der Daten. Dadurch bleibt der Neo4j-Wechsel eine Ein-Datei-Änderung.
+Diese Datei ist die EINZIGE Stelle, die weiss, woher die Daten kommen. Der Rest
+des Dashboards ruft `get_materials()` auf und bekommt einen Polars-DataFrame --
+genau wie vorher. Deshalb war der Umstieg von Neo4j auf den API-Layer eine
+Aenderung an dieser einen Datei (plus dem Wegfall von `data/neo4j.py`).
+
+    frueher:  get_materials() -> Cypher gegen Neo4j -> DataFrame
+    jetzt:    get_materials() -> HTTP an den API-Layer -> DataFrame
+
+Was das Dashboard dadurch NICHT mehr braucht:
+  * den neo4j-Treiber und dessen Zugangsdaten
+  * Kenntnis des Graphmodells (Cypher)
+  * eine eigene Vorstellung davon, was "Bestandswert" bedeutet
+
+ZWEI NAMENSRAEUME, EINE GRENZE
+==============================
+Der API-Vertrag und die Spaltennamen der Tabelle sind NICHT dasselbe. Die API
+liefert `werk_id` und `werk_name`; das Dashboard hat historisch eine Spalte
+`werk`. Statt jetzt Filter, Callbacks, Sidebar und Tests umzubenennen, wird an
+dieser Grenze uebersetzt -- siehe `_API_TO_UI`.
+
+Das ist Absicht und kein Notbehelf: Die API gehoert einem anderen Team und darf
+ihre Felder umbenennen, ohne dass das Dashboard bricht. Was sich dann aendert,
+ist eine Zeile hier. Wichtig ist nur, dass die Uebersetzung SICHTBAR an einer
+Stelle steht und nicht ueber den Code verstreut ist.
 """
 from __future__ import annotations
 
 import logging
-import random
-from typing import TYPE_CHECKING
+import os
+import time
 
 import polars as pl
-from flask import current_app, has_app_context
 
-# Spaltenschema = EINE Wahrheit (data/schema.py). Re-Export, damit bestehende
-# Importe `from data.repository import COLUMNS` gültig bleiben.
-from data.schema import COLUMN_LABELS, COLUMNS  # noqa: F401
-
-if TYPE_CHECKING:  # nur für Typannotation -- kein Import zur Laufzeit nötig
-    from neo4j import Session
+from data.api_client import DataProductClient, DataProductError
+from data.schema import COLUMN_LABELS, COLUMNS  # noqa: F401  (Re-Export)
 
 log = logging.getLogger(__name__)
 
-# Cypher für die Materialdaten. Muss dieselben Spalten wie COLUMNS liefern,
-# dann funktioniert der Rest der App unverändert.
-_CYPHER = """
-MATCH (m:Material)
-OPTIONAL MATCH (m)-[:HAS_WARENGRUPPE]->(w:Warengruppe)
-OPTIONAL MATCH (m)-[:LOCATED_IN]->(werk:Werk)
-RETURN m.nr        AS material_nr,
-       m.name      AS bezeichnung,
-       w.name      AS warengruppe,
-       werk.name   AS werk,
-       m.status    AS status,
-       m.einheit   AS einheit,
-       m.bestand   AS bestand,
-       m.geaendert AS geaendert
-"""
+# Welches Datenprodukt in welcher Version. Bewusst fest verdrahtet und nicht
+# "latest": ein Versionswechsel soll im Git-Diff auftauchen und getestet werden,
+# nicht still passieren, weil die API ein neues Major ausgerollt hat.
+PRODUCT = "material-overview"
+VERSION = "v2"
 
-# COLUMNS / COLUMN_LABELS kommen aus data/schema.py (oben importiert).
+# Wie lange ein einmal geholter Datenstand im Dashboard-Prozess gilt.
+# Der Server cached zusaetzlich (cache_ttl des Datenprodukts); dieser Cache hier
+# spart den HTTP-Roundtrip bei jedem Callback.
+CACHE_TTL_SECONDS = int(os.getenv("DATA_CACHE_TTL", "60"))
 
-_WARENGRUPPEN = [
-    "Betriebsstoffe", "Rohstoffe", "Fertigerzeugnisse", "Verpackung",
-    "Ersatzteile", "Halbfabrikate", "",  # "" = ohne Klassifizierung
-]
-_WERKE = ["Werk Köln", "Werk Berlin", "Werk München", "Werk Hamburg"]
-_STATUS = ["Aktiv", "Nicht geliefert", "Obsolet", "Gesperrt"]
-_EINHEITEN = ["M", "KG", "L", "PAK", "ST"]
-_BEZEICHNUNGEN = [
-    "Gewindestange M10", "Sensorhalter Typ B", "Dichtungsring NBR 25",
-    "Aluminiumprofil 40x40", "Steckverbinder 4-pol", "Schrumpfschlauch 6mm",
-    "Edelstahlschraube M8x40", "Führungsschiene 500mm", "Kabelkanal PVC 60x40",
-    "Distanzhülse 10mm", "Winkelschleifer-Scheibe", "Ölfilter Standard",
-    "Antriebswelle 20mm", "Umlenkrolle 60mm", "Zahnriemen HTD-5M",
-    "Filtereinsatz F7", "Kupferrohr 15mm", "Hydraulikzylinder 80mm",
-]
+# API-Feld -> Dashboard-Spalte. Nur was hier steht, landet in der Tabelle.
+# Felder der API, die das Dashboard nicht braucht (werk_id, preis), fehlen
+# bewusst -- neue Felder der API brechen das Dashboard dadurch nie.
+_API_TO_UI: dict[str, str] = {
+    "material_nr": "material_nr",
+    "bezeichnung": "bezeichnung",
+    "warengruppe": "warengruppe",
+    "werk_name": "werk",          # <- die einzige echte Umbenennung
+    "status": "status",
+    "bestand": "bestand",
+    "bestandswert": "bestandswert",
+    "geaendert": "geaendert",
+}
+
+# EIN Client pro Prozess. Er haelt den Connection-Pool offen; ein
+# `httpx.get(...)` pro Callback wuerde jedes Mal neu verbinden.
+_client = DataProductClient()
+
+# Cache-Container statt eines nackten Modul-Globals, damit die Funktion unten
+# den Namen nicht per `global` neu binden muss.
+_CACHE: dict[str, object] = {}
 
 
-def _make_mock_frame(n: int = 64) -> pl.DataFrame:
-    """Erzeugt deterministische Mock-Daten (fester Seed -> reproduzierbar)."""
-    rng = random.Random(42)
-    rows = []
-    for i in range(n):
-        # Statusverteilung grob am Mockup orientiert
-        status = rng.choices(
-            _STATUS, weights=[0.55, 0.18, 0.15, 0.12], k=1
-        )[0]
-        # ~6 % der Materialien ohne Warengruppe
-        warengruppe = rng.choices(
-            _WARENGRUPPEN, weights=[0.18, 0.18, 0.18, 0.12, 0.12, 0.16, 0.06], k=1
-        )[0]
-        rows.append(
-            {
-                "material_nr": f"MAT-{100777 + i * 13}",
-                "bezeichnung": rng.choice(_BEZEICHNUNGEN),
-                "warengruppe": warengruppe,
-                "werk": rng.choice(_WERKE),
-                "status": status,
-                "einheit": rng.choice(_EINHEITEN),
-                "bestand": rng.randint(300, 9800),
-                "geaendert": f"{rng.randint(1,28):02d}.{rng.randint(1,12):02d}.2026",
-            }
+def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
+    """API-Zeilen -> DataFrame mit den Dashboard-Spalten.
+
+    Rein und ohne HTTP: bekommt Zeilen herein, gibt einen DataFrame zurueck.
+    Dadurch ohne laufende API testbar (siehe tests/test_repository.py).
+    """
+    if not rows:
+        # Leerer, aber SCHEMA-KORREKTER Frame. Ohne Schema wuerde die Tabelle
+        # beim ersten leeren Ergebnis mit "column not found" abstuerzen.
+        return pl.DataFrame(
+            schema={c: (pl.Int64 if c in ("bestand",) else
+                        pl.Float64 if c == "bestandswert" else pl.Utf8)
+                    for c in COLUMNS}
         )
-    return pl.DataFrame(rows, schema={c: (pl.Int64 if c == "bestand" else pl.Utf8)
-                                       for c in COLUMNS})
+
+    frame = pl.DataFrame(rows)
+    # Nur bekannte Felder uebernehmen und auf die UI-Namen umbenennen.
+    vorhanden = {api: ui for api, ui in _API_TO_UI.items() if api in frame.columns}
+    frame = frame.select(list(vorhanden)).rename(vorhanden)
+
+    # Fehlende Spalten ergaenzen: liefert die API ein Feld (noch) nicht, soll
+    # die Tabelle trotzdem rendern statt zu fliegen.
+    for column in COLUMNS:
+        if column not in frame.columns:
+            log.warning("Datenprodukt %s/%s liefert kein Feld fuer Spalte '%s'.",
+                        PRODUCT, VERSION, column)
+            frame = frame.with_columns(pl.lit(None).alias(column))
+
+    return frame.select(COLUMNS).with_columns(
+        pl.col("bestand").cast(pl.Int64, strict=False)
+    )
 
 
 def load_materials() -> pl.DataFrame:
-    """Lädt die Materialdaten über den Neo4j-Treiber aus app.server.extensions.
-
-    Der Treiber wird in app.py angelegt (`server.extensions["neo4j_driver"]`);
-    hier holen wir ihn über `flask.current_app` -- ohne app.py zu importieren
-    (kein Zirkelimport).
-
-    Fällt auf Mock-Daten zurück, wenn kein Treiber vorhanden ist (kein
-    NEO4J_URI) ODER außerhalb eines Flask-App-Kontexts (z. B. Tests/Skripte),
-    damit die App auch ohne Datenbank läuft.
-    """
-    driver = current_app.extensions.get("neo4j_driver") if has_app_context() else None
-    if driver is None:
-        log.warning("Kein Neo4j-Treiber aktiv -- lade Mock-Daten.")
-        return _make_mock_frame()
-
-    db_name = current_app.config.get("NEO4J_DB", "neo4j")
-    with driver.session(database=db_name) as session:
-        return _materials_from_session(session)
-
-
-def _materials_from_session(session: "Session") -> pl.DataFrame:
-    """Reiner Kern: bekommt eine Session herein und liefert den DataFrame.
-
-    Durch die injizierte Session ohne echten Server testbar -- Tests übergeben
-    eine Fake-Session (kein Patchen von current_app/Treiber nötig).
-    """
-    result = session.run(_CYPHER)
-    df = pl.DataFrame([record.data() for record in result])
-    # bestand als Ganzzahl -- Neo4j kann je nach Property auch Float liefern.
-    if "bestand" in df.columns:
-        df = df.with_columns(pl.col("bestand").cast(pl.Int64, strict=False))
-    return df.select(COLUMNS)
-
-
-# --------------------------------------------------------------------------
-# Einfaches Caching: die Daten werden einmal pro Prozess geladen.
-# Für Live-Neo4j-Daten kannst du hier eine TTL/Refresh-Logik einbauen
-# oder `get_materials(force_reload=True)` aufrufen.
-# --------------------------------------------------------------------------
-# Container statt eines nackten Modul-Namens: so wird der Cache befüllt, ohne
-# dass die Funktion den Modulnamen per `global` neu binden muss.
-_CACHE: dict[str, pl.DataFrame] = {}
+    """Holt das Datenprodukt beim API-Layer und formt es fuer die Tabelle."""
+    rows, meta = _client.fetch(PRODUCT, VERSION, limit=50_000)
+    log.info("Datenstand %s | Quelle %s | %s Zeilen | Cache %s",
+             meta.get("generated_at"), meta.get("source"),
+             meta.get("total_count"), meta.get("cache"))
+    if meta.get("deprecated"):
+        log.warning("Datenprodukt %s/%s ist abgekuendigt (Sunset %s) -- bitte migrieren.",
+                    PRODUCT, VERSION, meta.get("sunset"))
+    return _rows_to_frame(rows)
 
 
 def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
-    if force_reload or "materials" not in _CACHE:
-        _CACHE["materials"] = load_materials()
-    return _CACHE["materials"]
+    """Gecachter Zugriff. Das ist die Funktion, die der Rest des Dashboards nutzt.
+
+    Verhalten bei API-Ausfall: Gibt es noch einen (abgelaufenen) Stand im Cache,
+    wird dieser weiter ausgeliefert und eine Warnung geloggt -- ein Dashboard,
+    das kurz veraltete Zahlen zeigt, ist besser als eines, das leer ist. Gibt es
+    keinen, wird der Fehler durchgereicht, statt stillschweigend eine leere
+    Tabelle zu zeigen.
+    """
+    frisch_bis = float(_CACHE.get("expires_at", 0))  # type: ignore[arg-type]
+    if not force_reload and _CACHE.get("frame") is not None and time.monotonic() < frisch_bis:
+        return _CACHE["frame"]  # type: ignore[return-value]
+
+    try:
+        frame = load_materials()
+    except DataProductError as exc:
+        if _CACHE.get("frame") is not None:
+            log.warning("API nicht erreichbar (%s) -- liefere den letzten Stand weiter.", exc)
+            return _CACHE["frame"]  # type: ignore[return-value]
+        log.error("API nicht erreichbar und kein Stand im Cache: %s", exc)
+        raise
+
+    _CACHE["frame"] = frame
+    _CACHE["expires_at"] = time.monotonic() + CACHE_TTL_SECONDS
+    return frame
 
 
 def distinct_values(column: str) -> list[str]:
-    """Eindeutige, sortierte Werte einer Spalte -- für die Filter-Dropdowns."""
-    df = get_materials()
-    vals = (
-        df.select(pl.col(column))
+    """Eindeutige, sortierte Werte einer Spalte -- fuer die Filter-Dropdowns."""
+    values = (
+        get_materials()
+        .select(pl.col(column))
         .drop_nulls()
-        .unique()
         .to_series()
         .to_list()
     )
-    return sorted([v for v in vals if v not in (None, "")])
+    return sorted({v for v in values if v not in (None, "")})

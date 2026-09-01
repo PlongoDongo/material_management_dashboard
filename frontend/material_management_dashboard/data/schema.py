@@ -9,9 +9,14 @@ Jetzt beschreibt `MATERIAL_COLUMNS` jede Spalte EINMAL (id, Label, Breite, Typ,
 Fixierung); alles Weitere wird daraus abgeleitet. Eine Spalte ändern = eine
 Zeile ändern.
 
-Bewusst frei von Dash und Neo4j: Wenn das Data-Fetching später hinter einen
-zentralen API-Server wandert, bleibt dieses Schema der Vertrag mit dem Server --
-unabhängig von der Datenquelle -- und muss nicht angefasst werden.
+Bewusst frei von Dash und HTTP: Das Schema beschreibt, was die TABELLE zeigt --
+nicht, was die API liefert. Beides wird in `data/repository.py::_API_TO_UI`
+aufeinander abgebildet.
+
+Historie: Bis zum Umstieg auf den API-Layer gab es hier eine Spalte `einheit`.
+Das Datenprodukt `material-overview` liefert sie ab v2 nicht mehr, dafür den
+berechneten `bestandswert`. Genau dafür ist die Versionierung der Datenprodukte
+da -- v1 liefert weiterhin `einheit`, falls jemand sie doch braucht.
 """
 from __future__ import annotations
 
@@ -39,8 +44,8 @@ MATERIAL_COLUMNS: list[Column] = [
     Column("warengruppe", "Warengruppe", 160),
     Column("werk",        "Werk",        140),
     Column("status",      "Status",      150),
-    Column("einheit",     "Einheit",      90),
     Column("bestand",     "Bestand",     110, numeric=True),
+    Column("bestandswert", "Bestandswert", 130, numeric=True),
     Column("geaendert",   "Geändert",    120),
 ]
 

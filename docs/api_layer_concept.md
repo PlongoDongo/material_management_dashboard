@@ -828,45 +828,64 @@ uvicorn data_api.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 ## 16. Anbindung der Dashboards
 
-Das Ziel: Im Dashboard verschwinden Cypher, Neo4j-Treiber und Zugangsdaten.
-`data/repository.py` behält seine Funktion `get_materials()` — der Rest des
-Dashboards (Filter, KPIs, Tabelle) bleibt unverändert, weil er ohnehin nur diese
-Funktion kennt. Das ist der Verdienst der bestehenden Isolation.
+**Umgesetzt** für das Material-Management-Dashboard. Im Dashboard sind Cypher,
+Neo4j-Treiber und Zugangsdaten verschwunden:
 
-```python
-# material_management_dashboard/data/repository.py  — nachher
-from data_api.clients.dash_client import DataProductClient
-import polars as pl
-
-_client = DataProductClient()          # einmal pro Prozess (hält den Pool)
-
-def load_materials() -> pl.DataFrame:
-    rows, meta = _client.fetch("material-overview", "v2", limit=50_000)
-    log.info("Datenstand %s (%s)", meta["generated_at"], meta["source"])
-    return pl.DataFrame(rows)
+```
+vorher:   Dashboard ──Bolt/Cypher──► Neo4j
+nachher:  Dashboard ──HTTP/JSON────► API-Layer ──► Neo4j
 ```
 
-`data/neo4j.py` und der Cypher entfallen ersatzlos.
+| Datei | Vorher | Nachher |
+|---|---|---|
+| `data/neo4j.py` | Treiber, Zugangsdaten | gelöscht |
+| `data/repository.py` | Cypher + Mock-Daten | ruft den API-Client |
+| `data/api_client.py` | — | neu, kennt HTTP |
+| `app.py` | legt den Treiber an | nichts mehr davon |
+| `requirements.txt` | `neo4j` | `httpx` |
 
-Der mitgelieferte Client ([`clients/dash_client.py`](../api/src/data_api/clients/dash_client.py))
-ist bewusst **synchron** (`httpx.Client`) — Dash-Callbacks sind synchron, ein
-`asyncio.run()` im Callback wäre ein Fehler mit Ansage. Er hält den
-Connection-Pool offen, verwaltet ETags für konditionale Requests und warnt, wenn
-ein bezogenes Produkt deprecated ist.
+**Filter, KPIs, Tabelle und Callbacks wurden nicht angefasst** — sie kannten
+schon vorher nur `get_materials()`. Das war der Verdienst der bestehenden
+Isolation der Datenschicht und die eigentliche Probe darauf, ob der Vertrag trägt.
 
-**Eine Entscheidung, die ihr treffen solltet:** Wohin wandert die Filterlogik?
+### Die Grenze zwischen API-Vertrag und Tabellenspalten
 
-* **Kurzfristig:** alles lassen wie es ist — das Dashboard holt die volle Tabelle
-  und filtert weiter in `data/filtering.py` mit Polars. Minimaler Umbau.
-* **Mittelfristig:** die Filter als Query-Parameter mitschicken
-  (`?status=Gesperrt&werk_id=W-KOE`). Der Server filtert, weniger Daten gehen
-  übers Netz, Caching wird treffsicherer. Die Parametermodelle dafür existieren
-  bereits (`MaterialParamsV2`).
+Beides ist nicht dasselbe. Die API liefert `werk_id` und `werk_name`, die Tabelle
+hat historisch eine Spalte `werk`. Übersetzt wird an einer sichtbaren Stelle:
 
-Ich würde mit dem ersten Schritt anfangen und den zweiten machen, sobald die
-echten Datenmengen bekannt sind.
+```python
+# data/repository.py
+_API_TO_UI = {
+    "werk_name": "werk",      # die einzige echte Umbenennung
+    ...                       # werk_id und preis fehlen: nicht gebraucht
+}
+```
 
----
+Zwei Effekte: Beim Umbau musste keine Filter- oder Callback-Datei angefasst
+werden. Und **ein neues Feld in der API kann das Dashboard nie brechen**, weil
+nur übernommen wird, was in dieser Abbildung steht — der Grund, warum ein
+hinzugefügtes Feld nur MINOR ist.
+
+### Der Client ist eine Kopiervorlage
+
+[`clients/dash_client.py`](../api/src/data_api/clients/dash_client.py) wird in
+jedes Dashboard kopiert, nicht importiert: `api/` hängt an FastAPI, dem
+Neo4j-Treiber und SQLAlchemy — nichts davon soll ins Dashboard, das nur `httpx`
+braucht. Sobald das dritte Dashboard ihn nutzt, lohnt sich ein kleines
+gemeinsames Paket. Der Client ist generisch (er kennt kein Feld eines
+Datenprodukts), die Kopien driften also nicht fachlich auseinander.
+
+Er ist bewusst **synchron** (`httpx.Client`) — Dash-Callbacks sind synchron, ein
+`asyncio.run()` darin wäre ein Fehler mit Ansage.
+
+### Was bewusst noch offen ist
+
+Das Dashboard holt weiterhin die volle Tabelle und filtert lokal in Polars. Das
+war der kleinstmögliche Umbau. Sobald die echten Datenmengen bekannt sind, lohnt
+der zweite Schritt: die Filter als Query-Parameter mitschicken
+(`?status=Gesperrt&werk_id=W-KOE`). Die Parametermodelle dafür existieren bereits
+(`MaterialParamsV2`), und `meta.total_count` liefert die Gesamtzahl für echtes
+serverseitiges Paging.
 
 ## 17. Ein neues Datenprodukt anlegen
 

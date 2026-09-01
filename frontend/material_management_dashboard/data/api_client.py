@@ -1,20 +1,31 @@
 """
-Minimalclient fuer die Dash-Apps.
+HTTP-Client fuer den API-Layer.
 
-Diese Datei ist als Vorlage gedacht: sie wird in jede Dashboard-Anwendung
-kopiert (oder das `api`-Paket wird als Abhaengigkeit installiert und nur dieses
-Modul importiert). Sie ersetzt dort den direkten Neo4j-Zugriff.
+WAS IST DAS?
+============
+Das Dashboard spricht nicht mehr selbst mit Neo4j, sondern fragt den API-Layer
+nach fertigen "Datenprodukten". Dieses Modul ist die eine Stelle, die HTTP
+kennt -- alles andere im Dashboard sieht weiterhin nur einen DataFrame.
 
-Konkret fuer das Material-Management-Dashboard: `data/repository.py` behaelt
-seine Funktion `get_materials()`, ruft darin aber diesen Client statt des
-Neo4j-Treibers. Der Rest des Dashboards -- Filter, KPIs, Tabelle -- bleibt
-unveraendert, weil er ohnehin nur `get_materials()` kennt.
+    Frueher:  Dashboard --Bolt/Cypher--> Neo4j
+    Jetzt:    Dashboard --HTTP/JSON----> API-Layer --> Neo4j / Postgres / ...
 
-Warum synchron (`httpx.Client`) und nicht async? Dash-Callbacks sind synchron.
-Ein `asyncio.run()` im Callback waere ein Fehler mit Ansage.
+HERKUNFT
+========
+Kopie von `api/src/data_api/clients/dash_client.py`. Diese Datei ist die
+Vorlage; aendert sie sich dort, wird sie hier nachgezogen.
 
-Die VERSION ist hier fest verdrahtet. Das ist Absicht: sie soll bei einem
-Update im Diff auftauchen, statt sich still per `latest` zu aendern.
+Warum kopiert und nicht importiert? Weil `api/` ein eigenes Projekt mit eigener
+virtueller Umgebung ist -- es haengt an FastAPI, dem Neo4j-Treiber und
+SQLAlchemy. Nichts davon soll ins Dashboard, das nur `httpx` braucht. Sobald das
+dritte Dashboard diesen Client benutzt, lohnt sich ein kleines gemeinsames
+Paket; bei zweien ist Kopieren billiger als die Paketverwaltung.
+
+WARUM SYNCHRON?
+===============
+Dash-Callbacks sind normale, synchrone Funktionen. Ein `asyncio.run()` darin
+waere ein Fehler mit Ansage. Der API-Server ist intern async -- das ist seine
+Sache und fuer den Client unsichtbar.
 """
 from __future__ import annotations
 
@@ -109,21 +120,3 @@ def _problem_detail(response: httpx.Response) -> str:
         return f"{response.status_code} {response.text[:200]}"
 
 
-# --- Umgesetztes Beispiel ---------------------------------------------------
-#
-# Das Material-Management-Dashboard benutzt diesen Client bereits. Wer ein neues
-# Dashboard anbindet, schaut dort ab:
-#
-#   frontend/material_management_dashboard/data/api_client.py   (Kopie dieser Datei)
-#   frontend/material_management_dashboard/data/repository.py   (die Anwendung)
-#   frontend/material_management_dashboard/tests/test_repository.py
-#       -> zeigt, wie sich der Client mit httpx.MockTransport ohne laufenden
-#          Server testen laesst
-#
-# Kurzfassung:
-#
-#   _client = DataProductClient()          # einmal pro Prozess (haelt den Pool)
-#
-#   def load_materials() -> pl.DataFrame:
-#       rows, meta = _client.fetch("material-overview", "v2", limit=50_000)
-#       return _rows_to_frame(rows)        # API-Felder -> Tabellenspalten

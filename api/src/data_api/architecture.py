@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import datetime as dt
 import inspect
 import sys
 import textwrap
@@ -322,7 +321,11 @@ def diagram_contracts(arch: Architecture) -> str:
 
 
 def render_markdown(arch: Architecture) -> str:
-    heute = dt.date.today().isoformat()
+    # BEWUSST kein Zeitstempel: Der Inhalt dieser Datei muss eine reine Funktion
+    # des Codes sein. Stuende hier das Tagesdatum, schluege der Veraltungs-Check
+    # (tests/test_architecture.py) jeden Tag fehl, ohne dass sich etwas geaendert
+    # haette -- und ein taeglicher Fehlalarm bringt dem Team bei, rote Builds zu
+    # ignorieren. Wann die Datei zuletzt erzeugt wurde, weiss ohnehin git log.
     parts = [
         "# Architektur (automatisch erzeugt)",
         "",
@@ -331,8 +334,9 @@ def render_markdown(arch: Architecture) -> str:
         "> naechsten Lauf verloren. Das Konzept dahinter steht in",
         "> [`api_layer_concept.md`](api_layer_concept.md).",
         "",
-        f"Stand: {heute} · {len(arch.products)} Datenprodukte · "
-        f"{len([r for r in arch.routes if not r.is_alias])} Routen",
+        f"{len(arch.products)} Datenprodukte · "
+        f"{len([r for r in arch.routes if not r.is_alias])} Routen · "
+        f"{len(arch.repo_sources)} Repositories",
         "",
         "## Datenfluss",
         "",

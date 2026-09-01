@@ -5,7 +5,7 @@
 > naechsten Lauf verloren. Das Konzept dahinter steht in
 > [`api_layer_concept.md`](api_layer_concept.md).
 
-Stand: 2026-08-20 · 3 Datenprodukte · 9 Routen
+3 Datenprodukte · 9 Routen · 2 Repositories
 
 ## Datenfluss
 
