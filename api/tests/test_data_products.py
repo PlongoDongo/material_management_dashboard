@@ -137,3 +137,55 @@ def test_schreibender_endpunkt_invalidiert_den_cache(client):
     assert angelegt.status_code == 201
 
     assert client.get(pfad).json()["meta"]["cache"] == "miss"
+
+
+def test_filter_wird_als_parameter_an_die_abfrage_uebergeben(client, fake_sources):
+    """Filter, die in der Abfrage stehen, werden als Parameter durchgereicht.
+
+    Der Fake wendet den Filter bewusst NICHT an -- er wuerde sonst Cypher in
+    Python nachbauen, und der Test pruefte am Ende den Fake statt die API.
+    Geprueft wird die Nahtstelle: kommt `land` an der CYPHER-Abfrage an, und
+    liefert der Endpunkt trotzdem eine gueltige Antwort? Ob der Filter richtig
+    filtert, prueft tests/test_integration_neo4j.py gegen eine echte Datenbank.
+    """
+    antwort = client.get("/api/v1/data-products/supplier-risk/v1",
+                         params={"land": ["DE", "AT"]})
+    assert antwort.status_code == 200          # sonst sieht ein 500er wie Erfolg aus
+    assert antwort.json()["meta"]["version"] == "1.2"
+
+    cypher, parameter = fake_sources.aufrufe[0]
+    assert "s.land IN $land" in cypher         # der Wert ging an DIESE Abfrage
+    assert parameter["land"] == ["DE", "AT"]
+
+
+def test_ohne_filter_wird_none_uebergeben(client, fake_sources):
+    """`$land IS NULL OR ...` -- ohne Filter faellt die Bedingung im Cypher weg."""
+    antwort = client.get("/api/v1/data-products/supplier-risk/v1")
+    assert antwort.status_code == 200
+    assert fake_sources.aufrufe[0][1]["land"] is None
+
+
+def test_leere_liste_gilt_als_kein_filter(client, fake_sources):
+    """Ein leeres Mehrfach-Auswahlfeld darf nicht alles wegfiltern.
+
+    `[] IS NULL` ist in Cypher false und `x IN []` ebenfalls -- ohne
+    Normalisierung kaeme null Zeilen zurueck, ohne Fehler und ohne Hinweis.
+    """
+    antwort = client.get("/api/v1/data-products/supplier-risk/v1", params={"land": []})
+    assert antwort.status_code == 200
+    assert fake_sources.aufrufe[0][1]["land"] is None
+
+
+def test_filter_erreicht_auch_die_zweite_quelle(client, fake_sources):
+    """Der Filter darf nicht nur die billige Quelle verkleinern.
+
+    Die Lieferhistorie ist die Tabelle, die mit der Zeit waechst -- sie wird auf
+    die Lieferanten eingegrenzt, die die Graph-Abfrage uebrig gelassen hat.
+    """
+    client.get("/api/v1/data-products/supplier-risk/v1", params={"land": ["DE"]})
+
+    cypher, cypher_parameter = fake_sources.aufrufe[0]
+    sql, sql_parameter = fake_sources.aufrufe[1]
+    assert "lieferant_id = ANY(:ids)" in sql
+    assert sql_parameter["ids"] == ["L-001", "L-002", "L-003", "L-004"]
+    assert "seit" in sql_parameter and "seit" not in cypher_parameter

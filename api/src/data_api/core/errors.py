@@ -43,10 +43,17 @@ class AppError(Exception):
         self.extra = extra
 
 
-class ProductNotFoundError(AppError):
-    status_code = status.HTTP_404_NOT_FOUND
-    code = "product_not_found"
-    title = "Data product not found"
+class ForbiddenError(AppError):
+    """Aufrufer ist bekannt, darf dieses Datenprodukt aber nicht sehen.
+
+    Ersetzt ein `raise HTTPException(403, ...)` im Router: so bekommt auch der
+    403 einen `code`, auf den ein Dashboard pruefen kann, und die Regel
+    "in der Domaenenschicht keine HTTPException" gilt ohne Ausnahme.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "forbidden"
+    title = "Access denied"
 
 
 class UpstreamUnavailableError(AppError):
@@ -67,7 +74,13 @@ class ConfigurationError(AppError):
     title = "Server misconfigured"
 
 
-def _problem(status_code: int, title: str, detail: str, code: str) -> JSONResponse:
+def _problem(
+    request: Request, status_code: int, title: str, detail: str, code: str
+) -> JSONResponse:
+    # Erst das Request-Objekt, dann der ContextVar: bei einem 500er laeuft
+    # dieser Handler ausserhalb der RequestContextMiddleware, deren `finally`
+    # den ContextVar bereits zurueckgesetzt hat.
+    request_id = getattr(request.state, "request_id", None) or request_id_var.get()
     return JSONResponse(
         status_code=status_code,
         media_type="application/problem+json",
@@ -77,25 +90,29 @@ def _problem(status_code: int, title: str, detail: str, code: str) -> JSONRespon
             "status": status_code,
             "detail": detail,
             "code": code,
-            "request_id": request_id_var.get(),
+            "request_id": request_id,
         },
+        # Auch als Header: bei einem 500er kommt die Antwort nicht mehr durch
+        # die RequestContextMiddleware, die ihn sonst setzt.
+        headers={"X-Request-ID": request_id},
     )
 
 
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
-    async def _app_error(_: Request, exc: AppError) -> JSONResponse:
+    async def _app_error(request: Request, exc: AppError) -> JSONResponse:
         if exc.status_code >= 500:
             log.exception("AppError: %s", exc.detail)
-        return _problem(exc.status_code, exc.title, exc.detail, exc.code)
+        return _problem(request, exc.status_code, exc.title, exc.detail, exc.code)
 
     @app.exception_handler(StarletteHTTPException)
-    async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-        return _problem(exc.status_code, "HTTP error", str(exc.detail), "http_error")
+    async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return _problem(request, exc.status_code, "HTTP error", str(exc.detail), "http_error")
 
     @app.exception_handler(RequestValidationError)
-    async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         response = _problem(
+            request,
             422,
             "Invalid request",
             "Die Anfrageparameter sind ungueltig.",
@@ -106,9 +123,11 @@ def register_exception_handlers(app: FastAPI) -> None:
 
         body = json.loads(response.body)
         body["errors"] = json.loads(json.dumps(exc.errors(), default=str))
-        return JSONResponse(status_code=422, media_type="application/problem+json", content=body)
+        return JSONResponse(status_code=422, media_type="application/problem+json",
+                            content=body, headers=dict(response.headers))
 
     @app.exception_handler(Exception)
-    async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
+    async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         log.exception("Unbehandelter Fehler: %s", exc)
-        return _problem(500, "Internal server error", "Unerwarteter Fehler.", "internal_error")
+        return _problem(request, 500, "Internal server error",
+                        "Unerwarteter Fehler.", "internal_error")

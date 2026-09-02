@@ -112,3 +112,81 @@ def test_lieferant_ohne_lieferungen_wird_ausgeblendet():
 def test_leere_eingaben_ergeben_leere_ausgabe_statt_absturz():
     assert transform_risk([], [], SupplierRiskParams()) == []
     assert transform_risk(STAMM, [], SupplierRiskParams(min_lieferungen=0)) != []
+
+
+# --- Umwandlung der Neo4j-eigenen Typen ------------------------------------
+# Diese Tests decken einen Fehler ab, der beim ersten echten Datum aus dem
+# Graphen zugeschlagen haette: der Treiber liefert eigene Klassen, die Pydantic
+# nicht kennt.
+
+import neo4j.spatial as ns          # noqa: E402
+import neo4j.time as nt             # noqa: E402
+from neo4j.graph import Graph, Node  # noqa: E402
+
+from data_api.db.sources import _als_python_wert  # noqa: E402
+
+
+def test_neo4j_datum_wird_zu_python_datum():
+    """Ohne Umwandlung lehnt Pydantic den Wert ab -- auch fuer ein date-Feld."""
+    assert _als_python_wert(nt.Date(2026, 8, 20)) == dt.date(2026, 8, 20)
+    assert _als_python_wert(nt.DateTime(2026, 8, 20, 10, 30)) == dt.datetime(2026, 8, 20, 10, 30)
+    assert _als_python_wert(nt.Time(10, 30)) == dt.time(10, 30)
+
+
+def test_duration_wird_lesbarer_text_statt_nacktes_array():
+    """Duration erbt von tuple und waere sonst still zu [3,2,0,90] geworden."""
+    assert _als_python_wert(nt.Duration(months=3, days=2, seconds=90)) == "P3M2DT1M30S"
+
+
+def test_point_behaelt_seine_bedeutung():
+    """Point erbt ebenfalls von tuple -- ohne srid waere unklar, was 7.1 bedeutet."""
+    ergebnis = _als_python_wert(ns.WGS84Point((7.1, 50.7, 100.0)))
+    assert ergebnis == {"srid": 4979, "x": 7.1, "y": 50.7, "z": 100.0}
+
+
+def test_knoten_wird_zu_seinen_properties():
+    knoten = Node(Graph(), "n1", "4:a:1", ["Material"], {"nr": "MAT-1", "bestand": 10})
+    assert _als_python_wert(knoten) == {"nr": "MAT-1", "bestand": 10}
+
+
+def test_verschachtelte_werte_werden_mit_umgewandelt():
+    """collect() und Map-Projektionen liefern Listen und dicts."""
+    roh = {"werk": "Koeln", "termine": [nt.Date(2026, 1, 1), nt.Date(2026, 2, 1)],
+           "detail": {"stand": nt.Date(2026, 3, 1)}}
+    assert _als_python_wert(roh) == {
+        "werk": "Koeln",
+        "termine": [dt.date(2026, 1, 1), dt.date(2026, 2, 1)],
+        "detail": {"stand": dt.date(2026, 3, 1)},
+    }
+
+
+def test_normale_werte_bleiben_unveraendert():
+    for wert in ("Text", 42, 3.14, True, None):
+        assert _als_python_wert(wert) == wert
+
+
+def test_lieferant_ohne_lieferungen_ist_unbekannt_nicht_niedrig():
+    """Keine Daten duerfen keine Bestnote ergeben.
+
+    Vorher: fill_null(1.0) auf "puenktlich" -> Score 0.0 -> Klasse "niedrig".
+    Ein Lieferant ohne jede Historie stand damit ganz unten in der Risikoliste.
+    Dass es nicht auffiel, lag nur am Default min_lieferungen=1, der solche
+    Zeilen wieder herausfilterte -- die Korrektheit hing also am Default eines
+    ANDEREN Parameters.
+    """
+    zeilen = transform_risk(STAMM, [_lieferung("L-1", 0)],
+                            SupplierRiskParams(min_lieferungen=0))
+    nach_id = {z["lieferant_id"]: z for z in zeilen}
+
+    assert nach_id["L-1"]["risiko_klasse"] == "niedrig"      # hat Daten
+    ohne = nach_id["L-2"]                                     # hat keine
+    assert ohne["lieferungen"] == 0
+    assert ohne["risiko_score"] is None
+    assert ohne["risiko_klasse"] == "unbekannt"
+    assert ohne["liefertreue_pct"] is None
+
+
+def test_ohne_datenlage_steht_am_ende_der_sortierung():
+    zeilen = transform_risk(STAMM, [_lieferung("L-1", 14, reklamationen=1)],
+                            SupplierRiskParams(min_lieferungen=0))
+    assert [z["risiko_klasse"] for z in zeilen] == ["hoch", "unbekannt"]

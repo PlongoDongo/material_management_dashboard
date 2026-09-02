@@ -17,7 +17,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProductParams(BaseModel):
@@ -31,12 +31,47 @@ class ProductParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # limit/offset paginieren die FERTIGE Produktantwort und werden vom Router
+    # angewandt -- NICHT in der Abfrage. Steht SKIP/LIMIT zusaetzlich im Cypher,
+    # wird zweimal geschnitten und ab Seite 2 ist die Antwort leer.
     limit: int = Field(1000, ge=1, le=50_000, description="Maximale Zeilenzahl.")
     offset: int = Field(0, ge=0, description="Zeilen, die uebersprungen werden.")
 
+    @field_validator("*", mode="after")
+    @classmethod
+    def _leere_liste_ist_kein_filter(cls, wert: object) -> object:
+        """Eine leere Liste bedeutet "kein Filter", nicht "filtere auf nichts".
+
+        Ohne diese Regel wird aus einem leeren Mehrfach-Auswahlfeld im Dashboard
+        ein Filter, der alles wegwirft:
+
+            Python:  status=[]
+            Cypher:  WHERE $status IS NULL OR m.status IN $status
+                     -> [] IS NULL ist false, x IN [] ist false
+                     -> null Zeilen, ohne Fehler und ohne Hinweis
+
+        Der Client raeumt leere Werte zwar heute schon weg, aber das ist eine
+        Zusage des Aufrufers -- ein curl aus einem Notebook oder ein Dash-Callback,
+        der direkt an httpx uebergibt, haette sie nicht. Deshalb hier, an EINER
+        Stelle fuer alle Datenprodukte.
+
+        Voraussetzung: Listenfilter werden als `list[X] | None` deklariert.
+        """
+        if isinstance(wert, list) and not wert:
+            return None
+        return wert
+
     def cache_key(self) -> str:
-        """Die Parameter als Text -- Teil des Cache-Schluessels."""
-        return self.model_dump_json()
+        """Die Parameter als Text -- Teil des Cache-Schluessels.
+
+        `limit`/`offset` sind bewusst AUSGENOMMEN: gecacht wird das vollstaendige
+        Ergebnis des Loaders, geschnitten wird erst danach. Stuenden sie im
+        Schluessel, waere jede Seite ein kompletter Neulauf (bei supplier-risk
+        zwei Datenbankabfragen plus Polars-Aggregation) und derselbe Datensatz
+        laege N-mal im Cache. Sie waehlen einen Ausschnitt, sie bestimmen nicht
+        den Datensatz.
+        """
+        return self.model_dump_json(exclude={"limit", "offset"})
 
 
 class ProductMeta(BaseModel):

@@ -57,12 +57,18 @@ umbenannt = MAJOR, neue Route, alte bleibt bis zum `Sunset`-Datum erreichbar.
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
 
-    app.state.neo4j_driver = await create_driver(settings.neo4j_uri, settings.neo4j_auth)
-    app.state.sql_engine = create_engine(settings.postgres_dsn)
-    app.state.sql_sessionmaker = create_sessionmaker(app.state.sql_engine)
-
-    log.info("Bereit: %d Datenprodukte, env=%s", len(registry), settings.api_env)
+    # Die Zuweisungen stehen IM try: faellt `create_engine` um (fehlerhafter
+    # DSN), bliebe der bereits verbundene Neo4j-Treiber sonst offen -- unter
+    # `--reload` sammeln sich die an.
+    app.state.neo4j_driver = None
+    app.state.sql_engine = None
+    app.state.sql_sessionmaker = None
     try:
+        app.state.neo4j_driver = await create_driver(settings.neo4j_uri, settings.neo4j_auth)
+        app.state.sql_engine = create_engine(settings.postgres_dsn)
+        app.state.sql_sessionmaker = create_sessionmaker(app.state.sql_engine)
+
+        log.info("Bereit: %d Datenprodukte, env=%s", len(registry), settings.api_env)
         yield
     finally:
         await close_driver(app.state.neo4j_driver)

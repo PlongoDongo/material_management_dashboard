@@ -45,6 +45,13 @@ log = logging.getLogger(__name__)
 PRODUCT = "material-overview"
 VERSION = "v2"
 
+# Obergrenze der Abfrage. Zugleich das Maximum von ProductParams.limit --
+# mehr geht serverseitig nicht. Wird sie erreicht, MUSS das auffallen (siehe
+# load_materials): eine vollstaendig aussehende Tabelle mit unvollstaendigen
+# Daten ist schlimmer als eine Fehlermeldung, und die KPI-Kacheln zaehlen die
+# fehlenden Zeilen ebenfalls nicht mit.
+MAX_ZEILEN = 50_000
+
 # Wie lange ein einmal geholter Datenstand im Dashboard-Prozess gilt.
 # Der Server cached zusaetzlich (cache_ttl des Datenprodukts); dieser Cache hier
 # spart den HTTP-Roundtrip bei jedem Callback.
@@ -108,10 +115,23 @@ def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
 
 def load_materials() -> pl.DataFrame:
     """Holt das Datenprodukt beim API-Layer und formt es fuer die Tabelle."""
-    rows, meta = _client.fetch(PRODUCT, VERSION, limit=50_000)
+    rows, meta = _client.fetch(PRODUCT, VERSION, limit=MAX_ZEILEN)
     log.info("Datenstand %s | Quelle %s | %s Zeilen | Cache %s",
              meta.get("generated_at"), meta.get("source"),
              meta.get("total_count"), meta.get("cache"))
+
+    gesamt = meta.get("total_count") or len(rows)
+    if gesamt > len(rows):
+        # Nicht nur loggen: geloggte Fehler sieht im Betrieb niemand, und die
+        # Zahl im Management-Meeting waere dann falsch. Die UI zeigt den
+        # Hinweis neben dem Zeilenzaehler (siehe tabs/data_overview.py).
+        log.error("Datenprodukt gekuerzt: %s von %s Zeilen geladen (limit=%s). "
+                  "KPI-Kacheln und Zaehler sind unvollstaendig.",
+                  len(rows), gesamt, MAX_ZEILEN)
+        _CACHE["gekuerzt"] = (len(rows), gesamt)
+    else:
+        _CACHE.pop("gekuerzt", None)
+
     if meta.get("deprecated"):
         log.warning("Datenprodukt %s/%s ist abgekuendigt (Sunset %s) -- bitte migrieren.",
                     PRODUCT, VERSION, meta.get("sunset"))
@@ -143,6 +163,15 @@ def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
     _CACHE["frame"] = frame
     _CACHE["expires_at"] = time.monotonic() + CACHE_TTL_SECONDS
     return frame
+
+
+def kuerzung() -> tuple[int, int] | None:
+    """(geladen, gesamt), falls der letzte Abruf gekuerzt wurde -- sonst None.
+
+    Die UI liest das, um den Zeilenzaehler zu kennzeichnen. Eine Tabelle, die
+    vollstaendig aussieht und es nicht ist, ist die teuerste Fehlerklasse.
+    """
+    return _CACHE.get("gekuerzt")  # type: ignore[return-value]
 
 
 def distinct_values(column: str) -> list[str]:

@@ -11,14 +11,15 @@ entweder den Quelltext oder die Dependency-Kette. Beides greift hier zu kurz:
 
   * Unsere Datenprodukt-Routen EXISTIEREN NICHT im Quelltext -- sie entstehen
     zur Laufzeit aus der Registry. Ein statischer Parser sieht sie schlicht nicht.
-  * Alle Routen haengen an derselben Dependency (`get_repositories`). Ein
-    DI-Graph zeigt darum fuer jede Route dasselbe Bild und verraet nichts
-    darueber, WELCHE Quelle ein Produkt tatsaechlich nutzt.
+  * Alle Routen haengen an derselben Dependency (`get_sources`). Ein DI-Graph
+    zeigt darum fuer jede Route dasselbe Bild und verraet nichts darueber,
+    WELCHE Quelle ein Produkt tatsaechlich nutzt.
 
 Diese 200 Zeilen wissen dagegen, was die Werkzeuge raten muessten: Version,
 Owner, Cache-TTL, Deprecation, Vertragsfelder -- alles steht schon in der
 Registry. Die fehlende Information (welches Produkt nutzt welches Repository)
-wird per AST aus dem Loader gelesen, statt sie von Hand zu pflegen.
+wird per AST aus dem Loader gelesen (products/introspect.py), statt sie von
+Hand zu pflegen.
 
 Konsequenz: Das Diagramm kann nicht veralten. Wer ein Datenprodukt anlegt oder
 eine Quelle wechselt, aendert das Diagramm automatisch mit -- und `--check`
@@ -38,6 +39,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from data_api.products.base import DataProduct
+from data_api.products.introspect import sources_used_by
 
 
 # ---------------------------------------------------------------------------
@@ -82,30 +84,6 @@ def _parse_function(obj: Any) -> ast.AsyncFunctionDef | ast.FunctionDef | None:
         return None
     node = ast.parse(source).body[0]
     return node if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) else None
-
-
-def sources_used_by(loader: Any) -> list[str]:
-    """Welche Datenquellen fragt dieser Loader ab?
-
-    Gelesen aus `await sources.neo4j(...)` bzw. `await sources.postgres(...)` im
-    Quelltext des Loaders. Per AST und nicht per Regex, damit ein
-    `sources.neo4j` in einem Kommentar oder String nicht mitgezaehlt wird.
-    """
-    fn = _parse_function(loader)
-    if fn is None:
-        return []
-    param = _first_arg_name(fn)
-    if param is None:
-        return []
-    found = {
-        node.func.attr
-        for node in ast.walk(fn)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == param
-    }
-    return sorted(found)
 
 
 def collect(app: FastAPI) -> Architecture:
@@ -166,7 +144,7 @@ def _id(*parts: str) -> str:
 
 
 def diagram_dataflow(arch: Architecture) -> str:
-    """Das Hauptdiagramm: Route -> Datenprodukt -> Repository -> Quelle."""
+    """Das Hauptdiagramm: Route -> Datenprodukt -> Datenquelle."""
     lines = [
         "flowchart LR",
         "  subgraph clients[\"Konsumenten\"]",

@@ -43,7 +43,7 @@ from dash import (
 
 from config import IDS
 from data.filtering import apply_filters
-from data.repository import get_materials
+from data.repository import get_materials, kuerzung
 from kpi.kpi_rules import kpi_filter_map
 
 # Wert eines Filter-Steuerelements, wie ein Callback ihn zurückgibt: die neue
@@ -225,6 +225,14 @@ def register_filter_callbacks(app: Dash) -> None:
         df_all = get_materials()
         df = apply_filters(df_all, filters)
         counter = f"{df.height} / {df_all.height} Datensätze"
+
+        # Hat die API mehr Zeilen, als wir geladen haben? Dann sieht die Tabelle
+        # vollständig aus, ist es aber nicht -- und die KPI-Kacheln zählen die
+        # fehlenden Zeilen ebenfalls nicht mit. Das muss man sehen können.
+        gekuerzt = kuerzung()
+        if gekuerzt:
+            geladen, gesamt = gekuerzt
+            counter += f"  ⚠ gekürzt: {geladen:,} von {gesamt:,} geladen".replace(",", ".")
         return df.to_dicts(), counter
 
     # ---------------------------------------------------------------

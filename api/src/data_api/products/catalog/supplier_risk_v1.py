@@ -27,8 +27,19 @@ from data_api.products.base import DataProduct, ProductParams
 from data_api.products.registry import registry
 
 # 1a. Stammdaten aus dem Graphen.
+#
+# `$land` ist ein PARAMETER, kein eingesetzter Text. Die Zeile
+#     WHERE $land IS NULL OR s.land IN $land
+# ist die Standardredewendung fuer einen OPTIONALEN Filter: wird nichts
+# uebergeben, faellt die Bedingung weg; wird etwas uebergeben, greift sie.
+# So braucht man nicht zwei Abfragen oder zusammengebauten Text.
+#
+# Parametrisierbar sind Werte, Listen sowie SKIP und LIMIT. NICHT
+# parametrisierbar sind Labels, Beziehungstypen und Property-Namen -- die
+# gehoeren zur Struktur der Abfrage.
 CYPHER = """
 MATCH (s:Lieferant)-[:SUPPLIES]->(m:Material)
+WHERE $land IS NULL OR s.land IN $land
 RETURN s.id     AS lieferant_id,
        s.name   AS lieferant_name,
        s.land   AS land,
@@ -36,12 +47,18 @@ RETURN s.id     AS lieferant_id,
 ORDER BY s.id
 """
 
-# 1b. Bewegungsdaten aus Postgres. `:seit` wird als Parameter uebergeben,
-#     nicht in den Text eingesetzt (SQL-Injection).
+# 1b. Bewegungsdaten aus Postgres. `:seit` und `:ids` werden als Parameter
+#     uebergeben, nicht in den Text eingesetzt (SQL-Injection).
+#
+#     `:ids` sind die Lieferanten, die die Graph-Abfrage uebrig gelassen hat.
+#     Ohne diese Einschraenkung zieht das SQL die komplette Lieferhistorie und
+#     der Join wirft den groessten Teil danach weg -- die teure Seite bliebe
+#     ungefiltert, gerade die, die mit der Zeit waechst.
 SQL = """
 SELECT lieferant_id, material_nr, geliefert_am, zugesagt_am, menge, reklamationen
 FROM   lieferungen
 WHERE  geliefert_am >= :seit
+  AND  lieferant_id = ANY(:ids)
 ORDER  BY lieferant_id, geliefert_am
 """
 
@@ -53,11 +70,18 @@ class SupplierRiskRow(BaseModel):
     land: str | None = None
     anzahl_materialien: int = 0
     lieferungen: int = Field(0, description="Beruecksichtigte Lieferungen im Zeitfenster.")
-    liefertreue_pct: float = Field(0.0, description="Anteil puenktlicher Lieferungen in %.")
-    mittlerer_verzug_tage: float = 0.0
-    reklamationsquote_pct: float = 0.0
-    risiko_score: float = Field(0.0, description="0 (unkritisch) bis 100 (kritisch).")
-    risiko_klasse: str = Field("niedrig", description="niedrig | mittel | hoch")
+    # Alle Kennzahlen sind None, wenn es im Zeitfenster keine Lieferung gab.
+    # "Wir wissen es nicht" ist eine andere Aussage als "unkritisch", und ein
+    # Risikoprodukt muss den Unterschied ausdruecken koennen.
+    liefertreue_pct: float | None = Field(None, description="Anteil puenktlicher Lieferungen in %.")
+    mittlerer_verzug_tage: float | None = None
+    reklamationsquote_pct: float | None = None
+    risiko_score: float | None = Field(
+        None, description="0 (unkritisch) bis 100 (kritisch). None = keine Datenlage."
+    )
+    risiko_klasse: str = Field(
+        "unbekannt", description="unbekannt | niedrig | mittel | hoch"
+    )
 
 
 # 3. Die erlaubten Filter.
@@ -70,6 +94,11 @@ class SupplierRiskParams(ProductParams):
         1, ge=0, description="Lieferanten mit weniger Lieferungen werden ausgeblendet."
     )
     risiko_klasse: list[str] | None = None
+    # Dieser Filter wird an die Datenbank durchgereicht (siehe CYPHER oben),
+    # nicht erst hinterher in Python angewandt -- er verkleinert das Ergebnis
+    # schon im Graphen. Neu in 1.1: ein ERGAENZTER optionaler Parameter ist
+    # abwaertskompatibel, also MINOR und dieselbe Route /v1.
+    land: list[str] | None = Field(None, description="Nur Lieferanten aus diesen Laendern.")
 
 
 # Gewichte der Score-Formel. Bewusst als benannte Konstanten und nicht im Code
@@ -81,7 +110,9 @@ GEWICHT_TREUE = 0.3
 GEWICHT_REKLAMATION = 0.2
 
 
-def _risiko_klasse(score: float) -> str:
+def _risiko_klasse(score: float | None) -> str:
+    if score is None:
+        return "unbekannt"
     if score >= 60:
         return "hoch"
     if score >= 30:
@@ -146,13 +177,25 @@ def transform(
             mittlerer_verzug_tage=pl.col("mittlerer_verzug_tage").round(2),
         )
         .filter(pl.col("lieferungen") >= params.min_lieferungen)
-        .sort("risiko_score", descending=True)
+        # nulls_last: Lieferanten ohne Datenlage stehen am Ende, nicht oben --
+        # aber eben als "unbekannt", nicht als "niedriges Risiko".
+        .sort("risiko_score", descending=True, nulls_last=True)
     )
 
     zeilen = df.to_dicts()
     for zeile in zeilen:
         zeile.pop("puenktlich", None)
         zeile.pop("reklamationsquote", None)
+
+        if zeile["lieferungen"] == 0:
+            # Ohne Lieferung im Zeitfenster gibt es keine Datenlage. Die
+            # fill_null-Defaults oben (100 % puenktlich, 0 Verzug) wuerden sonst
+            # zu risiko_score = 0.0 und damit zu "niedrig" -- ein Lieferant ohne
+            # jede Historie stuende ganz unten in der Risikoliste.
+            for kennzahl in ("risiko_score", "liefertreue_pct",
+                             "mittlerer_verzug_tage", "reklamationsquote_pct"):
+                zeile[kennzahl] = None
+
         zeile["risiko_klasse"] = _risiko_klasse(zeile["risiko_score"])
 
     if params.risiko_klasse:
@@ -163,15 +206,29 @@ def transform(
 # 5. Die Verdrahtung -- hier sieht man, dass beide Quellen benutzt werden.
 async def load(sources: Sources, params: SupplierRiskParams) -> list[dict[str, Any]]:
     """Verknuepft Lieferantenstammdaten mit der Lieferhistorie und bewertet das Risiko."""
-    lieferanten = await sources.neo4j(CYPHER)
-    lieferungen = await sources.postgres(SQL, seit=params.seit)
+    # Parameter werden als benannte Werte uebergeben. Sie NIE in den
+    # Abfragetext einsetzen -- das waere eine Injection-Luecke und verhindert,
+    # dass die Datenbank den Abfrageplan wiederverwendet.
+    lieferanten = await sources.neo4j(CYPHER, land=params.land)
+    if not lieferanten:
+        return []          # kein Lieferant uebrig -> die SQL-Abfrage sparen
+
+    # Der Filter wirkt auf BEIDE Quellen: die IDs aus dem Graphen grenzen die
+    # Lieferhistorie ein, statt sie vollstaendig zu laden und danach zu joinen.
+    ids = [zeile["lieferant_id"] for zeile in lieferanten]
+    lieferungen = await sources.postgres(SQL, seit=params.seit, ids=ids)
     return transform(lieferanten, lieferungen, params)
 
 
 # 6. Veroeffentlichen.
 registry.add(DataProduct(
     name="supplier-risk",
-    version="1.0",
+    # 1.1 -> 1.2: Kennzahlen sind jetzt nullable, wenn keine Lieferungen
+    # vorliegen. Streng nach unserer Regel waere eine geaenderte BEDEUTUNG eine
+    # neue Hauptversion. Das hier ist die Korrektur eines Fehlers (keine Daten
+    # wurden als Bestnote gemeldet) an einem Produkt, das noch kein Dashboard
+    # nutzt -- deshalb MINOR. Mit einem lebenden Konsumenten waere es v2 gewesen.
+    version="1.2",
     summary="Lieferantenrisiko aus Stammdaten (Neo4j) und Liefertreue (Postgres)",
     item_model=SupplierRiskRow,
     params_model=SupplierRiskParams,

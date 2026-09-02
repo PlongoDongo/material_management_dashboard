@@ -53,6 +53,20 @@ def client(app):
 
 
 @pytest.fixture
+def fake_sources(app):
+    """DIE eine FakeSources-Instanz, die der Request benutzt.
+
+    Ohne diese Fixture erzeugt `dependency_overrides[get_sources] = FakeSources`
+    pro Request ein neues Objekt -- ein Test kaeme nie an die Aufzeichnung
+    heran. Hier wird eine Instanz festgehalten und zurueckgegeben, sodass ein
+    Test nach dem Aufruf `fake_sources.aufrufe` auswerten kann.
+    """
+    fake = FakeSources()
+    app.dependency_overrides[get_sources] = lambda: fake
+    return fake
+
+
+@pytest.fixture
 def client_ohne_datenquellen(settings: Settings):
     """App OHNE Override -- zeigt, was ohne konfigurierte Datenquelle passiert."""
     cache.invalidate()

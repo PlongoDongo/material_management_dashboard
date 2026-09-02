@@ -694,6 +694,7 @@ Die Statuscodes, die für die Dashboards wirklich einen Unterschied machen:
 | Code | Bedeutung | Was das Dashboard tut |
 |---|---|---|
 | `422` | Parameter ungültig | Bug im Callback — beim Entwickeln melden |
+| `403` | Produkt nicht freigegeben | fehlende Berechtigung |
 | `404` | Produkt/Version gibt es nicht | falsche Version gepinnt |
 | `503` | Datenquelle nicht erreichbar | „später erneut versuchen" anzeigen |
 | `500` | Bug im Backend | Fehler melden, `request_id` mitschicken |
@@ -730,7 +731,13 @@ Zwei Dinge, die wichtig werden, sobald es produktiv geht:
 
 * Secrets gehören nicht in die `.env` im Repository, sondern in den
   Secret-Store der Zielplattform (Kubernetes Secret, Vault, Key Vault). Die
-  `.env` ist ein Entwicklungswerkzeug; `.env.example` ist das, was eingecheckt wird.
+  `.env` ist ein Entwicklungswerkzeug; `.env.example` ist das, was eingecheckt
+  wird — und deshalb von einem Test geladen wird: sie ist ausgelieferte
+  Schnittstelle, und der Pfad `cp .env.example .env` ist der, den jeder am
+  ersten Tag nimmt.
+* **Kommentare in eigene Zeilen.** `python-dotenv` entfernt einen nachgestellten
+  Kommentar nur, wenn ein Wert davorsteht: aus `API_KEYS=  # leer = Auth aus`
+  wird der Kommentartext als Schlüssel gelesen — die Auth ist dann *an*.
 * **CORS ist Pflicht**, weil die Dash-Apps auf einem anderen Port laufen als die
   API. In prod immer explizite Origins — niemals `["*"]` zusammen mit
   Credentials.
