@@ -27,8 +27,9 @@ class Principal:
     subject: str
     groups: frozenset[str] = field(default_factory=frozenset)
 
-    def has_any(self, groups: frozenset[str]) -> bool:
-        return not groups or bool(self.groups & groups)
+    def has_any(self, groups) -> bool:
+        """Leere Anforderung = fuer alle offen. Sonst muss eine Gruppe passen."""
+        return not groups or bool(self.groups.intersection(groups))
 
 
 ANONYMOUS = Principal(subject="anonymous", groups=frozenset({"public"}))

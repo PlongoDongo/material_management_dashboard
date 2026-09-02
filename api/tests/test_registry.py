@@ -12,7 +12,7 @@ class Row(BaseModel):
     x: int
 
 
-async def _loader(repos, params):
+async def _loader(sources, params):
     return []
 
 

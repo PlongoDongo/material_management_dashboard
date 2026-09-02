@@ -25,7 +25,7 @@ versionierte *Datenprodukte* über die API ab. Warum das so ist, steht in
 
 | Pfad | Inhalt | Status |
 |---|---|---|
-| [`api/`](api/) | FastAPI-Service: Datenprodukte, Repositories, Cache, Auth | lauffähig, 47 Tests |
+| [`api/`](api/) | FastAPI-Service: Datenprodukte, Cache, Auth | lauffähig, 46 Tests |
 | [`frontend/material_management_dashboard/`](frontend/material_management_dashboard/) | Plotly-Dash-Dashboard für Materialstammdaten | lauffähig |
 | [`docs/`](docs/) | Konzept, Entwicklerleitfaden, Grundlagen, generierte Diagramme | — |
 | `ingestion/` | Befüllung von Neo4j/Postgres aus den Quellsystemen | noch nicht angelegt |
@@ -110,7 +110,8 @@ ausschließlich über die API. Als Client-Vorlage dient
 ## Nächste Schritte
 
 1. Erste echte Quelle anbinden: `NEO4J_URI` setzen, Cypher in
-   `api/src/data_api/repositories/materials.py` an das reale Graphmodell anpassen.
+   die `CYPHER`-Konstanten in `api/src/data_api/products/catalog/` an das reale
+   Graphmodell anpassen.
    Prüfen lässt sich das an `meta.source` in jeder API-Antwort.
 2. Das Material-Management-Dashboard auf den API-Client umstellen — damit entfallen
    dort Cypher und Neo4j-Zugangsdaten.

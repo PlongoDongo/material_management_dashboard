@@ -119,8 +119,8 @@ Das war ein enormer Produktivitätssprung. Man sah sofort, was passiert.
    kopieren. Beim ersten Bugfix ändert man eine der Kopien und vergisst die anderen.
 
 > **Was davon übrig ist:** Die Regel „Zugriff auf Daten wird von der Darstellung
-> getrennt" — und zwar räumlich, in eigenen Dateien. Bei uns ist das
-> `repositories/` gegenüber `products/`.
+> getrennt" — und zwar räumlich, in eigenen Funktionen. Bei uns ist das die
+> reine `transform()` gegenüber dem `load()`, das die Datenbank anfasst.
 
 ---
 
@@ -149,6 +149,11 @@ ohne Dateien zu verschieben.
 **Zweitens: das Repository-Muster.** Der Datenbankzugriff wandert in eigene
 Objekte. Der Rest des Programms ruft `kunden_repository.finde_alle()` auf und
 weiß nicht, ob dahinter SQL, eine Datei oder ein fremder Dienst steckt.
+
+> Wir benutzen dieses Muster bewusst **nicht** — warum, steht in
+> [Abschnitt 5.1](#51-datenzugriff-eine-klasse-zwei-methoden). Es lohnt sich,
+> wenn dieselben Daten aus wechselnden Quellen kommen können. Bei uns kommen sie
+> aus dem Graphen, und jedes Datenprodukt stellt seine eigene Frage.
 
 **Was daran kaputt ging:** Die Frameworks wurden groß und meinungsstark. Vor
 allem aber lösten sie ein Problem *nicht*, das mit dem Aufkommen von Handy-Apps
@@ -574,20 +579,20 @@ ein `Principal` mit Gruppen — der Haken, an dem später Berechtigungen hängen
 **5. Cache prüfen** (`products/cache.py`)
 Schlüssel aus Produkt, Version und Parametern. Treffer → weiter bei Schritt 9.
 
-**6. Datenzugriff vorbereiten** (`api/deps.py`, `db/repositories.py`)
-Der `Repositories`-Container wird gebaut. Er öffnet noch **nichts** — erst wenn
-das Produkt tatsächlich fragt. Alles, was er öffnet, wird am Ende automatisch
+**6. Datenzugriff vorbereiten** (`api/deps.py`, `db/sources.py`)
+Das `Sources`-Objekt wird gebaut. Es öffnet noch **nichts** — erst wenn das
+Produkt tatsächlich fragt. Alles, was es öffnet, wird am Ende automatisch
 geschlossen.
 
 **7. Das Datenprodukt läuft** (`products/catalog/material_overview_v2.py`)
 
 ```python
-async def load(repos, params):
-    repo = await repos.materials()          # hier öffnet sich die Neo4j-Session
-    return transform(await repo.fetch_materials(), params)
+async def load(sources, params):
+    rows = await sources.neo4j(CYPHER)      # hier öffnet sich die Neo4j-Session
+    return transform(rows, params)
 ```
 
-`fetch_materials()` schickt den Cypher. `transform()` filtert und rechnet den
+`sources.neo4j()` schickt den Cypher. `transform()` filtert und rechnet den
 Bestandswert aus — **ohne Datenbank, ohne HTTP**, und ist deshalb in
 Millisekunden testbar.
 
@@ -622,150 +627,69 @@ Vier Stellen, die beim Lesen des Codes am häufigsten Fragen auslösen.
 
 ---
 
-### 5.1 Datenzugriff: warum drei Orte statt einem
+### 5.1 Datenzugriff: eine Klasse, zwei Methoden
 
-Die berechtigte Frage aus dem Review: *„Was genau soll ein Repository sein?
-Die meisten Datenprodukte werden vermutlich nur eine Cypher Query sein."*
-
-Sehen wir uns zuerst an, was die drei Orte tatsächlich tun.
-
-#### Die drei Orte
-
-**`db/neo4j.py` und `db/sql.py` — die Verbindung aufbauen**
-
-Nur Infrastruktur, keine Fachlichkeit. Wie baue ich einen Neo4j-Treiber, wie
-mache ich ihn wieder zu, wie sieht ein Postgres-DSN aus. Zusammen etwa 60 Zeilen,
-und sie werden praktisch nie wieder angefasst.
+Ein Datenprodukt bekommt genau ein Objekt herein und stellt damit seine Abfragen:
 
 ```python
-async def create_driver(uri, auth) -> AsyncDriver | None:   # beim Programmstart
-async def close_driver(driver) -> None:                     # beim Beenden
+rows = await sources.neo4j(CYPHER)
+rows = await sources.postgres(SQL, seit=params.seit)
 ```
 
-**`repositories/materials.py` — die Abfragen**
+Das ist alles. `Sources` (`db/sources.py`, rund 100 Zeilen) kümmert sich um drei
+Dinge, die man sonst in jedem Datenprodukt neu richtig machen müsste:
 
-Hier steht der Cypher. Und die Methoden, die ihn ausführen.
+1. **Lazy öffnen.** Ein Produkt, das nur den Graphen abfragt, öffnet keine
+   Postgres-Verbindung.
+2. **Teilen.** Zwei Abfragen im selben Request nutzen dieselbe Verbindung.
+3. **Schließen.** Alles wird am Ende zuverlässig geschlossen — auch wenn die
+   Abfrage einen Fehler wirft. Darum steht in keinem Datenprodukt je
+   `session.close()`.
+
+Punkt 3 ist der Grund, warum es diese Klasse überhaupt gibt. Der Mechanismus
+dahinter (`AsyncExitStack` in einer `yield`-Dependency) steht in Abschnitt 5.3.
+
+#### Warum die Abfrage im Datenprodukt steht
+
+Der Cypher liegt in derselben Datei wie das Schema, die Filter und die
+Transformation. **Eine Datei = ein Datenprodukt = alles darüber.**
 
 ```python
-_MATERIALS_CYPHER = """MATCH (m:Material) ... RETURN ..."""
+CYPHER = """MATCH (m:Material) ... RETURN ..."""
 
-class Neo4jMaterialsRepository:
-    def __init__(self, session): self._session = session
-    async def fetch_materials(self): ...
-    async def fetch_suppliers(self): ...
-```
-
-**`db/repositories.py` — der Verteiler**
-
-Ein Objekt, das pro Anfrage lebt und den Datenprodukten die passenden Abfrage-
-Objekte reicht. Es öffnet Sessions erst, wenn sie gebraucht werden, teilt sie
-zwischen mehreren Abfragen und schließt sie am Ende zuverlässig.
-
-```python
-async def materials(self) -> MaterialsRepository:
-    session = await self._neo4j_session()      # öffnet lazy, schließt automatisch
-    return Neo4jMaterialsRepository(session)
-```
-
-#### Was ein „Repository" ist — ohne Fachjargon
-
-> **Ein Repository ist die eine Stelle, an der Abfragen zu einem Thema stehen.**
-
-Mehr nicht. Der Name kommt aus einem Buch von 2003 und ist unglücklich abstrakt;
-„die Datei mit den Material-Abfragen" beschreibt es genauso gut.
-
-#### Der Einwand ist teilweise berechtigt
-
-Wenn ein Datenprodukt nur eine Cypher-Abfrage ist — warum steht die Abfrage nicht
-einfach im Datenprodukt? Also so:
-
-```python
-# Die einfache Variante — alles in einer Datei
-@data_product(name="material-overview", version="2.0", ...)
-async def load(session, params):
-    result = await session.run("MATCH (m:Material) RETURN ...")
-    return transform(await result.data(), params)
-```
-
-Das ist verlockend, und für **ein** Datenprodukt wäre es besser. Der Grund, warum
-es hier trotzdem getrennt ist, lässt sich an unserem eigenen Code ablesen:
-
-```
-material-overview v1  ─┐
-material-overview v2  ─┼──► fetch_materials()  ──►  EIN Cypher
-supplier-risk    v1  ─┘
-```
-
-Drei Datenprodukte, eine Abfrage. Stünde der Cypher in den Produkten, gäbe es ihn
-dreimal — und eine Änderung am Graphmodell hieße, drei Dateien synchron zu halten
-und zu hoffen, dass niemand eine vergisst. Das ist derselbe Grund, aus dem im
-Dashboard `data/schema.py` existiert: Spalten waren dort früher an drei Stellen
-definiert, und genau das war das Problem.
-
-Dazu kommt der Session-Lebenszyklus. Irgendwer muss die Session öffnen, zwischen
-mehreren Abfragen teilen und danach zuverlässig schließen — auch wenn ein Fehler
-auftritt. Steht das in jedem Datenprodukt, muss jeder Autor es richtig machen.
-
-#### Was am Einwand stimmt: zu viel Zeremonie
-
-Zwei Dinge sind tatsächlich komplizierter als nötig.
-
-**Erstens die Benennung.** `db/repositories.py` und `repositories/` sind zwei
-verschiedene Dinge mit fast demselben Namen. Das ist schlicht ein Fehler beim
-Entwurf gewesen.
-
-**Zweitens die `Protocol`-Klassen.** In `repositories/materials.py` steht:
-
-```python
-@runtime_checkable
-class MaterialsRepository(Protocol):        # <- braucht es das?
-    async def fetch_materials(self) -> list[dict]: ...
-
-class Neo4jMaterialsRepository:             # die einzige Umsetzung
-    ...
-```
-
-Ein `Protocol` beschreibt „welche Methoden muss so ein Objekt haben" und ist
-sinnvoll, wenn es **mehrere** Umsetzungen gibt. Ursprünglich gab es die: eine für
-Neo4j und eine mit Beispieldaten. Die Beispieldaten sind inzwischen raus — damit
-hat das Protocol genau eine produktive Umsetzung und rechtfertigt sich nicht mehr
-von selbst.
-
-#### Konkreter Vorschlag
-
-Drei Änderungen, die den Einwand aufnehmen, ohne die echte Wiederverwendung zu
-verlieren:
-
-| Vorher | Nachher | Warum |
-|---|---|---|
-| `repositories/materials.py` | `queries/materials.py` | Sagt was drin ist. Kein Fachbegriff nötig. |
-| `db/repositories.py` mit `class Repositories` | `db/sources.py` mit `class Sources` | Beendet die Namenskollision |
-| `MaterialsRepository(Protocol)` + `Neo4jMaterialsRepository` | nur `MaterialQueries` | Eine Klasse statt zwei; das Protocol war für den entfallenen zweiten Adapter da |
-
-Danach bleiben drei Begriffe statt fünf, und ein Datenprodukt liest sich so:
-
-```python
 async def load(sources, params):
-    queries = await sources.materials()
-    return transform(await queries.fetch_materials(), params)
+    return transform(await sources.neo4j(CYPHER), params)
 ```
 
-Die Ersparnis ist überschaubar (rund 40 Zeilen), der Gewinn an Erklärbarkeit
-groß. Und: Wenn später doch eine zweite Datenquelle für dieselben Daten dazukommt,
-lässt sich das Protocol in zehn Minuten nachrüsten — man hat also nichts verbaut.
+Ein früherer Entwurf hatte dafür eine eigene Schicht: ein Verzeichnis
+`repositories/`, nach Geschäftsdomänen unterteilt (`materials.py`,
+`deliveries.py`), mit `Protocol`-Klassen und Adaptern. **Die ist bewusst wieder
+entfernt worden**, und der Grund ist lehrreich genug, um ihn festzuhalten:
 
-#### Was **nicht** wegfallen sollte
+| Annahme im ersten Entwurf | Wie es tatsächlich ist |
+|---|---|
+| Mehrere Produkte teilen sich eine Abfrage | Fast nie. Jedes Produkt beantwortet eine eigene Frage. |
+| Abfragen lassen sich nach Domänen ordnen | Der Graph existiert gerade, um Domänen zu **vereinen** — Datenprodukte sind übergreifend. Eine Aufteilung nach Domänen arbeitet gegen das Datenmodell. |
+| Mehrere Umsetzungen je Port rechtfertigen ein `Protocol` | Es gab nur eine. Das `Protocol` beschrieb einen Adapter, den es nicht gab. |
 
-Der Verteiler (`Sources`) bleibt, auch wenn er nach Zeremonie aussieht. Er ist
-das, was die Datenprodukte von Sessions, Treibern und Aufräumen freihält — und
-er ist der Grund, warum in keinem Datenprodukt jemals `session.close()` steht.
-Der nächste Abschnitt zeigt, warum das technisch so sein muss.
+Das ist der klassische Fehler *speculative generality*: eine Abstraktion für
+einen Fall bauen, der nie eintritt. Die Kosten trägt man sofort (mehr Dateien,
+mehr Begriffe, schwerer zu lesen), der Nutzen kommt nie.
 
-> **Vorschlag für die Antwort im Review:** dem Einwand bei Protocol und Benennung
-> zustimmen und beides umbauen; die Trennung Abfragen/Produkte behalten mit dem
-> konkreten Beispiel, dass drei Produkte heute schon eine Abfrage teilen.
+> **Faustregel:** Eine Abstraktion einführen, wenn es den zweiten Fall
+> tatsächlich gibt — nicht, wenn man ihn für möglich hält. Der Umbau kostet dann
+> eine halbe Stunde. Ein Jahr mit einer unnötigen Schicht zu leben, kostet mehr.
 
----
+#### Wenn doch mal zwei Produkte dieselbe Abfrage brauchen
+
+Dann steht sie in einem gemeinsamen Modul, und beide importieren sie:
+
+```python
+from data_api.products.catalog.material_overview_v2 import CYPHER
+```
+
+Oder man legt `products/queries.py` an. Beides ist in zehn Minuten gemacht —
+wenn es so weit ist.
 
 ### 5.2 Die Registry — wie aus einer Datei eine Route wird
 
@@ -788,31 +712,36 @@ Produkte unter `material-overview` + `v2` registriert, gäbe es zwei Routen mit
 demselben Pfad — und welche antwortet, hinge von der Importreihenfolge ab. Ein
 Startfehler ist besser als ein Zufall.
 
-#### Teil 2: der Dekorator
+#### Teil 2: eintragen
 
-Ein Dekorator ist eine Funktion, die eine andere Funktion entgegennimmt. Diese
-beiden Schreibweisen sind identisch:
+Jede Katalogdatei endet mit einem Aufruf:
 
 ```python
-@data_product(name="material-overview", version="2.0", ...)
-async def load(sources, params): ...
-
-# ist exakt dasselbe wie:
-async def load(sources, params): ...
-load = data_product(name="material-overview", version="2.0", ...)(load)
+registry.add(DataProduct(
+    name="material-overview",
+    version="2.0",
+    item_model=MaterialRowV2,
+    loader=load,
+    ...
+))
 ```
 
-`data_product(...)` gibt eine Funktion zurück, die `load` bekommt, daraus ein
-`DataProduct`-Objekt baut, es in die Registry legt und `load` unverändert
-zurückgibt. Der entscheidende Punkt:
+Mehr passiert nicht: Es wird ein Objekt gebaut und in ein Wörterbuch gelegt.
 
-> **Der Dekorator läuft, sobald die Datei importiert wird.** Nicht wenn jemand
-> `load()` aufruft. Ein Import genügt, damit sich das Produkt anmeldet.
+> Ein früherer Entwurf benutzte hier einen Dekorator (`@data_product(...)`).
+> Der las sich am Aufrufort hübsch, brauchte in `registry.py` aber eine
+> 40-zeilige Parameterliste, die jedes Feld von `DataProduct` doppelte. Ein
+> Konzept weniger und 40 Zeilen weniger sind den kleinen Verlust an Eleganz
+> wert — zumal `registry.add(DataProduct(...))` ohne Vorwissen lesbar ist.
+
+**Wichtig ist der Zeitpunkt:** Der Aufruf läuft, sobald die Datei **importiert**
+wird — nicht wenn jemand `load()` aufruft. Ein Import genügt, damit das Produkt
+im Verzeichnis steht.
 
 #### Teil 3: die Datei finden
 
-Damit der Dekorator läuft, muss die Datei importiert werden. Statt einer Liste,
-die jemand pflegen müsste, sieht `discover()` einfach nach, welche Dateien im
+Damit `registry.add(...)` läuft, muss die Datei importiert werden. Statt einer
+Liste, die jemand pflegen müsste, sieht `discover()` nach, welche Dateien im
 Katalogordner liegen:
 
 ```python
@@ -822,15 +751,15 @@ def discover(package="data_api.products.catalog"):
         importlib.import_module(f"{package}.{info.name}")
 ```
 
-Deshalb reicht es, eine Datei abzulegen: Sie wird gefunden, importiert, der
-Dekorator läuft, das Produkt steht im Verzeichnis.
+Deshalb reicht es, eine Datei abzulegen: Sie wird gefunden, importiert,
+`registry.add(...)` läuft, das Produkt steht im Verzeichnis.
 
 #### Der Ablauf beim Start
 
 ```
 1. create_app()
 2.   discover()                    ── importiert products/catalog/*.py
-3.                                    └─ jeder @data_product meldet sich an
+3.                                    └─ jedes registry.add(...) trägt sich ein
 4.   build_products_router()       ── läuft die Registry durch und baut
 5.                                    pro Eintrag eine echte FastAPI-Route
 6.   app.include_router(...)
@@ -934,7 +863,7 @@ Datenprodukt-Route sieht er so aus:
 ```
 endpoint
 ├── params      Annotated[MaterialParamsV2, Query()]
-├── repos       Depends(get_repositories)
+├── sources     Depends(get_sources)
 │               └── settings   Depends(get_settings)
 └── principal   Depends(current_principal)
                 └── settings   Depends(get_settings)   ← nur EINMAL ausgewertet
@@ -949,9 +878,9 @@ Zwei Abfragen bekommen dieselbe Session, nicht zwei.
 **Aufräumen mit `yield`.** Eine Dependency, die `yield` benutzt, ist zweigeteilt:
 
 ```python
-async def get_repositories(request, settings):
+async def get_sources(request, settings):
     async with AsyncExitStack() as stack:
-        yield Repositories(stack=stack, ...)     # alles davor: vor dem Endpunkt
+        yield Sources(stack=stack, ...)          # alles davor: vor dem Endpunkt
     # alles danach: NACH der Antwort — auch wenn der Endpunkt einen Fehler warf
 ```
 
@@ -960,13 +889,13 @@ Deshalb steht in keinem Datenprodukt jemals `session.close()`.
 **Austauschbar in Tests.** Das ist der praktische Hauptgewinn:
 
 ```python
-app.dependency_overrides[get_repositories] = FakeRepositories
+app.dependency_overrides[get_sources] = FakeSources
 ```
 
 Eine Zeile, und die gesamte Datenschicht ist ersetzt. Kein Monkeypatching, keine
 Umgebungsvariablen, keine laufende Datenbank. Route, Validierung, Produkt-Logik,
 Umschlag, Cache und Header laufen dabei **echt** — nur die unterste Schicht ist
-getauscht. Genau darauf beruhen die 47 Tests der API.
+getauscht. Genau darauf beruhen die 46 Tests der API.
 
 Das Dashboard nutzt dasselbe Prinzip an anderer Stelle: `httpx.MockTransport`
 ersetzt nur die HTTP-Schicht, alles darüber läuft echt
@@ -1067,7 +996,7 @@ Das ist der Grund, warum ein hinzugefügtes Feld nur eine Unterversion ist.
 | **Treiber / Engine** | Das Objekt, das den Vorrat an Datenbankverbindungen hält. Eines pro Programm. |
 | **Session** | Eine ausgeliehene Verbindung für eine Arbeitseinheit. Eine pro Request. |
 | **Pool** | Der Vorrat offener Verbindungen. |
-| **Repository** | Die Schicht, die als einzige Datenbankabfragen enthält. |
+| **`Sources`** | Das Objekt, über das ein Datenprodukt seine Abfragen stellt (`sources.neo4j(...)`). Kümmert sich um Öffnen, Teilen und Schließen der Verbindungen. |
 | **Protocol** | Eine Beschreibung „welche Methoden muss so ein Objekt haben" — ohne Vererbung. Ermöglicht Austausch (echt ↔ Test). |
 | **Pydantic-Modell** | Eine Klasse, die Felder und Typen beschreibt. Daraus entstehen Prüfung *und* Dokumentation. |
 | **Schema** | Die Beschreibung eines Datensatzes (bei uns = das Pydantic-Modell). |

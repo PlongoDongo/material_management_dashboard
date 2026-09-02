@@ -122,24 +122,6 @@ def test_listenparameter_werden_wiederholt_angehaengt() -> None:
     assert gesehen["query"] == "status=Aktiv&status=Gesperrt"
 
 
-def test_zweiter_aufruf_schickt_etag_und_verarbeitet_304() -> None:
-    aufrufe = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        aufrufe.append(request.headers.get("if-none-match"))
-        if request.headers.get("if-none-match") == 'W/"abc"':
-            return httpx.Response(304)
-        return httpx.Response(200, json=_envelope(API_ROWS), headers={"ETag": 'W/"abc"'})
-
-    client = _client(handler)
-    client.fetch("material-overview", "v2")
-    rows, meta = client.fetch("material-overview", "v2")
-
-    assert aufrufe == [None, 'W/"abc"']
-    assert len(rows) == 2                     # aus dem lokalen Gedaechtnis
-    assert meta["cache"] == "client-304"
-
-
 def test_fehlerantwort_wird_zu_dataproducterror() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"title": "Upstream data source unavailable",

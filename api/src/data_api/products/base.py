@@ -1,50 +1,32 @@
 """
-Was ist ein "Datenprodukt"?
+Was ist ein Datenprodukt?
 
-Ein Datenprodukt ist NICHT "eine Route, die zufaellig die DB abfragt". Es ist
-ein benannter, versionierter Vertrag mit einem Besitzer:
+Ein Datenprodukt ist ein benannter, versionierter Datensatz mit einem Besitzer
+-- nicht einfach "eine Route, die zufaellig die Datenbank abfragt".
 
-    name        material-overview       stabiler fachlicher Name
-    version     2.1                     MAJOR.MINOR (siehe unten)
-    item_model  Pydantic-Modell         DER Vertrag: Felder, Typen, Pflicht/Optional
-    params_model                        erlaubte Query-Parameter (typisiert)
-    loader      async (repos, params)   Query + Transformation
-    owner       "team-materials"        wen fragt man bei Fragen
-    cache_ttl   60                      wie frisch muss es sein
+Diese Datei enthaelt vier Dinge:
 
-Versionsregel (die wichtigste Konvention im ganzen Konzept):
-
-    MAJOR hoch  = brechende Aenderung (Feld entfernt/umbenannt/Typ geaendert)
-                  -> NEUE Route: /data-products/material-overview/v2
-                  -> v1 bleibt bestehen, bis alle Dashboards migriert sind
-    MINOR hoch  = abwaertskompatibel (Feld ergaenzt, Doku, Performance)
-                  -> GLEICHE Route, nur die Metadaten melden 2.1 statt 2.0
-
-Deshalb steht im Pfad nur das Major (`v2`) und in `meta.version` das volle
-`2.1`. Ein Dashboard, das gegen v2 gebaut ist, bricht nie durch einen Minor.
-
-Der `loader` bekommt ausschliesslich `Repositories` und die geparsten
-Parameter -- kein Request, keine Response, kein FastAPI. Dadurch ist jedes
-Datenprodukt ohne Webserver testbar.
+    ProductParams     Basis fuer die erlaubten Query-Parameter eines Produkts
+    ProductMeta       die Metadaten, die jede Antwort mitliefert
+    ProductEnvelope   das Antwortformat: {"meta": {...}, "data": [...]}
+    DataProduct       die Beschreibung eines Produkts (Name, Version, Loader ...)
 """
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from data_api.db.repositories import Repositories
-
 
 class ProductParams(BaseModel):
-    """Basis aller Query-Parameter-Modelle.
+    """Basis aller Parameter-Modelle. Jedes Produkt erbt davon.
 
-    `extra="forbid"`: ein Tippfehler im Dashboard (`?limmit=10`) liefert 422
-    statt stillschweigend die ungefilterten Daten. Das ist der Unterschied
-    zwischen "faellt im Test auf" und "faellt im Management-Meeting auf".
+    `extra="forbid"` heisst: ein unbekannter Query-Parameter ist ein Fehler.
+    Schreibt ein Dashboard `?limmit=10`, gibt es 422 -- statt stillschweigend
+    die ungefilterten Daten. Das ist der Unterschied zwischen "faellt im Test
+    auf" und "faellt im Management-Meeting auf".
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -53,67 +35,86 @@ class ProductParams(BaseModel):
     offset: int = Field(0, ge=0, description="Zeilen, die uebersprungen werden.")
 
     def cache_key(self) -> str:
+        """Die Parameter als Text -- Teil des Cache-Schluessels."""
         return self.model_dump_json()
 
 
-ItemT = TypeVar("ItemT")
-
-
 class ProductMeta(BaseModel):
-    """Der Umschlag um die Daten. Beantwortet: was, welche Version, wie alt?"""
+    """Steht in jeder Antwort unter "meta". Beantwortet: was, welche Version, wie alt?"""
 
     product: str
     version: str
     api_version: str = "v1"
     generated_at: dt.datetime
     row_count: int
-    total_count: int | None = Field(
-        None, description="Zeilen vor limit/offset -- fuer Paginierung im Dashboard."
-    )
+    total_count: int | None = Field(None, description="Zeilen vor limit/offset.")
     source: str = Field("unknown", description="neo4j | postgres | Kombination.")
     cache: str = Field("miss", description="hit | miss | bypass")
     deprecated: bool = False
     sunset: dt.date | None = None
 
 
-class ProductEnvelope(BaseModel, Generic[ItemT]):
-    """Antwortformat ALLER Datenprodukte.
+# --------------------------------------------------------------------------
+# Das Antwortformat.
+#
+# Die naechsten drei Zeilen sind der einzige "fortgeschrittene" Teil dieser
+# Datei. Sie sorgen dafuer, dass jedes Produkt in der API-Dokumentation unter
+# /docs sein EIGENES Schema zeigt:
+#
+#     ProductEnvelope[MaterialRowV2]  ->  {"meta": {...}, "data": [MaterialRowV2]}
+#     ProductEnvelope[SupplierRiskRow] ->  {"meta": {...}, "data": [SupplierRiskRow]}
+#
+# `TypeVar` ist der Platzhalter fuer "irgendein Zeilentyp", `Generic` sagt
+# Pydantic, dass die Klasse mit einem Typ ausgefuellt werden kann. Man braucht
+# das nur an dieser einen Stelle; beim Anlegen eines Datenprodukts kommt es
+# nicht mehr vor.
+# --------------------------------------------------------------------------
+ItemT = TypeVar("ItemT")
 
-    Warum ein Umschlag statt einer nackten Liste?
-      * Das Dashboard erfaehrt, WELCHE Version es bekommen hat (Debugging).
-      * `generated_at` erlaubt "Stand: 10:42" in der UI.
-      * `total_count` ermoeglicht serverseitiges Paging.
-      * Zusaetzliche Metadaten spaeter sind KEINE brechende Aenderung -- bei
-        einer nackten Liste waeren sie es.
+
+class ProductEnvelope(BaseModel, Generic[ItemT]):
+    """Umschlag um die Daten: `meta` + `data`.
+
+    Warum ein Umschlag statt einer nackten Liste? Weil das Dashboard so erfaehrt,
+    WELCHE Version es bekommen hat und wie alt die Daten sind. Und weil sich
+    spaeter Metadaten ergaenzen lassen, ohne den Vertrag zu brechen -- bei einer
+    nackten Liste waere schon der Wechsel zum Umschlag eine brechende Aenderung.
     """
 
     meta: ProductMeta
     data: list[ItemT]
 
 
-# Der Loader: Repositories + Parameter rein, Zeilen raus. Mehr Kopplung nicht.
-Loader = Callable[[Repositories, Any], Awaitable[list[Any]]]
-
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DataProduct:
-    name: str
-    version: str
-    summary: str
-    item_model: type[BaseModel]
-    loader: Loader
+    """Die Beschreibung eines Datenprodukts.
+
+    Wird in products/catalog/ angelegt und mit `registry.add(...)` veroeffentlicht.
+
+    Zur Version: MAJOR.MINOR, z. B. "2.1".
+      * Feld ergaenzt        -> MINOR hoch, gleiche Route  (bricht kein Dashboard)
+      * Feld weg/umbenannt   -> MAJOR hoch, neue Route /v3
+      * Bedeutung geaendert  -> MAJOR hoch (auch wenn das Schema gleich bleibt!)
+    Im URL-Pfad steht nur das MAJOR, die volle Version in meta.version.
+    """
+
+    name: str                       # "material-overview"
+    version: str                    # "2.1"
+    summary: str                    # eine Zeile fuer die Doku
+    item_model: type[BaseModel]     # das Zeilenschema = der Vertrag
+    loader: Any                     # async def load(sources, params) -> list[dict]
     params_model: type[ProductParams] = ProductParams
-    owner: str = "unassigned"
+    owner: str = "unassigned"       # wen fragt man bei Fragen?
     description: str = ""
     tags: tuple[str, ...] = ()
-    cache_ttl: int = 60                      # Sekunden; 0 = nicht cachen
+    cache_ttl: int = 60             # Sekunden; 0 = nicht cachen
     deprecated: bool = False
-    sunset: dt.date | None = None            # ab wann v_x abgeschaltet wird
-    required_groups: frozenset[str] = field(default_factory=frozenset)
+    sunset: dt.date | None = None   # ab wann diese Version abgeschaltet wird
+    required_groups: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        parts = self.version.split(".")
-        if len(parts) < 2 or not all(p.isdigit() for p in parts[:2]):
+        teile = self.version.split(".")
+        if len(teile) < 2 or not (teile[0].isdigit() and teile[1].isdigit()):
             raise ValueError(
                 f"{self.name}: version muss 'MAJOR.MINOR' sein (z. B. '1.0'), "
                 f"nicht {self.version!r}."
@@ -121,13 +122,10 @@ class DataProduct:
 
     @property
     def major(self) -> int:
+        """Die Hauptversionsnummer als Zahl: '2.1' -> 2."""
         return int(self.version.split(".")[0])
 
     @property
     def path_version(self) -> str:
-        """Was im URL-Pfad steht: v1, v2, ... (nur Major -- siehe Modul-Docstring)."""
+        """Was im URL-Pfad steht: 'v2'."""
         return f"v{self.major}"
-
-    @property
-    def key(self) -> tuple[str, int]:
-        return (self.name, self.major)

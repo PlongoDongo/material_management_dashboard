@@ -9,7 +9,7 @@ def test_v1_liefert_umschlag_mit_metadaten(client):
 
     assert body["meta"]["product"] == "material-overview"
     assert body["meta"]["version"] == "1.2"      # volle Version in den Metadaten
-    assert body["meta"]["source"] == "fake"   # dependency_overrides greift
+    assert body["meta"]["source"] == "neo4j"   # FakeSources meldet die echte Quelle
     assert body["meta"]["row_count"] == len(body["data"])
     assert body["meta"]["total_count"] == 64
     assert body["data"][0]["material_nr"].startswith("MAT-")
@@ -104,7 +104,8 @@ def test_etag_liefert_304_ohne_body(client):
 
 def test_cross_source_produkt_verknuepft_beide_quellen(client):
     body = client.get("/api/v1/data-products/supplier-risk/v1").json()
-    assert body["meta"]["source"] == "fake"   # dependency_overrides greift
+    # meta.source zeigt, welche Quellen die Antwort tatsaechlich gespeist haben
+    assert body["meta"]["source"] == "neo4j+postgres"
     zeilen = body["data"]
     assert len(zeilen) == 4
     # Nach Risiko absteigend sortiert

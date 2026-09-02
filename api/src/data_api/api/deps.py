@@ -1,15 +1,12 @@
 """
 Gemeinsame Dependencies.
 
-FastAPIs Dependency Injection ist der Mechanismus, ueber den alles
-Request-Gebundene hereinkommt: Settings, Datenbank-Sessions, der Aufrufer.
-Der Vorteil gegenueber globalen Objekten oder Imports ist die Testbarkeit --
-`app.dependency_overrides[get_repositories] = fake` ersetzt in Tests die
-komplette Datenschicht, ohne dass irgendetwas gepatcht werden muss.
+Eine "Dependency" ist etwas, das FastAPI dem Endpunkt vor dem Aufruf
+bereitstellt -- hier die Einstellungen und der Zugang zu den Datenquellen.
 
-Die langlebigen Objekte (Neo4j-Treiber, SQL-Engine) haengen an `app.state` und
-werden in der Lifespan erzeugt/geschlossen -- nicht als Modul-Globals, sonst
-teilen sich Tests und App dasselbe Objekt.
+Der Vorteil gegenueber globalen Objekten: In Tests laesst sich eine Dependency
+mit einer Zeile ersetzen (`app.dependency_overrides[get_sources] = ...`), ohne
+dass irgendetwas gepatcht werden muss.
 """
 from __future__ import annotations
 
@@ -20,23 +17,20 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from data_api.core.config import Settings, get_settings
-from data_api.db.repositories import Repositories
+from data_api.db.sources import Sources
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
-async def get_repositories(
-    request: Request, settings: SettingsDep
-) -> AsyncIterator[Repositories]:
-    """Ein Repositories-Container pro Request.
+async def get_sources(request: Request, settings: SettingsDep) -> AsyncIterator[Sources]:
+    """Ein Sources-Objekt pro Request.
 
-    Der `AsyncExitStack` ist der Grund, warum niemand `session.close()` schreiben
-    muss: alles, was der Container waehrend des Requests geoeffnet hat, wird beim
-    Verlassen des `async with` geschlossen -- auch wenn der Endpunkt eine
-    Exception wirft.
+    Alles vor `yield` laeuft vor dem Endpunkt, alles danach nach der Antwort.
+    Der `AsyncExitStack` schliesst jede Verbindung, die waehrend des Requests
+    geoeffnet wurde -- auch wenn der Endpunkt einen Fehler geworfen hat.
     """
     async with AsyncExitStack() as stack:
-        yield Repositories(
+        yield Sources(
             stack=stack,
             settings=settings,
             neo4j_driver=getattr(request.app.state, "neo4j_driver", None),
@@ -44,4 +38,4 @@ async def get_repositories(
         )
 
 
-ReposDep = Annotated[Repositories, Depends(get_repositories)]
+SourcesDep = Annotated[Sources, Depends(get_sources)]

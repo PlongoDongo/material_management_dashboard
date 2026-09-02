@@ -31,7 +31,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, status
 from pydantic import BaseModel, Field
 
-from data_api.api.deps import ReposDep
+from data_api.api.deps import SourcesDep
 from data_api.core.security import CurrentPrincipal
 from data_api.products.cache import cache
 
@@ -67,7 +67,7 @@ class MappingOut(MappingIn):
 )
 async def create_mapping(
     payload: Annotated[MappingIn, Body()],
-    repos: ReposDep,
+    sources: SourcesDep,
     principal: CurrentPrincipal,
 ) -> MappingOut:
     """Legt ein Material-zu-Warengruppe-Mapping an.
@@ -79,7 +79,7 @@ async def create_mapping(
     lang den alten Stand und der Nutzer glaubt, das Speichern habe nicht
     funktioniert.
     """
-    # TODO(datenquelle): repo = await repos.mappings(); await repo.insert(...)
+    # TODO(datenquelle): await sources.postgres(INSERT_SQL, ...)
     log.info("Mapping angelegt von %s: %s -> %s",
              principal.subject, payload.material_nr, payload.ziel_warengruppe)
 
@@ -98,7 +98,7 @@ async def create_mapping(
 async def patch_mapping(
     mapping_id: str,
     payload: Annotated[MappingIn, Body()],
-    repos: ReposDep,
+    sources: SourcesDep,
     principal: CurrentPrincipal,
 ) -> MappingOut:
     # TODO(datenquelle): analog zu create_mapping.
