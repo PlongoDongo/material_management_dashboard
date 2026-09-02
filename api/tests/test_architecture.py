@@ -1,10 +1,9 @@
 """
-Tests der automatischen Architekturdokumentation.
+Tests of the generated architecture documentation.
 
-Der wichtigste Test ist der letzte: `test_dokumentation_ist_aktuell`. Er ist der
-Grund, warum das Diagramm nicht veralten kann -- wer ein Datenprodukt anlegt und
-die Doku nicht neu erzeugt, bekommt einen roten Build statt eines falschen
-Diagramms.
+The last test is the important one: `test_documentation_is_current`. It is why
+the diagram cannot go stale -- anyone who adds a data product without
+regenerating gets a red build instead of a quietly wrong diagram.
 """
 from __future__ import annotations
 
@@ -15,81 +14,81 @@ from data_api.architecture import (
     diagram_contracts,
     diagram_dataflow,
     diagram_versions,
-    sources_used_by,
 )
 from data_api.application import create_app
 from data_api.core.config import Settings
-from data_api.products.catalog.material_overview_v2 import load as load_material
-from data_api.products.catalog.supplier_risk_v1 import load as load_risk
+from data_api.products.catalog.material_overview_v3 import load as load_material
+from data_api.products.catalog.supplier_risk_v2 import load as load_risk
+from data_api.products.introspect import sources_used_by
 
 
-def test_ast_erkennt_die_genutzten_quellen():
-    """Die Kernidee: welche Quelle ein Produkt nutzt, wird gelesen, nicht gepflegt."""
+def test_the_ast_finds_the_sources_a_product_uses():
+    """The core idea: which source a product uses is read, not maintained."""
     assert sources_used_by(load_material) == ["neo4j"]
     assert sources_used_by(load_risk) == ["neo4j", "postgres"]
 
 
-def test_collect_findet_generierte_routen(settings: Settings):
-    """Genau diese Routen existieren NICHT im Quelltext -- nur zur Laufzeit."""
+def test_collect_finds_the_generated_routes(settings: Settings):
+    """These routes do NOT exist in the source code -- only at runtime."""
     arch = collect(create_app(settings))
-    pfade = {r.path for r in arch.routes}
-    assert "/api/v1/data-products/material-overview/v2" in pfade
-    assert "/api/v1/data-products/supplier-risk/v1" in pfade
+    paths = {r.path for r in arch.routes}
+    assert "/api/v1/data-products/material-overview/v3" in paths
+    assert "/api/v1/data-products/supplier-risk/v2" in paths
     assert len(arch.products) == 3
 
 
-def test_routen_werden_ihrem_datenprodukt_zugeordnet(settings: Settings):
+def test_routes_are_mapped_to_their_data_product(settings: Settings):
     arch = collect(create_app(settings))
-    nach_pfad = {r.path: r for r in arch.routes}
+    by_path = {r.path: r for r in arch.routes}
 
-    v1 = nach_pfad["/api/v1/data-products/material-overview/v1"]
-    assert v1.product.version == "1.2"
-    assert v1.deprecated is True
+    v2 = by_path["/api/v1/data-products/material-overview/v2"]
+    assert v2.product.version == "2.1"
+    assert v2.deprecated is True
 
-    alias = nach_pfad["/api/v1/data-products/material-overview/latest"]
+    alias = by_path["/api/v1/data-products/material-overview/latest"]
     assert alias.is_alias is True
-    assert alias.product.version == "2.0"
+    assert alias.product.version == "3.0"
 
-    # Handgeschriebene Routen haben kein Datenprodukt
-    assert nach_pfad["/api/v1/healthz"].product is None
+    # hand-written routes have no data product
+    assert by_path["/api/v1/healthz"].product is None
 
 
-def test_produkte_kennen_ihre_quellen(settings: Settings):
+def test_products_know_their_sources(settings: Settings):
     arch = collect(create_app(settings))
-    risiko = next(p for p in arch.products if p.product.name == "supplier-risk")
-    assert risiko.sources == ["neo4j", "postgres"]
-    material = next(p for p in arch.products if p.product.major == 2)
-    assert material.sources == ["neo4j"]      # kein Postgres -> keine Kante im Diagramm
+    risk = next(p for p in arch.products if p.product.name == "supplier-risk")
+    assert risk.sources == ["neo4j", "postgres"]
+    material = next(p for p in arch.products if p.product.major == 3)
+    assert material.sources == ["neo4j"]      # no Postgres -> no edge in the diagram
 
 
-def test_diagramme_enthalten_die_erwarteten_knoten(settings: Settings):
+def test_the_diagrams_contain_the_expected_nodes(settings: Settings):
     arch = collect(create_app(settings))
 
     dataflow = diagram_dataflow(arch)
     assert dataflow.startswith("flowchart")
     assert "supplier-risk" in dataflow
     assert "src_neo4j" in dataflow and "src_postgres" in dataflow
-    # Der Alias verdoppelt nur Kanten und gehoert nicht ins Flussdiagramm
+    # the alias only duplicates edges and does not belong in the flow diagram
     assert "latest" not in dataflow
 
-    assert "abgeloest durch" in diagram_versions(arch)
-    assert "bestandswert" in diagram_contracts(arch)
+    assert "superseded by" in diagram_versions(arch)
+    assert "stock_value" in diagram_contracts(arch)
 
 
-def test_markdown_enthaelt_alle_abschnitte():
+def test_the_markdown_contains_every_section():
     markdown = build()
     assert markdown.count("```mermaid") == 3
-    assert "## Datenfluss" in markdown
-    assert "## Routeninventar" in markdown
+    assert "## Data flow" in markdown
+    assert "## Route inventory" in markdown
     assert "team-supply-chain" in markdown
 
 
-def test_dokumentation_ist_aktuell():
-    """Schlaegt fehl, wenn jemand die Architektur aendert und die Doku nicht neu erzeugt.
+def test_documentation_is_current():
+    """Fails if somebody changes the architecture without regenerating.
 
-    Reparatur: `architecture-docs` ausfuehren und das Ergebnis mit einchecken.
+    Fix: run `architecture-docs` and commit the result.
     """
-    assert DEFAULT_OUT.exists(), "docs/architecture.md fehlt -- 'architecture-docs' ausfuehren."
+    assert DEFAULT_OUT.exists(), "docs/architecture.md is missing -- run 'architecture-docs'."
     assert DEFAULT_OUT.read_text(encoding="utf-8") == build(), (
-        "docs/architecture.md ist veraltet -- 'architecture-docs' ausfuehren."
+        "docs/architecture.md is out of date -- run 'architecture-docs'."
     )

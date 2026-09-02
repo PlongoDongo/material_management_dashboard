@@ -1,13 +1,12 @@
 """
-Der Katalog: welche Datenprodukte gibt es, in welchen Versionen, wem gehoeren sie?
+The catalog: which data products exist, in which versions, and who owns them?
 
-Das ist kein Beiwerk. Sobald mehr als eine Handvoll Produkte existiert, ist der
-Katalog die Antwort auf "hat das schon jemand gebaut?" -- und er laesst sich
-maschinell auswerten (z. B. um in einem Dashboard eine Produktauswahl zu
-fuellen, oder um in CI zu pruefen, ob ein Produkt ohne Owner eingecheckt wurde).
+This is not decoration. Once there are more than a handful of products, the
+catalog is the answer to "has somebody already built this?" -- and it can be
+consumed programmatically (to fill a product picker in a dashboard, or to check
+in CI that no product was committed without an owner).
 
-Er wird aus derselben Registry erzeugt wie die Routen; er kann also nicht
-veralten.
+It is generated from the same registry as the routes, so it cannot go stale.
 """
 from __future__ import annotations
 
@@ -17,9 +16,10 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from data_api.core.security import CurrentPrincipal
+from data_api.products.base import DataProduct
 from data_api.products.registry import registry
 
-router = APIRouter(prefix="/catalog", tags=["Katalog"])
+router = APIRouter(prefix="/catalog", tags=["Catalog"])
 
 
 class VersionInfo(BaseModel):
@@ -40,10 +40,10 @@ class CatalogEntry(BaseModel):
     versions: list[VersionInfo]
 
 
-def _entry(name: str, versions: list) -> CatalogEntry:
-    # `versions` kommt vom Aufrufer, der schon geprueft hat, dass sie nicht leer
-    # ist. Frueher stand hier ein `assert newest is not None` -- das verschwindet
-    # unter `python -O` und waere danach ein AttributeError auf None.
+def _entry(name: str, versions: list[DataProduct]) -> CatalogEntry:
+    # `versions` comes from the caller, who has already checked it is not empty.
+    # This used to be `assert newest is not None` -- which disappears under
+    # `python -O` and would then be an AttributeError on None.
     newest = max(versions, key=lambda p: p.major)
     return CatalogEntry(
         name=name,
@@ -65,18 +65,18 @@ def _entry(name: str, versions: list) -> CatalogEntry:
     )
 
 
-# Der Katalog verlangt DIESELBE Authentifizierung wie die Datenprodukte. Er
-# listet Namen, Owner, Cache-Zeiten, Sunset-Daten und alle Vertragsfelder -- also
-# die vollstaendige Landkarte dessen, was hinter der Auth liegt. Ihn offen zu
-# lassen waere eine Entscheidung; sie waere hier nur nicht getroffen worden.
-@router.get("", summary="Alle verfuegbaren Datenprodukte")
+# The catalog requires THE SAME authentication as the data products. It lists
+# names, owners, cache times, sunset dates and every contract field -- the full
+# map of what sits behind the auth. Leaving it open would be a decision; it just
+# had not been made.
+@router.get("", summary="All available data products")
 async def list_products(principal: CurrentPrincipal) -> list[CatalogEntry]:
     return [_entry(name, registry.versions_of(name)) for name in registry.names()]
 
 
-@router.get("/{name}", summary="Ein Datenprodukt mit allen Versionen")
+@router.get("/{name}", summary="One data product with all its versions")
 async def get_product(name: str, principal: CurrentPrincipal) -> CatalogEntry:
     versions = registry.versions_of(name)
     if not versions:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Unbekannt: {name}")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Unknown: {name}")
     return _entry(name, versions)

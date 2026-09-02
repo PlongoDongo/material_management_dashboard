@@ -1,23 +1,28 @@
 """
-Der Datenprodukt-Katalog.
+The data product catalog.
 
-Jede Datei hier = ein Datenprodukt in genau einer Hauptversion. Sie wird beim
-Start automatisch importiert (products/registry.py::discover), traegt sich
-selbst ein, und der Router baut daraus eine Route.
+Every file here is one data product in exactly one major version. It is imported
+automatically at startup (products/registry.py::discover), registers itself, and
+the router turns it into a route.
 
-Namenskonvention: <produkt_name>_v<major>.py
+Naming convention: <product_name>_v<major>.py
 
-Aufbau jeder Datei -- immer in dieser Reihenfolge. Vorhersagbarkeit ist hier
-wichtiger als Eleganz, weil mehrere Teams Produkte beisteuern:
+Structure of every file -- always in this order. Predictability matters more
+than elegance here, because several teams contribute products:
 
-    1. CYPHER / SQL   die Abfrage
-    2. Row-Modell     der Vertrag: welche Felder kommen raus
-    3. Params-Modell  die erlaubten Filter
-    4. transform()    REINE Funktion: Rohzeilen + Params -> Produktzeilen
-    5. load()         holt die Rohzeilen, ruft transform()
-    6. registry.add() veroeffentlicht das Produkt
+    1. CYPHER / SQL   the query
+    2. row model      the contract: which fields come out
+    3. params model   the allowed filters
+    4. transform()    PURE function: raw rows + params -> product rows
+    5. load()         fetches the raw rows, calls transform()
+    6. registry.add() publishes the product
 
-Schritt 4 ist der wichtige: `transform()` sieht weder Datenbank noch HTTP und
-ist deshalb in Millisekunden testbar. Dort liegt die Fachlichkeit, dort liegen
-die Fehler, dort liegen die meisten Tests.
+Step 4 is the important one: `transform()` sees neither a database nor HTTP and
+is therefore testable in milliseconds. That is where the domain logic lives,
+that is where the bugs live, and that is where most of the tests live.
+
+A note on field names: the query aliases (`RETURN m.nr AS material_number`) are
+where the graph's own vocabulary meets the API contract. The graph properties
+belong to the data model and keep their names; the aliases are English, like the
+rest of the code.
 """

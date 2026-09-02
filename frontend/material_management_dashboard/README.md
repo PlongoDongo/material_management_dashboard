@@ -212,11 +212,11 @@ dafür war die Datenschicht von Anfang an isoliert.
 
 ### Zwei Namensräume
 
-Die API liefert `werk_id` und `werk_name`; die Tabelle hat historisch eine
-Spalte `werk`. Übersetzt wird an genau einer sichtbaren Stelle:
-`data/repository.py::_API_TO_UI`. Felder der API, die das Dashboard nicht
-braucht (`werk_id`, `preis`), stehen dort nicht -- **ein neues Feld in der API
-kann das Dashboard deshalb nie brechen.**
+Die API spricht Englisch (`material_number`, `plant_name`, `stock_value`), die
+Tabelle benennt ihre Spalten deutsch wie die Oberfläche. Übersetzt wird an genau
+einer sichtbaren Stelle: `data/repository.py::_API_TO_UI`. Felder der API, die
+das Dashboard nicht braucht (`plant_id`, `price`), stehen dort nicht -- **ein
+neues Feld in der API kann das Dashboard deshalb nie brechen.**
 
 ### Version fest verdrahtet
 
@@ -224,7 +224,7 @@ kann das Dashboard deshalb nie brechen.**
 nicht `latest`: Ein Versionswechsel soll im Git-Diff auftauchen und getestet
 werden, nicht still passieren, weil die API ein neues Major ausgerollt hat.
 
-Wechselt ihr auf `v3`, ändert ihr diese eine Konstante, prüft `_API_TO_UI` gegen
+Wechselt ihr auf `v4`, ändert ihr diese eine Konstante, prüft `_API_TO_UI` gegen
 den neuen Vertrag (`GET /api/v1/catalog/material-overview` listet die Felder)
 und lasst die Tests laufen.
 

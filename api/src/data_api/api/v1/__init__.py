@@ -1,23 +1,22 @@
 """
-Zusammenbau der API-Version v1.
+Assembly of API version v1.
 
-Router-Management in FastAPI ist bewusst simpel: jedes fachliche Thema bekommt
-einen `APIRouter`, und genau eine Stelle steckt sie zusammen. Kein Router
-importiert einen anderen, keiner kennt die App -- deshalb gibt es hier nie
-Zirkelimporte, egal wie viele Router dazukommen.
+Router management in FastAPI is deliberately simple: every topic gets its own
+`APIRouter`, and exactly one place wires them together. No router imports
+another, none of them knows the app -- which is why circular imports never
+appear here, no matter how many routers are added.
 
-Die API-Version (v1) steht im Prefix und ist NICHT dasselbe wie die
-Datenprodukt-Version:
+The API version (v1) lives in the prefix and is NOT the same as a data product
+version:
 
-    /api/v1/data-products/material-overview/v2
+    /api/v1/data-products/material-overview/v3
      ^^^^^^                                 ^^
-     Transportvertrag                       Datenvertrag
-     (Fehlerformat, Auth, Umschlag)         (Felder dieser einen Tabelle)
+     transport contract                     data contract
+     (error format, auth, envelope)         (fields of this one dataset)
 
-Beide aendern sich unabhaengig voneinander -- und genau darum haben sie
-getrennte Versionsnummern. Ein neues Feld in einem Datenprodukt darf nicht die
-ganze API auf v2 heben, und ein geaenderter Auth-Mechanismus darf nicht jedes
-Datenprodukt neu versionieren.
+They change independently -- which is exactly why they have separate version
+numbers. A new field in one data product must not push the whole API to v2, and
+a changed auth mechanism must not re-version every data product.
 """
 from fastapi import APIRouter
 
@@ -29,6 +28,6 @@ def build_v1_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1")
     router.include_router(health.router)
     router.include_router(catalog.router)
-    router.include_router(build_products_router())   # generiert aus der Registry
-    router.include_router(mappings.router)           # handgeschrieben (Schreibseite)
+    router.include_router(build_products_router())   # generated from the registry
+    router.include_router(mappings.router)           # hand-written (write side)
     return router

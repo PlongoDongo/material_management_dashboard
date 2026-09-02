@@ -1,22 +1,22 @@
 """
-Der Zugang zu den Datenquellen.
+Access to the data sources.
 
-Ein Datenprodukt bekommt genau ein Objekt herein -- `Sources` -- und stellt
-damit seine Abfragen:
+A data product receives exactly one object -- `Sources` -- and runs its queries
+through it:
 
     rows = await sources.neo4j(CYPHER)
-    rows = await sources.postgres(SQL, seit=params.seit)
+    rows = await sources.postgres(SQL, since=params.since)
 
-Mehr gibt es nicht zu wissen. `Sources` kuemmert sich um drei Dinge, die man
-sonst in jedem Datenprodukt neu richtig machen muesste:
+That is all there is to know. `Sources` takes care of three things every data
+product would otherwise have to get right on its own:
 
-  1. Die Verbindung wird erst geoeffnet, wenn sie gebraucht wird. Ein Produkt,
-     das nur den Graphen abfragt, oeffnet keine Postgres-Verbindung.
-  2. Zwei Abfragen im selben Request teilen sich eine Verbindung.
-  3. Alles wird am Ende zuverlaessig geschlossen -- auch wenn die Abfrage
-     einen Fehler wirft. Darum steht in keinem Datenprodukt je `session.close()`.
+  1. Connections open lazily. A product that only queries the graph never opens
+     a Postgres connection.
+  2. Two queries in the same request share one connection.
+  3. Everything is closed reliably at the end -- even if a query raises. That is
+     why no data product ever contains `session.close()`.
 
-Ein `Sources`-Objekt lebt genau einen HTTP-Request lang (siehe api/deps.py).
+A `Sources` object lives for exactly one HTTP request (see api/deps.py).
 """
 from __future__ import annotations
 
@@ -39,78 +39,78 @@ from data_api.db.sql import SessionMaker
 
 log = logging.getLogger(__name__)
 
-# Eine Ergebniszeile ist ein einfaches dict: Spaltenname -> Wert.
+# One result row is a plain dict: column name -> value.
 Row = dict[str, Any]
 
 
-def _als_python_wert(wert: Any) -> Any:
-    """Uebersetzt Neo4j-eigene Typen in solche, die Pydantic und JSON kennen.
+def _to_python_value(value: Any) -> Any:
+    """Translates Neo4j-specific types into ones Pydantic and JSON understand.
 
-    Der Treiber liefert fuer manche Property-Typen eigene Klassen zurueck. Ohne
-    diese Umwandlung passiert eines von zwei Dingen -- beide unangenehm:
+    The driver returns its own classes for several property types. Without this
+    conversion one of two things happens -- both unpleasant:
 
-        neo4j.time.Date      -> Pydantic lehnt ab (auch fuer ein date-Feld!):
+        neo4j.time.Date      -> Pydantic rejects it (even for a date field!):
                                 "Input should be a valid date"
-        neo4j.time.Duration  -> erbt von tuple und landet als nacktes [3,2,0,0]
-        neo4j.spatial.Point  -> erbt von tuple und landet als nacktes [1.0,2.0]
-        neo4j.graph.Path     -> geht als Treiberobjekt durch; FastAPI faellt auf
-                                vars() zurueck und liefert private Attributnamen
+        neo4j.time.Duration  -> subclasses tuple, silently becomes [3,2,0,0]
+        neo4j.spatial.Point  -> subclasses tuple, silently becomes [1.0,2.0]
+        neo4j.graph.Path     -> passes through as a driver object; FastAPI falls
+                                back to vars() and leaks private attribute names
 
-    Der zweite Fall ist der gefaehrlichere: kein Fehler, aber die Bedeutung ist
-    weg. Deshalb wird hier alles explizit uebersetzt.
+    The silent cases are the dangerous ones: no error, but the meaning is gone.
+    That is why everything is translated explicitly.
 
-    Rekursiv, weil `collect()` und Map-Projektionen verschachtelte Listen und
-    dicts liefern.
+    Recursive, because `collect()` and map projections produce nested lists and
+    dicts.
     """
-    # Reihenfolge beachten: Duration und Point erben von tuple, muessen also
-    # VOR der allgemeinen Listenbehandlung geprueft werden.
-    if isinstance(wert, (Date, DateTime, Time)):
-        return wert.to_native()             # -> datetime.date / .datetime / .time
-    if isinstance(wert, Duration):
-        return wert.iso_format()            # -> "P3M2DT1M30S"
-    if isinstance(wert, Point):
-        # `z` wird IMMER gesetzt (bei 2D auf None). Sonst haette ein 2D-Punkt
-        # die Form {"srid","x","y"} und ein 3D-Punkt {"srid","x","y","z"} --
-        # eine Antwort mit gemischten Zeilen haette dann uneinheitliche Objekte,
-        # und ein Zeilenmodell mit `z: float | None` waere nicht erfuellbar.
-        koordinaten = dict(zip(("x", "y", "z"), tuple(wert)))
-        return {"srid": wert.srid, "x": koordinaten.get("x"),
-                "y": koordinaten.get("y"), "z": koordinaten.get("z")}
-    if isinstance(wert, Path):
-        # Ein Pfad ist KEIN Entity und faellt sonst unuebersetzt durch --
-        # bei Stuecklisten und Lieferketten der naheliegende Rueckgabewert.
+    # Order matters: Duration and Point subclass tuple, so they must be checked
+    # BEFORE the generic container handling below.
+    if isinstance(value, (Date, DateTime, Time)):
+        return value.to_native()             # -> datetime.date / .datetime / .time
+    if isinstance(value, Duration):
+        return value.iso_format()            # -> "P3M2DT1M30S"
+    if isinstance(value, Point):
+        # `z` is ALWAYS present (None for 2D points). Otherwise a 2D point would
+        # have the shape {"srid","x","y"} and a 3D one {"srid","x","y","z"} --
+        # a response mixing both would contain inconsistent objects, and a row
+        # model with `z: float | None` could not be satisfied.
+        coordinates = dict(zip(("x", "y", "z"), tuple(value)))
+        return {"srid": value.srid, "x": coordinates.get("x"),
+                "y": coordinates.get("y"), "z": coordinates.get("z")}
+    if isinstance(value, Path):
+        # A path is NOT an Entity and would otherwise pass through untranslated
+        # -- the obvious return value for bills of materials and supply chains.
         return {
-            "nodes": [_als_python_wert(k) for k in wert.nodes],
-            "relationships": [_als_python_wert(b) for b in wert.relationships],
+            "nodes": [_to_python_value(node) for node in value.nodes],
+            "relationships": [_to_python_value(rel) for rel in value.relationships],
         }
-    if isinstance(wert, Entity):
-        # Node oder Relationship. Nur die Properties -- Labels, Typ und
-        # Element-ID gehen dabei verloren. Deshalb im Cypher besser die
-        # gewuenschten Felder einzeln zurueckgeben (RETURN m.nr AS nr) statt
-        # den ganzen Knoten (RETURN m).
-        return {name: _als_python_wert(v) for name, v in dict(wert).items()}
-    if type(wert).__module__.split(".")[0] == "neo4j":
-        # Auffangnetz: MUSS vor der Container-Behandlung stehen --
-        # mehrere Treibertypen erben von tuple und wuerden sonst still zur
-        # Liste (genau der Duration/Point-Fehler eine Ebene hoeher).
-        # ein Treibertyp, den diese Funktion nicht kennt, wuerde
-        # sonst still durchgereicht -- genau der Fehler, den sie verhindern
-        # soll. Lieber laut hier als spaeter unverstaendlich in der Antwort.
+    if isinstance(value, Entity):
+        # Node or Relationship. Properties only -- labels, type and element id
+        # are lost. Prefer returning the fields you need explicitly in Cypher
+        # (RETURN m.nr AS number) over returning the whole node (RETURN m).
+        return {name: _to_python_value(v) for name, v in dict(value).items()}
+    if type(value).__module__.split(".")[0] == "neo4j":
+        # Safety net -- MUST come before the container handling below: several
+        # driver types subclass tuple and would silently turn into lists (the
+        # exact Duration/Point failure one level up). A driver type this
+        # function does not know would otherwise be passed through unchanged,
+        # which is precisely the bug it exists to prevent.
         raise TypeError(
-            f"Nicht uebersetzbarer Neo4j-Typ: {type(wert).__module__}."
-            f"{type(wert).__name__}. Bitte in db/sources.py::_als_python_wert "
-            f"ergaenzen oder im Cypher in einen einfachen Wert umwandeln."
+            f"Untranslatable Neo4j type: {type(value).__module__}."
+            f"{type(value).__name__}. Add it to db/sources.py::_to_python_value "
+            f"or convert it to a plain value in the Cypher query."
         )
-    if isinstance(wert, dict):
-        return {name: _als_python_wert(v) for name, v in wert.items()}
-    if isinstance(wert, (list, tuple)):
-        return [_als_python_wert(v) for v in wert]
-    if isinstance(wert, (bytes, bytearray)):
-        return base64.b64encode(wert).decode("ascii")
-    return wert
+    if isinstance(value, dict):
+        return {name: _to_python_value(v) for name, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_python_value(v) for v in value]
+    if isinstance(value, (bytes, bytearray)):
+        return base64.b64encode(value).decode("ascii")
+    return value
 
 
 class Sources:
+    """Lives for exactly one request."""
+
     def __init__(
         self,
         stack: AsyncExitStack,
@@ -123,60 +123,61 @@ class Sources:
         self._driver = neo4j_driver
         self._sessionmaker = sql_sessionmaker
         self._sessions: dict[str, Any] = {}
-        # Welche Quellen dieser Request benutzt hat -> landet in meta.source.
+        # Which sources this request actually used -> ends up in meta.source.
         self.used: set[str] = set()
 
-    async def neo4j(self, cypher: str, **parameter: Any) -> list[Row]:
-        """Fuehrt eine Cypher-Abfrage aus und gibt die Zeilen zurueck.
+    async def neo4j(self, cypher: str, **parameters: Any) -> list[Row]:
+        """Runs a Cypher query and returns its rows.
 
-            rows = await sources.neo4j("MATCH (m:Material) RETURN m.nr AS nr")
+            rows = await sources.neo4j("MATCH (m:Material) RETURN m.nr AS number")
 
-        Parameter werden als benannte Werte uebergeben, NICHT in den Text
-        eingesetzt -- `$seit` im Cypher, `seit=...` hier. Das ist schneller
-        (Neo4j kann den Abfrageplan wiederverwenden) und sicher.
+        Parameters are passed by name, NOT spliced into the query text --
+        `$since` in the Cypher, `since=...` here. That is faster (the database
+        can reuse the query plan) and safe.
 
-        Neo4j-eigene Typen (Date, Duration, Point ...) werden dabei in normale
-        Python-Werte uebersetzt -- siehe `_als_python_wert`.
+        Neo4j-specific types (Date, Duration, Point, ...) are converted into
+        plain Python values -- see `_to_python_value`.
         """
         if self._driver is None:
             raise ConfigurationError(
-                "Neo4j ist nicht konfiguriert (NEO4J_URI fehlt), wird aber gebraucht."
+                "Neo4j is not configured (NEO4J_URI is missing) but is required here."
             )
         if "neo4j" not in self._sessions:
             self._sessions["neo4j"] = await self._stack.enter_async_context(
                 self._driver.session(database=self._settings.neo4j_db)
             )
         self.used.add("neo4j")
-        # `parameters=` explizit statt `**parameter`: die Treibersignatur ist
-        # `run(query, parameters=None, **kwargs)`. Ein Cypher-Parameter, der
-        # zufaellig `query` oder `parameters` heisst, landete sonst im Slot des
-        # Treibers statt in der Abfrage -- einmal als TypeError, einmal als
-        # stiller Fehlgriff.
+
+        # `parameters=` explicitly rather than `**parameters`: the driver's
+        # signature is `run(query, parameters=None, **kwargs)`. A Cypher
+        # parameter that happens to be called `query` or `parameters` would
+        # otherwise land in the driver's own slot instead of in the query --
+        # once as a TypeError, once as a silent mix-up.
         try:
-            result = await self._sessions["neo4j"].run(cypher, parameters=parameter)
-            # Bewusst nicht `result.data()`: das wuerde Knoten still zu
-            # Properties verflachen, ohne dass wir die Werte darin uebersetzen
-            # koennen.
+            result = await self._sessions["neo4j"].run(cypher, parameters=parameters)
+            # Deliberately not `result.data()`: that would silently flatten
+            # nodes to properties without giving us a chance to translate the
+            # values inside them.
             return [
-                {name: _als_python_wert(wert) for name, wert in record.items()}
+                {name: _to_python_value(value) for name, value in record.items()}
                 async for record in result
             ]
-        except (ServiceUnavailable, SessionExpired, OSError) as fehler:
-            # 503 statt 500: fuer das Dashboard ist das der Unterschied zwischen
-            # "spaeter nochmal versuchen" und "bitte als Bug melden".
-            raise UpstreamUnavailableError(f"Neo4j nicht erreichbar: {fehler}") from fehler
+        except (ServiceUnavailable, SessionExpired, OSError) as error:
+            # 503 rather than 500: for the dashboard that is the difference
+            # between "try again later" and "please report this as a bug".
+            raise UpstreamUnavailableError(f"Neo4j unreachable: {error}") from error
 
-    async def postgres(self, sql: str, **parameter: Any) -> list[Row]:
-        """Fuehrt eine SQL-Abfrage aus und gibt die Zeilen zurueck.
+    async def postgres(self, sql: str, **parameters: Any) -> list[Row]:
+        """Runs a SQL query and returns its rows.
 
-            rows = await sources.postgres("SELECT * FROM x WHERE d >= :seit", seit=...)
+            rows = await sources.postgres("SELECT * FROM x WHERE d >= :since", since=...)
 
-        Wie oben: `:name` im SQL, `name=...` hier. Werte niemals in den Text
-        einsetzen -- das waere eine SQL-Injection-Luecke.
+        Same rule as above: `:name` in the SQL, `name=...` here. Never splice
+        values into the text -- that would be a SQL injection hole.
         """
         if self._sessionmaker is None:
             raise ConfigurationError(
-                "Postgres ist nicht konfiguriert (POSTGRES_DSN fehlt), wird aber gebraucht."
+                "Postgres is not configured (POSTGRES_DSN is missing) but is required here."
             )
         if "sql" not in self._sessions:
             self._sessions["sql"] = await self._stack.enter_async_context(
@@ -184,28 +185,28 @@ class Sources:
             )
         self.used.add("postgres")
         try:
-            result = await self._sessions["sql"].execute(text(sql), parameter)
+            result = await self._sessions["sql"].execute(text(sql), parameters)
             return [dict(row) for row in result.mappings()]
-        except (OperationalError, DBAPIError, OSError) as fehler:
-            raise UpstreamUnavailableError(f"Postgres nicht erreichbar: {fehler}") from fehler
+        except (OperationalError, DBAPIError, OSError) as error:
+            raise UpstreamUnavailableError(f"Postgres unreachable: {error}") from error
 
     async def commit(self) -> None:
-        """Schliesst die SQL-Transaktion ab. Wird vom Request-Scope aufgerufen.
+        """Commits the SQL transaction. Called by the request scope.
 
-        Ohne diesen Aufruf rollt SQLAlchemy beim Schliessen der Session zurueck.
-        Fuer die reine Leseseite ist das folgenlos -- aber wer dem TODO in
-        api/v1/mappings.py folgt und ein INSERT ergaenzt, bekaeme sonst einen
-        Endpunkt, der 201 antwortet, den Cache invalidiert, Erfolg loggt und
-        nichts schreibt. Wieder still, wieder plausibel aussehend.
+        Without this call SQLAlchemy rolls back when the session closes. For the
+        read-only side that is harmless -- but anyone following the TODO in
+        api/v1/mappings.py and adding an INSERT would get an endpoint that
+        answers 201, invalidates the cache, logs success and writes nothing.
+        Silent again, plausible-looking again.
 
-        Wird NUR auf dem Erfolgspfad aufgerufen (siehe api/deps.py): bei einer
-        Ausnahme bleibt es beim Rollback durch den AsyncExitStack.
+        Called ONLY on the success path (see api/deps.py): if the endpoint
+        raises, the AsyncExitStack rolls back instead.
         """
-        sitzung = self._sessions.get("sql")
-        if sitzung is not None:
-            await sitzung.commit()
+        session = self._sessions.get("sql")
+        if session is not None:
+            await session.commit()
 
     @property
     def label(self) -> str:
-        """Fuer meta.source in der Antwort, z. B. 'neo4j+postgres'."""
+        """For meta.source in the response, e.g. "neo4j+postgres"."""
         return "+".join(sorted(self.used)) or "none"

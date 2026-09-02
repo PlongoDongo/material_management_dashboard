@@ -1,14 +1,14 @@
 """
-Health- und Readiness-Endpunkte.
+Health and readiness endpoints.
 
-Der Unterschied ist betrieblich wichtig:
+The distinction matters operationally:
 
-    /healthz   "Der Prozess lebt."     -> Kubernetes startet ihn sonst neu.
-               Prueft NICHTS Externes. Sonst killt ein kurzer Neo4j-Ausfall
-               alle Pods, statt nur Fehler zu liefern.
+    /healthz   "The process is alive."  -> otherwise Kubernetes restarts it.
+               Checks NOTHING external. Otherwise a short Neo4j outage would
+               kill every pod instead of merely producing errors.
 
-    /readyz    "Ich kann Anfragen beantworten." -> Loadbalancer nimmt den Pod
-               sonst aus dem Verkehr. Prueft die Datenquellen.
+    /readyz    "I can answer requests."  -> otherwise the load balancer takes
+               the pod out of rotation. Checks the data sources.
 """
 from __future__ import annotations
 
@@ -21,20 +21,20 @@ from data_api.api.deps import SettingsDep
 from data_api.products.introspect import required_sources
 from data_api.products.registry import registry
 
-router = APIRouter(tags=["Betrieb"])
+router = APIRouter(tags=["Operations"])
 
 
-@router.get("/healthz", summary="Liveness -- prueft nur den Prozess")
+@router.get("/healthz", summary="Liveness -- checks the process only")
 async def healthz() -> dict[str, Any]:
     return {"status": "ok", "version": __version__, "data_products": len(registry)}
 
 
-@router.get("/readyz", summary="Readiness -- prueft die Datenquellen")
+@router.get("/readyz", summary="Readiness -- checks the data sources")
 async def readyz(request: Request, settings: SettingsDep, response: Response) -> dict[str, Any]:
-    # Nur pruefen, was ein Datenprodukt tatsaechlich abfragt. Ein Deployment
-    # ohne Postgres, das nur Graph-Produkte ausliefert, ist bereit -- wuerde man
-    # stur beide Quellen verlangen, kaeme der Pod nie in den Loadbalancer.
-    benoetigt = required_sources()
+    # Only check what a data product actually queries. A deployment without
+    # Postgres that only serves graph products is ready -- insisting on both
+    # sources would keep the pod out of the load balancer forever.
+    needed = required_sources()
     checks: dict[str, str] = {}
 
     driver = getattr(request.app.state, "neo4j_driver", None)
@@ -60,11 +60,11 @@ async def readyz(request: Request, settings: SettingsDep, response: Response) ->
         except Exception as exc:                      # noqa: BLE001
             checks["postgres"] = f"error: {type(exc).__name__}"
 
-    # Eine nicht konfigurierte Quelle ist genauso schlimm wie eine kaputte:
-    # Datenprodukte, die sie brauchen, koennen nicht antworten. Der Pod meldet
-    # sich deshalb nicht bereit, statt Requests anzunehmen und zu scheitern.
+    # A source that is not configured is just as bad as a broken one -- but only
+    # if a product needs it. The pod then reports "not ready" instead of
+    # accepting requests it cannot serve.
     degraded = [name for name, state in checks.items()
-                if name in benoetigt and state != "ok"]
+                if name in needed and state != "ok"]
 
     if degraded:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
@@ -72,6 +72,6 @@ async def readyz(request: Request, settings: SettingsDep, response: Response) ->
     return {
         "status": "degraded" if degraded else "ready",
         "env": settings.api_env,
-        "required": sorted(benoetigt),
+        "required": sorted(needed),
         "checks": checks,
     }

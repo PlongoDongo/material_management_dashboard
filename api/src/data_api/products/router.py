@@ -1,24 +1,23 @@
 """
-Baut aus der Registry echte, TYPISIERTE FastAPI-Routen.
+Builds real, TYPED FastAPI routes from the registry.
 
-Die naheliegende Alternative waere eine einzige generische Route:
+The obvious alternative would be a single generic route:
 
     @router.get("/data-products/{name}/{version}")
     async def get_product(name: str, version: str): ...
 
-Die funktioniert -- kostet aber genau das, wofuer man FastAPI nimmt: In der
-OpenAPI-Doku stuende dann nur "gibt irgendein JSON zurueck". Kein Dashboard-
-Entwickler koennte unter /docs nachsehen, welche Felder ein Produkt liefert,
-und es gaebe keine generierbaren Clients.
+That works -- but it costs exactly what FastAPI is chosen for: the OpenAPI docs
+would then say only "returns some JSON". No dashboard developer could look up
+which fields a product returns under /docs, and no clients could be generated.
 
-Darum erzeugen wir beim Start pro (Produkt, Major) eine eigene Route mit
-eigenem `response_model`. Ergebnis: /docs zeigt jedes Datenprodukt mit
-vollstaendigem Schema, und trotzdem ist ein neues Produkt nur eine neue Datei.
+So at startup we create one route per (product, major) with its own
+`response_model`. The result is complete OpenAPI documentation *and* "a new
+product is just a new file".
 
-WICHTIG: In diesem Modul steht bewusst KEIN `from __future__ import annotations`.
-Die Typannotationen der erzeugten Endpunkte sind Laufzeitobjekte aus der
-Closure (`ParamsModel`, `EnvelopeModel`). Mit der Future-Zeile wuerden sie zu
-Strings, und FastAPI koennte sie nicht mehr aufloesen -> TypeError beim Start.
+IMPORTANT: this module deliberately has NO `from __future__ import annotations`.
+The type annotations of the generated endpoints are runtime objects taken from
+the closure (`ParamsModel`, `EnvelopeModel`). With the future import they would
+become strings and FastAPI could no longer resolve them -> TypeError at startup.
 """
 
 import datetime as dt
@@ -42,30 +41,30 @@ log = logging.getLogger(__name__)
 async def run_product(
     product: DataProduct, sources: Sources, params: Any
 ) -> tuple[list[Any], str, str, dt.datetime]:
-    """Fuehrt ein Datenprodukt aus -- mit Cache. Ohne HTTP, damit testbar.
+    """Runs a data product -- with caching. No HTTP involved, so it stays testable.
 
-    Rueckgabe: (Zeilen, Cache-Status, Quelle, Erzeugungszeit).
+    Returns (rows, cache state, source, generation time).
 
-    Quelle und Zeitpunkt wandern MIT in den Cache. Wuerde man sie nachtraeglich
-    erfragen, meldete jede Antwort aus dem Cache `source="none"` (es lief ja
-    keine Abfrage) und ein `generated_at` von jetzt statt vom Zeitpunkt der
-    Abfrage -- bei cache_ttl=300 waeren das fuenf Minuten Fehler in genau dem
-    Feld, dessen einziger Zweck die Altersangabe ist.
+    Source and timestamp go INTO the cache. Asking for them afterwards would
+    make every cached response report `source="none"` (no query ran) and a
+    `generated_at` of now instead of when the query actually ran -- with
+    cache_ttl=300 that is a five-minute error in the one field whose only job is
+    to state how old the data is.
     """
     key = cache.make_key(product.name, product.major, params.cache_key())
     cached = cache.get(key)
     if cached is not None:
-        rows, quelle, erzeugt = cached
-        return rows, "hit", quelle, erzeugt
+        rows, source, generated_at = cached
+        return rows, "hit", source, generated_at
 
     rows = await product.loader(sources, params)
-    erzeugt = dt.datetime.now(dt.UTC)
-    cache.set(key, (rows, sources.label, erzeugt), product.cache_ttl)
-    return rows, "miss" if product.cache_ttl else "bypass", sources.label, erzeugt
+    generated_at = dt.datetime.now(dt.UTC)
+    cache.set(key, (rows, sources.label, generated_at), product.cache_ttl)
+    return rows, "miss" if product.cache_ttl else "bypass", sources.label, generated_at
 
 
 def _make_endpoint(product: DataProduct):
-    """Erzeugt die Endpunktfunktion fuer genau ein Datenprodukt."""
+    """Creates the endpoint function for exactly one data product."""
     ParamsModel = product.params_model
     EnvelopeModel = ProductEnvelope[product.item_model]
 
@@ -76,10 +75,10 @@ def _make_endpoint(product: DataProduct):
         sources: SourcesDep,
         principal: CurrentPrincipal,
     ) -> Any:
-        if not principal.darf(product.required_groups):
-            raise ForbiddenError(f"Zugriff auf '{product.name}' nicht erlaubt.")
+        if not principal.may_access(product.required_groups):
+            raise ForbiddenError(f"Access to '{product.name}' is not permitted.")
 
-        rows, cache_state, quelle, erzeugt = await run_product(product, sources, params)
+        rows, cache_state, source, generated_at = await run_product(product, sources, params)
 
         total = len(rows)
         page = rows[params.offset: params.offset + params.limit]
@@ -88,10 +87,10 @@ def _make_endpoint(product: DataProduct):
             "meta": ProductMeta(
                 product=product.name,
                 version=product.version,
-                generated_at=erzeugt,
+                generated_at=generated_at,
                 row_count=len(page),
                 total_count=total,
-                source=quelle,
+                source=source,
                 cache=cache_state,
                 deprecated=product.deprecated,
                 sunset=product.sunset,
@@ -99,20 +98,20 @@ def _make_endpoint(product: DataProduct):
             "data": page,
         }
 
-        # Konditionales GET: unveraendert -> 304 ohne Body.
-        # `generated_at` bleibt aus dem ETag heraus, sonst aendert es sich bei
-        # jedem Request und der Cache waere wirkungslos.
+        # Conditional GET: unchanged -> 304 with no body.
+        # `generated_at` stays out of the ETag; otherwise it would change on
+        # every request and the ETag would be useless.
         tag = etag_for(payload["data"])
         response.headers["ETag"] = tag
         response.headers["Cache-Control"] = f"private, max-age={product.cache_ttl}"
         response.headers["X-Data-Product-Version"] = product.version
         if product.deprecated:
-            # RFC 8594: Clients koennen darauf reagieren, Gateways loggen es.
+            # RFC 8594: clients can react to this, gateways can log it.
             response.headers["Deprecation"] = "true"
             if product.sunset:
-                # RFC 9110 verlangt ein englisches, festes Datumsformat.
-                # `strftime("%a, %d %b ...")` folgt der Locale des Containers und
-                # liefert unter LANG=de_DE "Do., 31 Dez. 2026" -- unparsebar.
+                # RFC 9110 requires a fixed, English date format.
+                # `strftime("%a, %d %b ...")` follows the container's locale and
+                # produces "Do., 31 Dez. 2026" under LANG=de_DE -- unparseable.
                 response.headers["Sunset"] = format_datetime(
                     dt.datetime.combine(product.sunset, dt.time.min, dt.UTC), usegmt=True
                 )
@@ -128,8 +127,8 @@ def _make_endpoint(product: DataProduct):
 
 
 def build_products_router() -> APIRouter:
-    """Eine Route je (Produkt, Major) plus je einen `latest`-Alias."""
-    router = APIRouter(prefix="/data-products", tags=["Datenprodukte"])
+    """One route per (product, major), plus a `latest` alias per product."""
+    router = APIRouter(prefix="/data-products", tags=["Data products"])
 
     for product in registry.all():
         endpoint, envelope = _make_endpoint(product)
@@ -149,12 +148,12 @@ def build_products_router() -> APIRouter:
             ),
             operation_id=f"{product.name.replace('-', '_')}_{product.path_version}",
             deprecated=product.deprecated,
-            responses={304: {"description": "Nicht geaendert (ETag passt)."}},
+            responses={304: {"description": "Not modified (the ETag matched)."}},
         )
 
-    # `latest` ist Komfort fuer Exploration und Notebooks.
-    # Dashboards sollten IMMER eine feste Version anfragen -- sonst wandert ein
-    # brechendes v2 unangekuendigt in die Produktion.
+    # `latest` is a convenience for exploration and notebooks.
+    # Dashboards should ALWAYS request a fixed version -- otherwise a breaking
+    # new major rolls into production unannounced.
     for name in registry.names():
         product = registry.latest(name)
         if product is None:
@@ -166,11 +165,11 @@ def build_products_router() -> APIRouter:
             endpoint,
             methods=["GET"],
             response_model=envelope,
-            summary=f"{product.summary} (aktuell {product.path_version})",
-            description="Alias auf die neueste Version. **Nicht** fuer Dashboards "
-                        "verwenden -- dort immer eine feste Version anfragen.",
+            summary=f"{product.summary} (currently {product.path_version})",
+            description="Alias for the newest version. Do **not** use this from a "
+                        "dashboard -- pin a fixed version there.",
             operation_id=f"{name.replace('-', '_')}_latest",
         )
 
-    log.info("Datenprodukt-Routen erzeugt: %d Produkte.", len(registry))
+    log.info("Data product routes created: %d products.", len(registry))
     return router

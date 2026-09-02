@@ -1,9 +1,10 @@
 """
-Logging-Setup: ein Aufruf beim App-Start, danach ueberall `logging.getLogger(__name__)`.
+Logging setup: one call at application start, then `logging.getLogger(__name__)`
+everywhere else.
 
-Jede Logzeile traegt die Request-ID mit (siehe core/middleware.py). Damit laesst
-sich eine Dashboard-Beschwerde ("die Tabelle war leer") ueber die Response-Header
-bis in die Serverlogs zurueckverfolgen.
+Every log line carries the request id (see core/middleware.py). That is what
+turns a dashboard complaint ("the table was empty") into a specific line in the
+server log, via the response headers.
 """
 from __future__ import annotations
 
@@ -30,5 +31,5 @@ def configure_logging(level: str = "INFO") -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level.upper())
-    # Der neo4j-Treiber ist auf DEBUG sehr geschwaetzig.
+    # The neo4j driver is very chatty at DEBUG level.
     logging.getLogger("neo4j").setLevel("WARNING")
