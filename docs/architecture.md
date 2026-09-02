@@ -33,7 +33,7 @@ flowchart LR
   subgraph products["Datenprodukte"]
     p_material_overview_1["material-overview<br/>v1 · 1.2 ⚠"]
     p_material_overview_2["material-overview<br/>v2 · 2.0"]
-    p_supplier_risk_1["supplier-risk<br/>v1 · 1.0"]
+    p_supplier_risk_1["supplier-risk<br/>v1 · 1.1"]
   end
 
   subgraph sources["Datenquellen"]
@@ -66,7 +66,7 @@ flowchart LR
   end
   subgraph f_supplier_risk["supplier-risk"]
     direction LR
-    v_supplier_risk_1["v1 · 1.0<br/>aktiv"]
+    v_supplier_risk_1["v1 · 1.1<br/>aktiv"]
   end
 ```
 
@@ -124,8 +124,8 @@ classDiagram
 | `/api/v1/data-products/material-overview/latest` | GET | material-overview | 2.0 | team-material-management | 60s | Alias |
 | `/api/v1/data-products/material-overview/v1` | GET | material-overview | 1.2 | team-material-management | 60s | auslaufend |
 | `/api/v1/data-products/material-overview/v2` | GET | material-overview | 2.0 | team-material-management | 60s | aktiv |
-| `/api/v1/data-products/supplier-risk/latest` | GET | supplier-risk | 1.0 | team-supply-chain | 300s | Alias |
-| `/api/v1/data-products/supplier-risk/v1` | GET | supplier-risk | 1.0 | team-supply-chain | 300s | aktiv |
+| `/api/v1/data-products/supplier-risk/latest` | GET | supplier-risk | 1.1 | team-supply-chain | 300s | Alias |
+| `/api/v1/data-products/supplier-risk/v1` | GET | supplier-risk | 1.1 | team-supply-chain | 300s | aktiv |
 | `/api/v1/healthz` | GET | – | – | – | – | aktiv |
 | `/api/v1/mappings` | POST | – | – | – | – | aktiv |
 | `/api/v1/mappings/{mapping_id}` | PATCH | – | – | – | – | aktiv |
@@ -153,13 +153,13 @@ Materialstammdaten inkl. Bestandswert
 * **Filter:** `limit`, `offset`, `status`, `werk_id`, `warengruppe`, `ohne_klassifizierung`, `suche`, `min_bestandswert`
 * **Modul:** `data_api/products/catalog/material_overview_v2.py`
 
-### `supplier-risk` v1 (1.0)
+### `supplier-risk` v1 (1.1)
 
 Lieferantenrisiko aus Stammdaten (Neo4j) und Liefertreue (Postgres)
 
 * **Owner:** team-supply-chain
 * **Quellen:** neo4j + postgres
 * **Cache:** 300s
-* **Filter:** `limit`, `offset`, `seit`, `toleranz_tage`, `min_lieferungen`, `risiko_klasse`
+* **Filter:** `limit`, `offset`, `seit`, `toleranz_tage`, `min_lieferungen`, `risiko_klasse`, `land`
 * **Modul:** `data_api/products/catalog/supplier_risk_v1.py`
 

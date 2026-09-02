@@ -116,10 +116,18 @@ class FakeSources:
     def __init__(self) -> None:
         self.used: set[str] = set()
         self.abfragen: list[str] = []          # fuer Tests, die pruefen WAS gefragt wurde
+        # Mit welchen Parametern wurde gefragt? Das ist die Nahtstelle fuer
+        # Filter, die in der Abfrage stehen: der Fake WENDET sie nicht an
+        # (er wuerde sonst Cypher in Python nachbauen), aber Tests koennen
+        # pruefen, dass sie ueberhaupt uebergeben wurden. Ob der Filter
+        # tatsaechlich richtig filtert, gehoert in einen Integrationstest
+        # gegen eine echte Datenbank -- siehe tests/test_integration_neo4j.py.
+        self.parameter: dict[str, Any] = {}
 
     async def neo4j(self, cypher: str, **parameter: Any) -> list[dict[str, Any]]:
         self.used.add("neo4j")
         self.abfragen.append(cypher)
+        self.parameter.update(parameter)
         if cypher is mo1.CYPHER:
             return material_rows_v1()
         if cypher is mo2.CYPHER:
@@ -134,6 +142,7 @@ class FakeSources:
     async def postgres(self, sql: str, **parameter: Any) -> list[dict[str, Any]]:
         self.used.add("postgres")
         self.abfragen.append(sql)
+        self.parameter.update(parameter)
         if sql is sr1.SQL:
             return delivery_rows(parameter["seit"])
         raise AssertionError(

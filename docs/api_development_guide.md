@@ -296,14 +296,104 @@ Then:
 Remember to call `cache.invalidate("<product>")` from any write endpoint that
 changes the underlying data.
 
-### Where to filter
+### Passing parameters into the query
 
-Filter as early as possible. Ideally the parameters end up in the Cypher/SQL
-`WHERE` clause rather than in Python after loading two million rows. The current
-products filter after loading because the datasets are small; moving that into
-the query is a change local to that one product file.
+Filter as early as possible: what the database can exclude never travels over the
+network. Parameters are passed **by name**, never spliced into the query text —
+splicing is an injection hole and prevents the database from reusing the query
+plan.
 
----
+```python
+CYPHER = """
+MATCH (m:Material)
+WHERE ($status IS NULL OR m.status IN $status)
+  AND ($werk   IS NULL OR m.werk   IN $werk)
+RETURN m.nr AS material_nr, m.status AS status
+ORDER BY m.nr
+SKIP $offset LIMIT $limit
+"""
+
+async def load(sources, params):
+    rows = await sources.neo4j(
+        CYPHER,
+        status=params.status,          # None -> condition drops out
+        werk=params.werk,
+        offset=params.offset,
+        limit=params.limit,
+    )
+    return transform(rows, params)
+```
+
+`($param IS NULL OR ...)` is the standard idiom for an **optional** filter: pass
+nothing and the condition disappears; pass something and it applies. No string
+building, no second query. `supplier-risk` uses it for `land`.
+
+**What Cypher lets you parameterize:**
+
+| | |
+|---|---|
+| ✅ values and lists | `WHERE m.status IN $status` |
+| ✅ `SKIP` / `LIMIT` | `SKIP $offset LIMIT $limit` |
+| ❌ labels | `MATCH (n:$label)` — invalid |
+| ❌ relationship types | `[:$type]` — invalid |
+| ❌ property keys | `WHERE n.$key = ...` — invalid |
+
+Labels, types and property keys are part of the query *structure*, which is
+compiled into a plan. If you think you need them dynamic, you almost always want
+separate queries or separate data products instead. (Recent Neo4j versions do
+offer a dynamic-label syntax; treat it as a last resort — it defeats indexing and
+makes the contract unpredictable.)
+
+SQL works the same way with `:name` placeholders — see `supplier-risk`'s `:seit`.
+
+### The `LIMIT` trap
+
+> **Push the filters and `LIMIT` to the database together, or neither.**
+
+If `LIMIT` runs in Cypher but a filter runs in Python, you filter *one page*
+instead of the whole result. A search that should find 40 matches finds three,
+and nothing errors. This is the most common way server-side pagination goes
+subtly wrong.
+
+Three consistent setups:
+
+| Setup | Correct? | Scales? | Testable without a DB? |
+|---|---|---|---|
+| Everything in Python, fetch all rows | yes | no | yes |
+| Everything in Cypher, incl. `LIMIT` | yes | yes | no — needs an integration test |
+| Filters in Cypher, `LIMIT` in Python | yes | partly | partly |
+
+The products in `catalog/` currently use the first setup: the datasets are small,
+and every filter is covered by fast `transform()` tests. Move to the second when
+the real data volumes justify it — per product, not globally.
+
+### What this costs in testing
+
+A filter that lives in Cypher **cannot be tested without a database**. A fake
+would have to reimplement Cypher semantics in Python, at which point the test
+verifies the fake.
+
+So the seam moves. `FakeSources` records the parameters it was called with, and
+the unit test asserts they arrived:
+
+```python
+client.get("/api/v1/data-products/supplier-risk/v1", params={"land": ["DE"]})
+assert fake.parameter["land"] == ["DE"]
+```
+
+Whether the filter actually filters belongs in `tests/test_integration_neo4j.py`,
+which is skipped unless `NEO4J_URI` is set:
+
+```bash
+export NEO4J_URI=bolt://localhost:7687
+export NEO4J_AUTH=neo4j/passwort
+python seed/seed_neo4j.py
+pytest tests/test_integration_neo4j.py -v
+```
+
+Keep derived logic — computed fields, formulas, classification — in
+`transform()` regardless. That is the part that carries the product's meaning,
+and it must stay testable in milliseconds.
 
 ## 7. Recipe: release a breaking change
 
@@ -555,7 +645,42 @@ For a pull request that adds or changes a data product:
 
 ## 16. When the data isn't rows
 
-Two different questions hide behind this, and they have different answers.
+### 16.0 Two things that are easy to confuse
+
+**Does a Cypher query always return a list?** Yes — a result is always zero or
+more rows, never a bare value.
+
+* `RETURN count(*) AS n` → **one** row: `[{"n": 4711}]`
+* a query matching nothing → **zero** rows: `[]`
+* a write query without `RETURN` → zero rows (the counters live in the result
+  summary, which we do not surface)
+
+So `sources.neo4j()` always hands you a `list[dict]`. A "single value" is simply
+a list with one row and one column. What *can* be non-flat are the **values
+inside** a row: `collect()` yields a list, a map projection
+(`RETURN m {.nr, .name}`) yields a dict. That nesting is fine — see 16a and 16b.
+
+**Does the Row model describe Neo4j's answer or the product's output?** The
+**product's output**. It is the contract with the dashboard, not a picture of the
+graph.
+
+```
+Cypher  ──►  sources.neo4j()  ──►  transform()  ──►  item_model
+             raw rows              your logic       THE CONTRACT
+```
+
+They often look almost identical, and that is fine. But they are separate on
+purpose:
+
+* `MaterialRowV2.bestandswert` does not exist in Neo4j at all — it is computed in
+  `transform()`.
+* `material-overview` v1 and v2 run **different** Cypher and expose **different**
+  row models, while describing the same subject.
+* If the graph renames `m.name` to `m.bezeichnung`, you change the Cypher and the
+  `AS` alias — the row model, and therefore every dashboard, stays untouched.
+
+That last point is the whole reason the two are separate. If the row model simply
+mirrored the query result, every graph change would be a breaking API change.
 
 ### 16a. Values inside a row that aren't plain JSON
 

@@ -27,8 +27,19 @@ from data_api.products.base import DataProduct, ProductParams
 from data_api.products.registry import registry
 
 # 1a. Stammdaten aus dem Graphen.
+#
+# `$land` ist ein PARAMETER, kein eingesetzter Text. Die Zeile
+#     WHERE $land IS NULL OR s.land IN $land
+# ist die Standardredewendung fuer einen OPTIONALEN Filter: wird nichts
+# uebergeben, faellt die Bedingung weg; wird etwas uebergeben, greift sie.
+# So braucht man nicht zwei Abfragen oder zusammengebauten Text.
+#
+# Parametrisierbar sind Werte, Listen sowie SKIP und LIMIT. NICHT
+# parametrisierbar sind Labels, Beziehungstypen und Property-Namen -- die
+# gehoeren zur Struktur der Abfrage.
 CYPHER = """
 MATCH (s:Lieferant)-[:SUPPLIES]->(m:Material)
+WHERE $land IS NULL OR s.land IN $land
 RETURN s.id     AS lieferant_id,
        s.name   AS lieferant_name,
        s.land   AS land,
@@ -70,6 +81,11 @@ class SupplierRiskParams(ProductParams):
         1, ge=0, description="Lieferanten mit weniger Lieferungen werden ausgeblendet."
     )
     risiko_klasse: list[str] | None = None
+    # Dieser Filter wird an die Datenbank durchgereicht (siehe CYPHER oben),
+    # nicht erst hinterher in Python angewandt -- er verkleinert das Ergebnis
+    # schon im Graphen. Neu in 1.1: ein ERGAENZTER optionaler Parameter ist
+    # abwaertskompatibel, also MINOR und dieselbe Route /v1.
+    land: list[str] | None = Field(None, description="Nur Lieferanten aus diesen Laendern.")
 
 
 # Gewichte der Score-Formel. Bewusst als benannte Konstanten und nicht im Code
@@ -163,7 +179,10 @@ def transform(
 # 5. Die Verdrahtung -- hier sieht man, dass beide Quellen benutzt werden.
 async def load(sources: Sources, params: SupplierRiskParams) -> list[dict[str, Any]]:
     """Verknuepft Lieferantenstammdaten mit der Lieferhistorie und bewertet das Risiko."""
-    lieferanten = await sources.neo4j(CYPHER)
+    # Parameter werden als benannte Werte uebergeben. Sie NIE in den
+    # Abfragetext einsetzen -- das waere eine Injection-Luecke und verhindert,
+    # dass die Datenbank den Abfrageplan wiederverwendet.
+    lieferanten = await sources.neo4j(CYPHER, land=params.land)
     lieferungen = await sources.postgres(SQL, seit=params.seit)
     return transform(lieferanten, lieferungen, params)
 
@@ -171,7 +190,7 @@ async def load(sources: Sources, params: SupplierRiskParams) -> list[dict[str, A
 # 6. Veroeffentlichen.
 registry.add(DataProduct(
     name="supplier-risk",
-    version="1.0",
+    version="1.1",
     summary="Lieferantenrisiko aus Stammdaten (Neo4j) und Liefertreue (Postgres)",
     item_model=SupplierRiskRow,
     params_model=SupplierRiskParams,

@@ -137,3 +137,32 @@ def test_schreibender_endpunkt_invalidiert_den_cache(client):
     assert angelegt.status_code == 201
 
     assert client.get(pfad).json()["meta"]["cache"] == "miss"
+
+
+def test_filter_wird_als_parameter_an_die_abfrage_uebergeben(app, client):
+    """Filter, die in der Abfrage stehen, werden als Parameter durchgereicht.
+
+    Der Fake wendet den Filter bewusst NICHT an -- er wuerde sonst Cypher in
+    Python nachbauen, und der Test wuerde am Ende den Fake pruefen statt die
+    API. Getestet wird hier nur die Nahtstelle: kommt `land` ueberhaupt an der
+    Abfrage an? Ob der Filter richtig filtert, prueft
+    tests/test_integration_neo4j.py gegen eine echte Datenbank.
+    """
+    from data_api.api.deps import get_sources
+
+    fake = app.dependency_overrides[get_sources]()
+    app.dependency_overrides[get_sources] = lambda: fake
+
+    client.get("/api/v1/data-products/supplier-risk/v1", params={"land": ["DE", "AT"]})
+    assert fake.parameter["land"] == ["DE", "AT"]
+
+
+def test_ohne_filter_wird_none_uebergeben(app, client):
+    """`$land IS NULL OR ...` -- ohne Filter faellt die Bedingung im Cypher weg."""
+    from data_api.api.deps import get_sources
+
+    fake = app.dependency_overrides[get_sources]()
+    app.dependency_overrides[get_sources] = lambda: fake
+
+    client.get("/api/v1/data-products/supplier-risk/v1")
+    assert fake.parameter["land"] is None
