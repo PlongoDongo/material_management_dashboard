@@ -115,19 +115,34 @@ class FakeSources:
 
     def __init__(self) -> None:
         self.used: set[str] = set()
-        self.abfragen: list[str] = []          # fuer Tests, die pruefen WAS gefragt wurde
-        # Mit welchen Parametern wurde gefragt? Das ist die Nahtstelle fuer
-        # Filter, die in der Abfrage stehen: der Fake WENDET sie nicht an
-        # (er wuerde sonst Cypher in Python nachbauen), aber Tests koennen
-        # pruefen, dass sie ueberhaupt uebergeben wurden. Ob der Filter
-        # tatsaechlich richtig filtert, gehoert in einen Integrationstest
-        # gegen eine echte Datenbank -- siehe tests/test_integration_neo4j.py.
-        self.parameter: dict[str, Any] = {}
+        # Jeder Aufruf als (Abfrage, Parameter). EINE Liste statt getrennter
+        # Sammlungen, damit die Zuordnung eindeutig bleibt: welcher Wert ging an
+        # WELCHE Abfrage? Bei einem Produkt mit zwei Quellen (supplier-risk)
+        # wuerde ein gemeinsames Dict gleichnamige Parameter still ueberschreiben.
+        #
+        # Das ist die Nahtstelle fuer Filter, die in der Abfrage stehen: der Fake
+        # WENDET sie nicht an -- er wuerde sonst Cypher in Python nachbauen und
+        # der Test pruefte am Ende den Fake. Ob ein Filter tatsaechlich filtert,
+        # gehoert in tests/test_integration_neo4j.py gegen eine echte Datenbank.
+        self.aufrufe: list[tuple[str, dict[str, Any]]] = []
+
+    @property
+    def abfragen(self) -> list[str]:
+        """Nur die Abfragetexte, in Aufrufreihenfolge."""
+        return [abfrage for abfrage, _ in self.aufrufe]
+
+    @property
+    def parameter(self) -> dict[str, Any]:
+        """Alle Parameter zusammengefasst -- bequem, aber quellenblind.
+
+        Wer genau sein will (zwei Quellen, gleiche Parameternamen), nimmt
+        `fake.aufrufe[0]` statt dieser Abkuerzung.
+        """
+        return {name: wert for _, p in self.aufrufe for name, wert in p.items()}
 
     async def neo4j(self, cypher: str, **parameter: Any) -> list[dict[str, Any]]:
         self.used.add("neo4j")
-        self.abfragen.append(cypher)
-        self.parameter.update(parameter)
+        self.aufrufe.append((cypher, parameter))
         if cypher is mo1.CYPHER:
             return material_rows_v1()
         if cypher is mo2.CYPHER:
@@ -141,8 +156,7 @@ class FakeSources:
 
     async def postgres(self, sql: str, **parameter: Any) -> list[dict[str, Any]]:
         self.used.add("postgres")
-        self.abfragen.append(sql)
-        self.parameter.update(parameter)
+        self.aufrufe.append((sql, parameter))
         if sql is sr1.SQL:
             return delivery_rows(parameter["seit"])
         raise AssertionError(

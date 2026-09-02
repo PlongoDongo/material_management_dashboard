@@ -30,12 +30,17 @@ async def get_sources(request: Request, settings: SettingsDep) -> AsyncIterator[
     geoeffnet wurde -- auch wenn der Endpunkt einen Fehler geworfen hat.
     """
     async with AsyncExitStack() as stack:
-        yield Sources(
+        sources = Sources(
             stack=stack,
             settings=settings,
             neo4j_driver=getattr(request.app.state, "neo4j_driver", None),
             sql_sessionmaker=getattr(request.app.state, "sql_sessionmaker", None),
         )
+        yield sources
+        # Nur wenn der Endpunkt ohne Ausnahme durchgelaufen ist. Wirft er, kommt
+        # der Code hier nie an und der AsyncExitStack rollt zurueck -- genau die
+        # gewuenschte Aufteilung zwischen Erfolg und Fehler.
+        await sources.commit()
 
 
 SourcesDep = Annotated[Sources, Depends(get_sources)]

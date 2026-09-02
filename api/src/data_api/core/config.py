@@ -14,10 +14,10 @@ Die Variablennamen sind absichtlich identisch zu denen des Dashboards
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -38,8 +38,13 @@ class Settings(BaseSettings):
     api_title: str = "Data Products API"
     api_log_level: str = "INFO"
 
-    api_cors_origins: list[str] = Field(default_factory=list)
-    api_keys: list[str] = Field(default_factory=list)
+    # `NoDecode` ist hier PFLICHT, nicht Geschmack: pydantic-settings versucht
+    # komplexe Felder (list[str]) schon in der Quelle als JSON zu lesen -- also
+    # BEVOR ein Validator laeuft. Ohne NoDecode scheitert der Start an
+    # `API_CORS_ORIGINS=http://a,http://b`, weil das kein JSON ist. Mit NoDecode
+    # kommt der Rohtext an und `_split_csv` unten greift wie vorgesehen.
+    api_cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     @field_validator("api_cors_origins", "api_keys", mode="before")
     @classmethod

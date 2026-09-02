@@ -12,6 +12,8 @@ kommt aus dem Token, und ein Datenprodukt kann `required_groups` deklarieren.
 """
 from __future__ import annotations
 
+import hashlib
+import secrets
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -26,13 +28,22 @@ class Principal:
 
     subject: str
     groups: frozenset[str] = field(default_factory=frozenset)
+    auth_aktiv: bool = True
 
-    def has_any(self, groups) -> bool:
-        """Leere Anforderung = fuer alle offen. Sonst muss eine Gruppe passen."""
-        return not groups or bool(self.groups.intersection(groups))
+    def darf(self, benoetigt) -> bool:
+        """Darf dieser Aufrufer ein Produkt sehen, das `benoetigt` verlangt?
+
+        Ist die Authentifizierung ausgeschaltet (Entwicklung), ist ALLES offen.
+        Ohne diese Zeile waere die Entwicklung strenger als die Produktion: der
+        anonyme Aufrufer haette nur die Gruppe "public" und bekaeme bei einem
+        Produkt mit required_groups=("internal",) ein 403 -- obwohl Auth aus ist.
+        """
+        if not self.auth_aktiv:
+            return True
+        return not benoetigt or bool(self.groups.intersection(benoetigt))
 
 
-ANONYMOUS = Principal(subject="anonymous", groups=frozenset({"public"}))
+ANONYMOUS = Principal(subject="anonymous", groups=frozenset({"public"}), auth_aktiv=False)
 
 
 async def current_principal(
@@ -41,12 +52,18 @@ async def current_principal(
 ) -> Principal:
     if not settings.auth_enabled:
         return ANONYMOUS
-    if x_api_key not in settings.api_keys:
+    # `compare_digest` statt `in`: der Vergleich laeuft in konstanter Zeit und
+    # verraet ueber die Antwortdauer nicht, wie viele Zeichen gestimmt haben.
+    if not any(secrets.compare_digest(x_api_key or "", bekannt) for bekannt in settings.api_keys):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Gueltiger X-API-Key erforderlich.",
         )
-    return Principal(subject=f"apikey:{x_api_key[:4]}...", groups=frozenset({"internal"}))
+    # Der Bezeichner landet in Logs und in Antworten (MappingOut.geaendert_von).
+    # Deshalb ein Hash und keine Zeichen des Schluessels selbst: gleich gut zum
+    # Unterscheiden, aber nicht rueckrechenbar.
+    kennung = hashlib.sha256(x_api_key.encode()).hexdigest()[:8]
+    return Principal(subject=f"apikey:{kennung}", groups=frozenset({"internal"}))
 
 
 CurrentPrincipal = Annotated[Principal, Depends(current_principal)]

@@ -18,6 +18,7 @@ from fastapi import APIRouter, Request, Response, status
 
 from data_api import __version__
 from data_api.api.deps import SettingsDep
+from data_api.products.introspect import required_sources
 from data_api.products.registry import registry
 
 router = APIRouter(tags=["Betrieb"])
@@ -30,6 +31,10 @@ async def healthz() -> dict[str, Any]:
 
 @router.get("/readyz", summary="Readiness -- prueft die Datenquellen")
 async def readyz(request: Request, settings: SettingsDep, response: Response) -> dict[str, Any]:
+    # Nur pruefen, was ein Datenprodukt tatsaechlich abfragt. Ein Deployment
+    # ohne Postgres, das nur Graph-Produkte ausliefert, ist bereit -- wuerde man
+    # stur beide Quellen verlangen, kaeme der Pod nie in den Loadbalancer.
+    benoetigt = required_sources()
     checks: dict[str, str] = {}
 
     driver = getattr(request.app.state, "neo4j_driver", None)
@@ -58,7 +63,8 @@ async def readyz(request: Request, settings: SettingsDep, response: Response) ->
     # Eine nicht konfigurierte Quelle ist genauso schlimm wie eine kaputte:
     # Datenprodukte, die sie brauchen, koennen nicht antworten. Der Pod meldet
     # sich deshalb nicht bereit, statt Requests anzunehmen und zu scheitern.
-    degraded = [name for name, state in checks.items() if state != "ok"]
+    degraded = [name for name, state in checks.items()
+                if name in benoetigt and state != "ok"]
 
     if degraded:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
@@ -66,5 +72,6 @@ async def readyz(request: Request, settings: SettingsDep, response: Response) ->
     return {
         "status": "degraded" if degraded else "ready",
         "env": settings.api_env,
+        "required": sorted(benoetigt),
         "checks": checks,
     }

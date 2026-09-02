@@ -23,11 +23,13 @@ Strings, und FastAPI koennte sie nicht mehr aufloesen -> TypeError beim Start.
 
 import datetime as dt
 import logging
+from email.utils import format_datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from data_api.api.deps import SourcesDep
+from data_api.core.errors import ForbiddenError
 from data_api.core.security import CurrentPrincipal
 from data_api.db.sources import Sources
 from data_api.products.base import DataProduct, ProductEnvelope, ProductMeta
@@ -39,22 +41,27 @@ log = logging.getLogger(__name__)
 
 async def run_product(
     product: DataProduct, sources: Sources, params: Any
-) -> tuple[list[Any], str]:
+) -> tuple[list[Any], str, str, dt.datetime]:
     """Fuehrt ein Datenprodukt aus -- mit Cache. Ohne HTTP, damit testbar.
 
-    Rueckgabe: (Zeilen, cache-Status). Der Cache haelt bereits serialisierte
-    dicts, keine Pydantic-Objekte: das spart bei grossen Tabellen die
-    Re-Validierung und ist der Grund, warum `response_model` unten mit
-    `model_construct`-artigen Rohdaten umgehen kann.
+    Rueckgabe: (Zeilen, Cache-Status, Quelle, Erzeugungszeit).
+
+    Quelle und Zeitpunkt wandern MIT in den Cache. Wuerde man sie nachtraeglich
+    erfragen, meldete jede Antwort aus dem Cache `source="none"` (es lief ja
+    keine Abfrage) und ein `generated_at` von jetzt statt vom Zeitpunkt der
+    Abfrage -- bei cache_ttl=300 waeren das fuenf Minuten Fehler in genau dem
+    Feld, dessen einziger Zweck die Altersangabe ist.
     """
     key = cache.make_key(product.name, product.major, params.cache_key())
     cached = cache.get(key)
     if cached is not None:
-        return cached, "hit"
+        rows, quelle, erzeugt = cached
+        return rows, "hit", quelle, erzeugt
 
     rows = await product.loader(sources, params)
-    cache.set(key, rows, product.cache_ttl)
-    return rows, "miss" if product.cache_ttl else "bypass"
+    erzeugt = dt.datetime.now(dt.UTC)
+    cache.set(key, (rows, sources.label, erzeugt), product.cache_ttl)
+    return rows, "miss" if product.cache_ttl else "bypass", sources.label, erzeugt
 
 
 def _make_endpoint(product: DataProduct):
@@ -69,13 +76,10 @@ def _make_endpoint(product: DataProduct):
         sources: SourcesDep,
         principal: CurrentPrincipal,
     ) -> Any:
-        if not principal.has_any(product.required_groups):
-            from fastapi import HTTPException
+        if not principal.darf(product.required_groups):
+            raise ForbiddenError(f"Zugriff auf '{product.name}' nicht erlaubt.")
 
-            raise HTTPException(status.HTTP_403_FORBIDDEN,
-                                detail=f"Zugriff auf '{product.name}' nicht erlaubt.")
-
-        rows, cache_state = await run_product(product, sources, params)
+        rows, cache_state, quelle, erzeugt = await run_product(product, sources, params)
 
         total = len(rows)
         page = rows[params.offset: params.offset + params.limit]
@@ -84,10 +88,10 @@ def _make_endpoint(product: DataProduct):
             "meta": ProductMeta(
                 product=product.name,
                 version=product.version,
-                generated_at=dt.datetime.now(dt.UTC),
+                generated_at=erzeugt,
                 row_count=len(page),
                 total_count=total,
-                source=sources.label,
+                source=quelle,
                 cache=cache_state,
                 deprecated=product.deprecated,
                 sunset=product.sunset,
@@ -106,7 +110,12 @@ def _make_endpoint(product: DataProduct):
             # RFC 8594: Clients koennen darauf reagieren, Gateways loggen es.
             response.headers["Deprecation"] = "true"
             if product.sunset:
-                response.headers["Sunset"] = product.sunset.strftime("%a, %d %b %Y 00:00:00 GMT")
+                # RFC 9110 verlangt ein englisches, festes Datumsformat.
+                # `strftime("%a, %d %b ...")` folgt der Locale des Containers und
+                # liefert unter LANG=de_DE "Do., 31 Dez. 2026" -- unparsebar.
+                response.headers["Sunset"] = format_datetime(
+                    dt.datetime.combine(product.sunset, dt.time.min, dt.UTC), usegmt=True
+                )
 
         if request.headers.get("if-none-match") == tag:
             return Response(status_code=status.HTTP_304_NOT_MODIFIED,

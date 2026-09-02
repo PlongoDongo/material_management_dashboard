@@ -163,3 +163,30 @@ def test_verschachtelte_werte_werden_mit_umgewandelt():
 def test_normale_werte_bleiben_unveraendert():
     for wert in ("Text", 42, 3.14, True, None):
         assert _als_python_wert(wert) == wert
+
+
+def test_lieferant_ohne_lieferungen_ist_unbekannt_nicht_niedrig():
+    """Keine Daten duerfen keine Bestnote ergeben.
+
+    Vorher: fill_null(1.0) auf "puenktlich" -> Score 0.0 -> Klasse "niedrig".
+    Ein Lieferant ohne jede Historie stand damit ganz unten in der Risikoliste.
+    Dass es nicht auffiel, lag nur am Default min_lieferungen=1, der solche
+    Zeilen wieder herausfilterte -- die Korrektheit hing also am Default eines
+    ANDEREN Parameters.
+    """
+    zeilen = transform_risk(STAMM, [_lieferung("L-1", 0)],
+                            SupplierRiskParams(min_lieferungen=0))
+    nach_id = {z["lieferant_id"]: z for z in zeilen}
+
+    assert nach_id["L-1"]["risiko_klasse"] == "niedrig"      # hat Daten
+    ohne = nach_id["L-2"]                                     # hat keine
+    assert ohne["lieferungen"] == 0
+    assert ohne["risiko_score"] is None
+    assert ohne["risiko_klasse"] == "unbekannt"
+    assert ohne["liefertreue_pct"] is None
+
+
+def test_ohne_datenlage_steht_am_ende_der_sortierung():
+    zeilen = transform_risk(STAMM, [_lieferung("L-1", 14, reklamationen=1)],
+                            SupplierRiskParams(min_lieferungen=0))
+    assert [z["risiko_klasse"] for z in zeilen] == ["hoch", "unbekannt"]

@@ -80,6 +80,8 @@ async def create_mapping(
     funktioniert.
     """
     # TODO(datenquelle): await sources.postgres(INSERT_SQL, ...)
+    # Der Commit passiert automatisch im Request-Scope (api/deps.py) -- aber nur
+    # auf dem Erfolgspfad. Wer hier eine Ausnahme wirft, schreibt nichts.
     log.info("Mapping angelegt von %s: %s -> %s",
              principal.subject, payload.material_nr, payload.ziel_warengruppe)
 
@@ -101,7 +103,7 @@ async def patch_mapping(
     sources: SourcesDep,
     principal: CurrentPrincipal,
 ) -> MappingOut:
-    # TODO(datenquelle): analog zu create_mapping.
+    # TODO(datenquelle): analog zu create_mapping (Commit siehe dort).
     cache.invalidate("material-overview")
     return MappingOut(
         **payload.model_dump(),

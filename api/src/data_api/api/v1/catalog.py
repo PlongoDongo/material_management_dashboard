@@ -16,6 +16,7 @@ import datetime as dt
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from data_api.core.security import CurrentPrincipal
 from data_api.products.registry import registry
 
 router = APIRouter(prefix="/catalog", tags=["Katalog"])
@@ -39,10 +40,11 @@ class CatalogEntry(BaseModel):
     versions: list[VersionInfo]
 
 
-def _entry(name: str) -> CatalogEntry:
-    versions = registry.versions_of(name)
-    newest = registry.latest(name)
-    assert newest is not None
+def _entry(name: str, versions: list) -> CatalogEntry:
+    # `versions` kommt vom Aufrufer, der schon geprueft hat, dass sie nicht leer
+    # ist. Frueher stand hier ein `assert newest is not None` -- das verschwindet
+    # unter `python -O` und waere danach ein AttributeError auf None.
+    newest = max(versions, key=lambda p: p.major)
     return CatalogEntry(
         name=name,
         summary=newest.summary,
@@ -63,13 +65,18 @@ def _entry(name: str) -> CatalogEntry:
     )
 
 
+# Der Katalog verlangt DIESELBE Authentifizierung wie die Datenprodukte. Er
+# listet Namen, Owner, Cache-Zeiten, Sunset-Daten und alle Vertragsfelder -- also
+# die vollstaendige Landkarte dessen, was hinter der Auth liegt. Ihn offen zu
+# lassen waere eine Entscheidung; sie waere hier nur nicht getroffen worden.
 @router.get("", summary="Alle verfuegbaren Datenprodukte")
-async def list_products() -> list[CatalogEntry]:
-    return [_entry(name) for name in registry.names()]
+async def list_products(principal: CurrentPrincipal) -> list[CatalogEntry]:
+    return [_entry(name, registry.versions_of(name)) for name in registry.names()]
 
 
 @router.get("/{name}", summary="Ein Datenprodukt mit allen Versionen")
-async def get_product(name: str) -> CatalogEntry:
-    if not registry.versions_of(name):
+async def get_product(name: str, principal: CurrentPrincipal) -> CatalogEntry:
+    versions = registry.versions_of(name)
+    if not versions:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Unbekannt: {name}")
-    return _entry(name)
+    return _entry(name, versions)

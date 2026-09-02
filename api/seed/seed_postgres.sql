@@ -24,7 +24,8 @@ CREATE TABLE mock.lieferungen (
 );
 
 -- Der Index deckt genau den Zugriff des Datenprodukts ab:
--- WHERE geliefert_am >= :seit  ORDER BY lieferant_id, geliefert_am
+-- WHERE geliefert_am >= :seit AND lieferant_id = ANY(:ids)
+--   ORDER BY lieferant_id, geliefert_am
 CREATE INDEX lieferungen_seit_idx ON mock.lieferungen (geliefert_am, lieferant_id);
 
 -- 40 Lieferungen je Lieferant, mit unterschiedlichem Verzugsprofil, damit der

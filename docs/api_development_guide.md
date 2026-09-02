@@ -310,7 +310,6 @@ WHERE ($status IS NULL OR m.status IN $status)
   AND ($werk   IS NULL OR m.werk   IN $werk)
 RETURN m.nr AS material_nr, m.status AS status
 ORDER BY m.nr
-SKIP $offset LIMIT $limit
 """
 
 async def load(sources, params):
@@ -318,15 +317,35 @@ async def load(sources, params):
         CYPHER,
         status=params.status,          # None -> condition drops out
         werk=params.werk,
-        offset=params.offset,
-        limit=params.limit,
     )
     return transform(rows, params)
 ```
 
+> **Do not put `SKIP` / `LIMIT` in the query.** Cypher accepts them as
+> parameters, but the router already applies `limit`/`offset` to the finished
+> result (`products/router.py`). Doing both paginates twice: with
+> `offset=10, limit=10`, Cypher returns rows 10–19, the router then takes
+> `rows[10:20]` of those ten — an **empty page**, while `meta.total_count`
+> reports `10` instead of the real total. Page 1 looks fine; from page 2 the
+> table is empty and nothing errors.
+>
+> The rule the section below states for products applies to the framework too:
+> filters and `LIMIT` belong together. Here, pagination is the router's job.
+> A `LIMIT` that is part of a product's *meaning* (a "top 10 by risk" product) is
+> a different thing — give it its own parameter name such as `top_n`, and be
+> aware that the product's result set is then those N rows, which `limit`/`offset`
+> will paginate.
+
 `($param IS NULL OR ...)` is the standard idiom for an **optional** filter: pass
 nothing and the condition disappears; pass something and it applies. No string
 building, no second query. `supplier-risk` uses it for `land`.
+
+The idiom has one sharp edge, and `ProductParams` files it off for you: an
+**empty list** is not `NULL`. `[] IS NULL` is false and `x IN []` is false for
+every row, so `?status=` would return zero rows with no error. A validator on
+`ProductParams` turns every empty list into `None` before it reaches a query, so
+"nothing selected" always means "no filter". Declare list filters as
+`list[X] | None` so that conversion is valid.
 
 **What Cypher lets you parameterize:**
 
@@ -359,13 +378,17 @@ Three consistent setups:
 
 | Setup | Correct? | Scales? | Testable without a DB? |
 |---|---|---|---|
-| Everything in Python, fetch all rows | yes | no | yes |
-| Everything in Cypher, incl. `LIMIT` | yes | yes | no — needs an integration test |
-| Filters in Cypher, `LIMIT` in Python | yes | partly | partly |
+| All filters in Python, router paginates | yes | no | yes |
+| All filters in Cypher, router paginates | yes | yes | filters need an integration test |
+| Some filters in Cypher, some in Python, router paginates | yes | partly | partly |
+| `LIMIT` in Cypher **and** the router paginating | **no** — empty pages | — | — |
 
-The products in `catalog/` currently use the first setup: the datasets are small,
-and every filter is covered by fast `transform()` tests. Move to the second when
-the real data volumes justify it — per product, not globally.
+The last row is not a trade-off, it is a bug — see the warning above. The first
+three are all correct because pagination happens in exactly one place.
+
+The products in `catalog/` mix the first and second setups: `supplier-risk`
+filters `land` in Cypher and everything derived in `transform()`. Move a filter
+into the query when the data volume justifies it — per product, not globally.
 
 ### What this costs in testing
 
@@ -377,9 +400,24 @@ So the seam moves. `FakeSources` records the parameters it was called with, and
 the unit test asserts they arrived:
 
 ```python
-client.get("/api/v1/data-products/supplier-risk/v1", params={"land": ["DE"]})
-assert fake.parameter["land"] == ["DE"]
+def test_filter_reaches_the_query(client, fake_sources):
+    antwort = client.get("/api/v1/data-products/supplier-risk/v1",
+                         params={"land": ["DE"]})
+    assert antwort.status_code == 200          # otherwise a 500 looks like success
+    cypher, parameter = fake_sources.aufrufe[0]
+    assert parameter["land"] == ["DE"]
 ```
+
+`fake_sources` is a fixture in `conftest.py` that pins the one `FakeSources`
+instance the request uses. It records every call as `(query, parameters)`, so a
+test can say *which* query a value reached — important for a product with two
+sources, where a flat dict would let identically named parameters overwrite each
+other.
+
+Always assert the status code as well. `fake_sources.aufrufe[0]` is already
+populated by the first `await sources.neo4j(...)`; everything after it — the
+second source, `transform()`, envelope validation, cache, headers — could fail
+without the test noticing.
 
 Whether the filter actually filters belongs in `tests/test_integration_neo4j.py`,
 which is skipped unless `NEO4J_URI` is set:
@@ -579,14 +617,19 @@ Raise the right one from `core/errors.py`:
 
 | Exception | Status | When |
 |---|---|---|
-| `ProductNotFoundError` | 404 | unknown product or version |
+| `ForbiddenError` | 403 | caller is known but not allowed to see this product |
 | `UpstreamUnavailableError` | 503 | Neo4j/Postgres unreachable — "retry later" |
 | `ConfigurationError` | 500 | a required source is not configured |
 | `AppError` | 500 | anything else that is genuinely our bug |
 
 503 vs 500 matters to consumers: the first means "try again", the second means
-"file a bug". Every response carries an `X-Request-ID` that also appears in every
-log line for that request.
+"file a bug". `Sources` translates driver failures (`ServiceUnavailable`,
+`OperationalError`) into `UpstreamUnavailableError` so this distinction actually
+reaches the dashboard instead of collapsing into a generic 500.
+
+Every response carries an `X-Request-ID`, in the body *and* as a header, and the
+same id appears in every log line for that request — including the access-log
+line and the 500 response, which are the two places you look first.
 
 ---
 
@@ -594,6 +637,15 @@ log line for that request.
 
 Cache key is `(product, major, parameters)`. Different filters are different
 answers — getting this wrong is the classic cache bug.
+
+`limit`/`offset` are deliberately **excluded** from the key: the cache holds the
+loader's full result and the router slices afterwards. Including them would make
+every page a full re-run and store the same dataset N times.
+
+The cached entry carries the source label and the query timestamp alongside the
+rows. Reading them afterwards would report `source: "none"` and a fresh
+`generated_at` on every cache hit — wrong in exactly the field whose only job is
+to say how old the data is.
 
 The cache is **in-process**. With multiple uvicorn workers each worker has its
 own; hit rate drops, correctness does not. Swap `TTLCache` for Redis when that
@@ -636,7 +688,8 @@ For a pull request that adds or changes a data product:
 - [ ] version follows the MAJOR/MINOR rule — a changed **formula** is MAJOR
 - [ ] the previous version is untouched, and marked `deprecated` + `sunset` if superseded
 - [ ] `cache_ttl` is deliberate, and write endpoints invalidate the product
-- [ ] no `HTTPException` outside `api/` and `products/router.py`
+- [ ] no `HTTPException` outside `api/` — business code raises an `AppError` subclass
+- [ ] list filters are declared `list[X] | None` so an empty list becomes "no filter"
 - [ ] no sample data added under `src/`
 - [ ] `architecture-docs` was run and the result committed
 - [ ] `pytest -q` is green

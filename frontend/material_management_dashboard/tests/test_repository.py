@@ -196,3 +196,66 @@ def test_distinct_values_fuer_die_filter_dropdowns(monkeypatch) -> None:
                         _client(lambda r: httpx.Response(200, json=_envelope(API_ROWS))))
     assert repo.distinct_values("werk") == ["Werk Berlin", "Werk Köln"]
     assert repo.distinct_values("warengruppe") == ["Rohstoffe"]   # None faellt raus
+
+
+def test_kuerzung_wird_gemeldet(monkeypatch, caplog) -> None:
+    """Eine vollständig aussehende, aber unvollständige Tabelle muss auffallen.
+
+    Die API meldet 120.000 Zeilen, geliefert werden 50.000 (das serverseitige
+    Maximum). Ohne diesen Hinweis zeigt das Dashboard eine plausible Tabelle mit
+    fehlenden Daten -- und die KPI-Kacheln zählen ebenfalls zu wenig.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_envelope(API_ROWS, total_count=120_000))
+
+    monkeypatch.setattr(repo, "_client", _client(handler))
+    with caplog.at_level("ERROR"):
+        repo.get_materials()
+
+    assert repo.kuerzung() == (2, 120_000)
+    assert "gekuerzt" in caplog.text.lower()
+
+
+def test_ohne_kuerzung_kein_hinweis(monkeypatch) -> None:
+    monkeypatch.setattr(repo, "_client",
+                        _client(lambda r: httpx.Response(200, json=_envelope(API_ROWS))))
+    repo.get_materials()
+    assert repo.kuerzung() is None
+
+
+# --- Die Kopie darf nicht von der Vorlage abdriften -------------------------
+
+def test_client_ist_mit_der_vorlage_deckungsgleich() -> None:
+    """`data/api_client.py` ist eine Kopie von `api/.../dash_client.py`.
+
+    Ohne diesen Test ist "ändert sie sich dort, wird sie hier nachgezogen" eine
+    Absichtserklärung, die beim ersten Zeitdruck bricht.
+
+    Verglichen wird der AST ohne Modul-Docstring: die beiden Dateien dürfen
+    unterschiedliche Einleitungen und Kommentare haben (die Vorlage erklärt das
+    Kopieren, die Kopie erklärt die Herkunft), aber kein unterschiedliches
+    Verhalten.
+    """
+    import ast
+    from pathlib import Path
+
+    hier = Path(__file__).resolve()
+    kopie = hier.parents[1] / "data" / "api_client.py"
+    vorlage = hier.parents[3] / "api" / "src" / "data_api" / "clients" / "dash_client.py"
+
+    if not vorlage.exists():                      # Dashboard ohne Monorepo ausgecheckt
+        pytest.skip(f"Vorlage nicht gefunden: {vorlage}")
+
+    def rumpf(pfad: Path) -> str:
+        baum = ast.parse(pfad.read_text(encoding="utf-8"))
+        knoten = baum.body
+        if (knoten and isinstance(knoten[0], ast.Expr)
+                and isinstance(knoten[0].value, ast.Constant)
+                and isinstance(knoten[0].value.value, str)):
+            knoten = knoten[1:]                   # Modul-Docstring weglassen
+        return "\n".join(ast.dump(k, indent=2) for k in knoten)
+
+    assert rumpf(kopie) == rumpf(vorlage), (
+        "data/api_client.py und api/src/data_api/clients/dash_client.py sind "
+        "auseinandergelaufen. Vorlage kopieren und nur den Kopf anpassen."
+    )

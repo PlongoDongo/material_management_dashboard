@@ -24,6 +24,7 @@ import os
 from contextlib import AsyncExitStack
 
 import pytest
+import pytest_asyncio
 
 from data_api.core.config import Settings
 from data_api.db.neo4j import create_driver
@@ -36,15 +37,30 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-async def sources():
-    """Ein echtes Sources-Objekt gegen die konfigurierte Datenbank."""
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def treiber():
+    """EIN Treiber fuer die ganze Sitzung -- dieselbe Regel wie im Server.
+
+    Pro Test einen aufzubauen hiesse pro Test ein Verbindungsaufbau samt
+    verify_connectivity(). `try/finally` ist Pflicht: schlaegt ein Test fehl,
+    wirft pytest die Ausnahme in den Generator, und ein blosses `await
+    driver.close()` nach dem yield wuerde nie erreicht -- der Connection-Pool
+    bliebe offen. Das ist genau die Zusage, die db/sources.py gibt.
+    """
     settings = Settings()
     driver = await create_driver(settings.neo4j_uri, settings.neo4j_auth)
+    try:
+        yield driver
+    finally:
+        await driver.close()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def sources(treiber):
+    """Ein Sources-Objekt pro Test -- kurzlebig, wie im Request."""
     async with AsyncExitStack() as stack:
-        yield Sources(stack=stack, settings=settings,
-                      neo4j_driver=driver, sql_sessionmaker=None)
-    await driver.close()
+        yield Sources(stack=stack, settings=Settings(),
+                      neo4j_driver=treiber, sql_sessionmaker=None)
 
 
 async def test_abfrage_liefert_die_erwarteten_spalten(sources):
