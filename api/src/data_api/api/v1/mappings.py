@@ -1,26 +1,24 @@
 """
-Die Schreibseite -- handgeschriebene Endpunkte, bewusst NICHT ueber die Registry.
+The write side -- hand-written endpoints, deliberately NOT via the registry.
 
-Warum die Trennung? Weil Lesen und Schreiben unterschiedliche Vertraege haben:
+Why the separation? Because reading and writing have different contracts:
 
-    Datenprodukt (GET)   ein Vertrag ueber die FORM der Daten. Cachebar,
-                         idempotent, versioniert, generierbar.
-    Kommando (POST/PATCH/DELETE)
-                         ein Vertrag ueber eine AKTION. Hat Vorbedingungen,
-                         Nebenwirkungen, Berechtigungen, Transaktionen und
-                         invalidiert Caches.
+    Data product (GET)   a contract about the SHAPE of data. Cacheable,
+                         idempotent, versioned, generatable.
+    Command (POST/PATCH/DELETE)
+                         a contract about an ACTION. It has preconditions, side
+                         effects, permissions, transactions, and it invalidates
+                         caches.
 
-Das ist "CQRS-lite": ein generischer Codegenerator kann das Zweite nicht
-sinnvoll erzeugen, und der Versuch macht die Abstraktion kaputt. Schreibende
-Endpunkte gehoeren deshalb in normale, von Hand geschriebene Router unter
-/api/v1/<thema>.
+This is "CQRS-lite": a generic generator cannot produce the second kind, and
+trying makes the abstraction worse. Write endpoints therefore live in ordinary,
+hand-written routers under /api/v1/<topic>.
 
-Zu den HTTP-Methoden (die Frage kam auf: "POST, PUT oder UPDATE"):
-    POST    neu anlegen, oder eine Aktion ausloesen         nicht idempotent
-    PUT     vollstaendig ersetzen (der ganze Datensatz)     idempotent
-    PATCH   teilweise aendern (nur die gesendeten Felder)   idempotent
-    DELETE  loeschen                                        idempotent
-Ein "UPDATE" gibt es in HTTP nicht -- gemeint ist meist PATCH.
+On HTTP methods -- there is no "UPDATE" in HTTP; people usually mean PATCH:
+    POST    create, or trigger an action              not idempotent
+    PUT     replace completely (the whole record)     idempotent
+    PATCH   change partially (only the fields sent)   idempotent
+    DELETE  remove                                    idempotent
 """
 from __future__ import annotations
 
@@ -37,77 +35,76 @@ from data_api.products.cache import cache
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/mappings", tags=["Mappings (Schreiben)"])
+router = APIRouter(prefix="/mappings", tags=["Mappings (write)"])
 
 
 class MappingIn(BaseModel):
-    """Eingabemodell. Getrennt vom Ausgabemodell -- immer.
+    """Input model. Always separate from the output model.
 
-    Der Client darf `id` und `geaendert_am` nicht setzen; stuenden sie in einem
-    gemeinsamen Modell, muesste man sie muehsam wegvalidieren. Zwei kleine
-    Modelle sind einfacher als ein grosses mit Ausnahmen.
+    The client must not set `id` or `changed_at`; in a shared model they would
+    have to be validated away. Two small models are simpler than one large model
+    with exceptions.
     """
 
-    material_nr: str = Field(min_length=1, max_length=40)
-    ziel_warengruppe: str = Field(min_length=1, max_length=80)
-    kommentar: str | None = Field(None, max_length=500)
+    material_number: str = Field(min_length=1, max_length=40)
+    target_material_group: str = Field(min_length=1, max_length=80)
+    comment: str | None = Field(None, max_length=500)
 
 
 class MappingOut(MappingIn):
     id: str
-    geaendert_am: dt.datetime
-    geaendert_von: str
+    changed_at: dt.datetime
+    changed_by: str
 
 
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
-    summary="Neues Mapping anlegen",
-    responses={409: {"description": "Mapping existiert bereits."}},
+    summary="Create a new mapping",
+    responses={409: {"description": "The mapping already exists."}},
 )
 async def create_mapping(
     payload: Annotated[MappingIn, Body()],
     sources: SourcesDep,
     principal: CurrentPrincipal,
 ) -> MappingOut:
-    """Legt ein Material-zu-Warengruppe-Mapping an.
+    """Creates a material-to-material-group mapping.
 
-    Der eigentliche Schreibvorgang gehoert in ein Repository (hier noch nicht
-    implementiert, weil die Zieltabelle fehlt). Wichtig ist das Muster darum
-    herum: nach jedem Schreiben werden die betroffenen Datenprodukte aus dem
-    Cache geworfen -- sonst zeigt das Dashboard bis zu `cache_ttl` Sekunden
-    lang den alten Stand und der Nutzer glaubt, das Speichern habe nicht
-    funktioniert.
+    The actual write belongs in a query here (not implemented yet, the target
+    table does not exist). What matters is the pattern around it: after every
+    write the affected data products are evicted from the cache -- otherwise the
+    dashboard shows the old state for up to `cache_ttl` seconds and the user
+    believes the save failed.
     """
-    # TODO(datenquelle): await sources.postgres(INSERT_SQL, ...)
-    # Der Commit passiert automatisch im Request-Scope (api/deps.py) -- aber nur
-    # auf dem Erfolgspfad. Wer hier eine Ausnahme wirft, schreibt nichts.
-    log.info("Mapping angelegt von %s: %s -> %s",
-             principal.subject, payload.material_nr, payload.ziel_warengruppe)
+    # TODO(data source): await sources.postgres(INSERT_SQL, ...)
+    # The commit happens automatically in the request scope (api/deps.py) -- but
+    # only on the success path. Raise here and nothing is written.
+    log.info("Mapping created by %s: %s -> %s",
+             principal.subject, payload.material_number, payload.target_material_group)
 
     invalidated = cache.invalidate("material-overview")
-    log.info("Cache invalidiert: %d Eintraege.", invalidated)
+    log.info("Cache invalidated: %d entries.", invalidated)
 
     return MappingOut(
         **payload.model_dump(),
-        id=f"map-{payload.material_nr}",
-        geaendert_am=dt.datetime.now(dt.UTC),
-        geaendert_von=principal.subject,
+        id=f"map-{payload.material_number}",
+        changed_at=dt.datetime.now(dt.UTC),
+        changed_by=principal.subject,
     )
 
 
-@router.patch("/{mapping_id}", summary="Mapping teilweise aendern")
+@router.patch("/{mapping_id}", summary="Partially change a mapping")
 async def patch_mapping(
     mapping_id: str,
     payload: Annotated[MappingIn, Body()],
     sources: SourcesDep,
     principal: CurrentPrincipal,
 ) -> MappingOut:
-    # TODO(datenquelle): analog zu create_mapping (Commit siehe dort).
+    # TODO(data source): same as create_mapping (see the commit note there).
     cache.invalidate("material-overview")
     return MappingOut(
         **payload.model_dump(),
         id=mapping_id,
-        geaendert_am=dt.datetime.now(dt.UTC),
-        geaendert_von=principal.subject,
+        changed_at=dt.datetime.now(dt.UTC),
+        changed_by=principal.subject,
     )

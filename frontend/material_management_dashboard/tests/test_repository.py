@@ -22,17 +22,17 @@ from data.schema import COLUMNS
 
 # Zeilen genau so, wie sie das Datenprodukt material-overview/v2 liefert.
 API_ROWS = [
-    {"material_nr": "MAT-1", "bezeichnung": "Schraube", "warengruppe": "Rohstoffe",
-     "werk_id": "W-KOE", "werk_name": "Werk Köln", "status": "Aktiv",
-     "bestand": 10, "preis": 2.5, "bestandswert": 25.0, "geaendert": "2026-01-01"},
-    {"material_nr": "MAT-2", "bezeichnung": "Mutter", "warengruppe": None,
-     "werk_id": "W-BER", "werk_name": "Werk Berlin", "status": "Gesperrt",
-     "bestand": None, "preis": 1.0, "bestandswert": None, "geaendert": "2026-02-01"},
+    {"material_number": "MAT-1", "description": "Schraube", "material_group": "Rohstoffe",
+     "plant_id": "W-KOE", "plant_name": "Werk Köln", "status": "Aktiv",
+     "stock": 10, "price": 2.5, "stock_value": 25.0, "changed_on": "2026-01-01"},
+    {"material_number": "MAT-2", "description": "Mutter", "material_group": None,
+     "plant_id": "W-BER", "plant_name": "Werk Berlin", "status": "Gesperrt",
+     "stock": None, "price": 1.0, "stock_value": None, "changed_on": "2026-02-01"},
 ]
 
 
 def _envelope(rows: list[dict], **meta_over) -> dict:
-    meta = {"product": "material-overview", "version": "2.0", "api_version": "v1",
+    meta = {"product": "material-overview", "version": "3.0", "api_version": "v1",
             "generated_at": "2026-08-20T07:09:05Z", "row_count": len(rows),
             "total_count": len(rows), "source": "neo4j", "cache": "miss",
             "deprecated": False, "sunset": None}
@@ -55,11 +55,11 @@ def _leerer_cache():
 
 # --- Umformung (rein, ohne HTTP) -------------------------------------------
 
-def test_werk_name_wird_zur_spalte_werk() -> None:
-    """Die eine echte Umbenennung an der Grenze API <-> Dashboard."""
+def test_plant_name_wird_zur_spalte_werk() -> None:
+    """Die Uebersetzung an der Grenze API (englisch) <-> Tabelle (deutsch)."""
     frame = repo._rows_to_frame(API_ROWS)
     assert frame["werk"].to_list() == ["Werk Köln", "Werk Berlin"]
-    assert "werk_name" not in frame.columns
+    assert "plant_name" not in frame.columns
 
 
 def test_frame_hat_exakt_die_tabellenspalten() -> None:
@@ -71,12 +71,12 @@ def test_unbekannte_api_felder_werden_ignoriert() -> None:
 
     Genau deshalb ist ein hinzugefuegtes Feld nur eine Minor-Version.
     """
-    rows = [dict(API_ROWS[0], voellig_neues_feld="egal")]
+    rows = [dict(API_ROWS[0], brand_new_field="egal")]
     assert repo._rows_to_frame(rows).columns == COLUMNS
 
 
 def test_fehlendes_feld_wird_zu_none_statt_absturz(caplog) -> None:
-    rows = [{k: v for k, v in API_ROWS[0].items() if k != "bestandswert"}]
+    rows = [{k: v for k, v in API_ROWS[0].items() if k != "stock_value"}]
     frame = repo._rows_to_frame(rows)
     assert frame["bestandswert"].to_list() == [None]
     assert "bestandswert" in caplog.text
@@ -104,9 +104,9 @@ def test_client_ruft_die_richtige_route_auf() -> None:
         gesehen["url"] = str(request.url)
         return httpx.Response(200, json=_envelope(API_ROWS))
 
-    rows, meta = _client(handler).fetch("material-overview", "v2", limit=50_000)
-    assert gesehen["url"] == "http://api.test/api/v1/data-products/material-overview/v2?limit=50000"
-    assert meta["version"] == "2.0"
+    rows, meta = _client(handler).fetch("material-overview", "v3", limit=50_000)
+    assert gesehen["url"] == "http://api.test/api/v1/data-products/material-overview/v3?limit=50000"
+    assert meta["version"] == "3.0"
     assert len(rows) == 2
 
 
@@ -118,7 +118,7 @@ def test_listenparameter_werden_wiederholt_angehaengt() -> None:
         gesehen["query"] = str(request.url.query, "utf-8")
         return httpx.Response(200, json=_envelope([]))
 
-    _client(handler).fetch("material-overview", "v2", status=["Aktiv", "Gesperrt"])
+    _client(handler).fetch("material-overview", "v3", status=["Aktiv", "Gesperrt"])
     assert gesehen["query"] == "status=Aktiv&status=Gesperrt"
 
 
@@ -129,15 +129,15 @@ def test_fehlerantwort_wird_zu_dataproducterror() -> None:
                                          "code": "upstream_unavailable"})
 
     with pytest.raises(DataProductError, match="Neo4j nicht erreichbar"):
-        _client(handler).fetch("material-overview", "v2")
+        _client(handler).fetch("material-overview", "v3")
 
 
 def test_nicht_erreichbare_api_wird_zu_dataproducterror() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
-    with pytest.raises(DataProductError, match="nicht erreichbar"):
-        _client(handler).fetch("material-overview", "v2")
+    with pytest.raises(DataProductError, match="unreachable"):
+        _client(handler).fetch("material-overview", "v3")
 
 
 # --- get_materials: Cache und Ausfallverhalten -----------------------------

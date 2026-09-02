@@ -1,12 +1,12 @@
 """
-Gemeinsame Dependencies.
+Shared dependencies.
 
-Eine "Dependency" ist etwas, das FastAPI dem Endpunkt vor dem Aufruf
-bereitstellt -- hier die Einstellungen und der Zugang zu den Datenquellen.
+A "dependency" is something FastAPI provides to the endpoint before calling it
+-- here the settings and the access to the data sources.
 
-Der Vorteil gegenueber globalen Objekten: In Tests laesst sich eine Dependency
-mit einer Zeile ersetzen (`app.dependency_overrides[get_sources] = ...`), ohne
-dass irgendetwas gepatcht werden muss.
+The advantage over global objects: in tests a dependency can be replaced with a
+single line (`app.dependency_overrides[get_sources] = ...`), without patching
+anything.
 """
 from __future__ import annotations
 
@@ -23,11 +23,11 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 async def get_sources(request: Request, settings: SettingsDep) -> AsyncIterator[Sources]:
-    """Ein Sources-Objekt pro Request.
+    """One Sources object per request.
 
-    Alles vor `yield` laeuft vor dem Endpunkt, alles danach nach der Antwort.
-    Der `AsyncExitStack` schliesst jede Verbindung, die waehrend des Requests
-    geoeffnet wurde -- auch wenn der Endpunkt einen Fehler geworfen hat.
+    Everything before `yield` runs before the endpoint, everything after it runs
+    after the response. The AsyncExitStack closes every connection opened during
+    the request -- even if the endpoint raised.
     """
     async with AsyncExitStack() as stack:
         sources = Sources(
@@ -37,9 +37,9 @@ async def get_sources(request: Request, settings: SettingsDep) -> AsyncIterator[
             sql_sessionmaker=getattr(request.app.state, "sql_sessionmaker", None),
         )
         yield sources
-        # Nur wenn der Endpunkt ohne Ausnahme durchgelaufen ist. Wirft er, kommt
-        # der Code hier nie an und der AsyncExitStack rollt zurueck -- genau die
-        # gewuenschte Aufteilung zwischen Erfolg und Fehler.
+        # Only reached if the endpoint completed without raising. If it raised,
+        # control never gets here and the AsyncExitStack rolls back -- exactly
+        # the split we want between success and failure.
         await sources.commit()
 
 

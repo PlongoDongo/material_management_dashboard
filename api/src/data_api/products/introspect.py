@@ -1,18 +1,17 @@
 """
-Welche Datenquellen braucht ein Datenprodukt?
+Which data sources does a data product need?
 
-Gelesen aus dem Quelltext des Loaders: welche `sources.X(...)` ruft er auf.
-Per AST und nicht per Regex, damit ein `sources.neo4j` in einem Kommentar oder
-einer Zeichenkette nicht mitzaehlt.
+Read from the loader's source code: which `sources.X(...)` does it call. Via the
+AST rather than a regular expression, so a `sources.neo4j` inside a comment or a
+string does not count.
 
-Warum abgeleitet statt deklariert? Ein Feld `sources=("neo4j",)` am
-DataProduct waere einfacher zu lesen, koennte aber vom tatsaechlichen Code
-abweichen -- jemand ergaenzt eine Postgres-Abfrage und vergisst das Feld. So
-kann es nicht auseinanderlaufen.
+Why derived instead of declared? A field like `sources=("neo4j",)` on the
+DataProduct would be easier to read but could drift from the actual code --
+somebody adds a Postgres query and forgets the field. This way it cannot.
 
-Zwei Stellen nutzen das:
-  * /readyz     prueft nur die Quellen, die wirklich gebraucht werden
-  * architecture.py  zeichnet die Kanten Produkt -> Quelle
+Two places use it:
+  * /readyz          checks only the sources that are actually needed
+  * architecture.py  draws the product -> source edges
 """
 from __future__ import annotations
 
@@ -23,37 +22,37 @@ from typing import Any
 
 
 def sources_used_by(loader: Any) -> list[str]:
-    """Die Methodennamen, die der Loader auf seinem ersten Parameter aufruft.
+    """The method names the loader calls on its first parameter.
 
         async def load(sources, params):
             await sources.neo4j(CYPHER)       ->  ["neo4j"]
             await sources.postgres(SQL, ...)  ->  ["neo4j", "postgres"]
     """
     try:
-        quelltext = textwrap.dedent(inspect.getsource(loader))
+        source_code = textwrap.dedent(inspect.getsource(loader))
     except (OSError, TypeError):
         return []
 
-    knoten = ast.parse(quelltext).body[0]
-    if not isinstance(knoten, ast.AsyncFunctionDef | ast.FunctionDef):
+    node = ast.parse(source_code).body[0]
+    if not isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef):
         return []
-    if not knoten.args.args:
+    if not node.args.args:
         return []
 
-    parameter = knoten.args.args[0].arg
-    gefunden = {
+    parameter = node.args.args[0].arg
+    found = {
         n.func.attr
-        for n in ast.walk(knoten)
+        for n in ast.walk(node)
         if isinstance(n, ast.Call)
         and isinstance(n.func, ast.Attribute)
         and isinstance(n.func.value, ast.Name)
         and n.func.value.id == parameter
     }
-    return sorted(gefunden)
+    return sorted(found)
 
 
 def required_sources() -> set[str]:
-    """Alle Quellen, die irgendein registriertes Datenprodukt braucht."""
+    """Every source that any registered data product needs."""
     from data_api.products.registry import registry
 
-    return {q for produkt in registry.all() for q in sources_used_by(produkt.loader)}
+    return {s for product in registry.all() for s in sources_used_by(product.loader)}

@@ -17,9 +17,9 @@ Was das Dashboard dadurch NICHT mehr braucht:
 ZWEI NAMENSRAEUME, EINE GRENZE
 ==============================
 Der API-Vertrag und die Spaltennamen der Tabelle sind NICHT dasselbe. Die API
-liefert `werk_id` und `werk_name`; das Dashboard hat historisch eine Spalte
-`werk`. Statt jetzt Filter, Callbacks, Sidebar und Tests umzubenennen, wird an
-dieser Grenze uebersetzt -- siehe `_API_TO_UI`.
+spricht Englisch (`material_number`, `plant_name`, `stock_value`), das Dashboard
+benennt seine Spalten deutsch wie die Oberflaeche. Uebersetzt wird an dieser
+Grenze -- siehe `_API_TO_UI`.
 
 Das ist Absicht und kein Notbehelf: Die API gehoert einem anderen Team und darf
 ihre Felder umbenennen, ohne dass das Dashboard bricht. Was sich dann aendert,
@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 # "latest": ein Versionswechsel soll im Git-Diff auftauchen und getestet werden,
 # nicht still passieren, weil die API ein neues Major ausgerollt hat.
 PRODUCT = "material-overview"
-VERSION = "v2"
+VERSION = "v3"
 
 # Obergrenze der Abfrage. Zugleich das Maximum von ProductParams.limit --
 # mehr geht serverseitig nicht. Wird sie erreicht, MUSS das auffallen (siehe
@@ -61,14 +61,14 @@ CACHE_TTL_SECONDS = int(os.getenv("DATA_CACHE_TTL", "60"))
 # Felder der API, die das Dashboard nicht braucht (werk_id, preis), fehlen
 # bewusst -- neue Felder der API brechen das Dashboard dadurch nie.
 _API_TO_UI: dict[str, str] = {
-    "material_nr": "material_nr",
-    "bezeichnung": "bezeichnung",
-    "warengruppe": "warengruppe",
-    "werk_name": "werk",          # <- die einzige echte Umbenennung
+    "material_number": "material_nr",
+    "description": "bezeichnung",
+    "material_group": "warengruppe",
+    "plant_name": "werk",
     "status": "status",
-    "bestand": "bestand",
-    "bestandswert": "bestandswert",
-    "geaendert": "geaendert",
+    "stock": "bestand",
+    "stock_value": "bestandswert",
+    "changed_on": "geaendert",
 }
 
 # EIN Client pro Prozess. Er haelt den Connection-Pool offen; ein

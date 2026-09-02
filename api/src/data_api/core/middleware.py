@@ -1,10 +1,10 @@
 """
-Request-ID-Middleware.
+Request-id middleware.
 
-Jeder Request bekommt eine ID (oder uebernimmt die aus `X-Request-ID`, falls ein
-Reverse Proxy schon eine gesetzt hat). Die ID landet in jeder Logzeile und im
-Response-Header -- das ist die Bruecke zwischen "im Dashboard war die Tabelle
-leer" und der passenden Zeile im Serverlog.
+Every request gets an id (or adopts the one in `X-Request-ID`, if a reverse
+proxy already set one). The id ends up in every log line and in the response
+header -- the bridge between "the table was empty in the dashboard" and the
+matching line in the server log.
 """
 from __future__ import annotations
 
@@ -24,21 +24,23 @@ log = logging.getLogger(__name__)
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
-        # Zweifach ablegen. Der ContextVar traegt die ID in die Logzeilen; das
-        # Request-Objekt traegt sie zu den Fehler-Handlern, die AUSSERHALB
-        # dieser Middleware laufen (Starlettes ServerErrorMiddleware sitzt
-        # weiter aussen) und den ContextVar deshalb nicht mehr sehen.
+
+        # Stored twice on purpose. The ContextVar carries the id into log lines;
+        # the request object carries it to the exception handlers, which run
+        # OUTSIDE this middleware (Starlette's ServerErrorMiddleware sits
+        # further out) and can no longer see the ContextVar.
         request.state.request_id = request_id
         token = request_id_var.set(request_id)
+
         started = time.perf_counter()
         try:
             response = await call_next(request)
             elapsed_ms = (time.perf_counter() - started) * 1000
             response.headers["X-Request-ID"] = request_id
             response.headers["X-Response-Time-ms"] = f"{elapsed_ms:.1f}"
-            # Der Log-Aufruf steht INNERHALB des try: Wuerde der ContextVar
-            # vorher zurueckgesetzt, traege ausgerechnet die eine Zeile, die
-            # Pfad, Status und Dauer zusammenbringt, ein "-" statt der ID.
+            # The log call sits INSIDE the try: if the ContextVar were reset
+            # first, the one line that ties path, status and duration together
+            # would carry "-" instead of the id.
             log.info("%s %s -> %s (%.1f ms)", request.method, request.url.path,
                      response.status_code, elapsed_ms)
             return response

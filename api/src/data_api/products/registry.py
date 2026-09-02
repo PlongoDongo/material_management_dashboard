@@ -1,21 +1,20 @@
 """
-Die Registry: das Verzeichnis aller Datenprodukte.
+The registry: the directory of all data products.
 
-Im Kern ein Woerterbuch. Schluessel ist (Name, Hauptversion), Wert das
-Datenprodukt:
+At its core a dictionary. The key is (name, major version), the value is the
+data product:
 
-    {("material-overview", 1): DataProduct(...),
-     ("material-overview", 2): DataProduct(...),
-     ("supplier-risk",     1): DataProduct(...)}
+    {("material-overview", 2): DataProduct(...),
+     ("material-overview", 3): DataProduct(...),
+     ("supplier-risk",     2): DataProduct(...)}
 
-Ein neues Datenprodukt anzubinden heisst: EINE Datei in products/catalog/
-anlegen, die am Ende `registry.add(DataProduct(...))` aufruft. Kein Router,
-keine Importliste, keine if-Kaskade.
+Adding a data product means: create ONE file in products/catalog/ that ends with
+`registry.add(DataProduct(...))`. No router, no import list, no if-cascade.
 
-Wie die Datei gefunden wird: `discover()` schaut beim Start nach, welche
-Dateien im Katalogordner liegen, und importiert sie. Beim Import laeuft
-`registry.add(...)` und das Produkt steht im Verzeichnis. Danach baut
-products/router.py daraus die Routen.
+How the file is found: at startup `discover()` looks at which files live in the
+catalog directory and imports them. The import runs `registry.add(...)` and the
+product is in the directory. After that products/router.py builds the routes
+from it.
 """
 from __future__ import annotations
 
@@ -33,17 +32,17 @@ class ProductRegistry:
         self._products: dict[tuple[str, int], DataProduct] = {}
 
     def add(self, product: DataProduct) -> None:
-        """Traegt ein Datenprodukt ein. Wird am Ende jeder Katalogdatei aufgerufen."""
-        schluessel = (product.name, product.major)
-        if schluessel in self._products:
-            vorhanden = self._products[schluessel]
+        """Registers a data product. Called at the end of every catalog file."""
+        key = (product.name, product.major)
+        if key in self._products:
+            existing = self._products[key]
             raise ValueError(
-                f"Datenprodukt-Kollision: '{product.name}' {product.path_version} ist "
-                f"bereits als Version {vorhanden.version} registriert. Brechende "
-                f"Aenderung? Dann MAJOR erhoehen."
+                f"Data product collision: '{product.name}' {product.path_version} is "
+                f"already registered as version {existing.version}. Breaking change? "
+                f"Then bump the MAJOR."
             )
-        self._products[schluessel] = product
-        log.debug("Datenprodukt registriert: %s %s", product.name, product.version)
+        self._products[key] = product
+        log.debug("Data product registered: %s %s", product.name, product.version)
 
     def all(self) -> list[DataProduct]:
         return sorted(self._products.values(), key=lambda p: (p.name, p.major))
@@ -59,35 +58,35 @@ class ProductRegistry:
         return self._products.get((name, major))
 
     def latest(self, name: str) -> DataProduct | None:
-        """Neueste nicht-abgekuendigte Version; sind alle abgekuendigt, die hoechste."""
-        versionen = self.versions_of(name)
-        if not versionen:
+        """Newest non-deprecated version; if all are deprecated, the highest."""
+        versions = self.versions_of(name)
+        if not versions:
             return None
-        aktuell = [p for p in versionen if not p.deprecated]
-        return (aktuell or versionen)[-1]
+        current = [p for p in versions if not p.deprecated]
+        return (current or versions)[-1]
 
     def __len__(self) -> int:
         return len(self._products)
 
 
-# Prozessweite Registry. Die Katalogdateien fuellen sie beim Import.
+# Process-wide registry. The catalog files fill it on import.
 registry = ProductRegistry()
 
 
 def discover(package: str = "data_api.products.catalog") -> int:
-    """Importiert alle Katalogdateien -- dadurch registrieren sie sich.
+    """Imports every catalog file -- which is how they register themselves.
 
-    Statt einer Importliste, die jemand pflegen muesste, wird das Verzeichnis
-    gelesen. Eine Datei ablegen genuegt.
+    Instead of an import list somebody would have to maintain, the directory is
+    read. Dropping in a file is enough.
 
-    Ein Importfehler in einer Katalogdatei bricht den Start ab. Das ist gewollt:
-    ein halb geladener Katalog waere schlimmer als ein harter Fehler, weil eine
-    Route dann einfach fehlt, ohne dass es jemandem auffaellt.
+    An import error in a catalog file aborts startup. That is intentional: a
+    half-loaded catalog would be worse than a hard failure, because a route
+    would simply be missing without anyone noticing.
     """
-    modul = importlib.import_module(package)
-    for info in pkgutil.iter_modules(modul.__path__):
+    module = importlib.import_module(package)
+    for info in pkgutil.iter_modules(module.__path__):
         if info.name.startswith("_"):
             continue
         importlib.import_module(f"{package}.{info.name}")
-    log.info("Datenprodukt-Katalog geladen: %d Produkte.", len(registry))
+    log.info("Data product catalog loaded: %d products.", len(registry))
     return len(registry)

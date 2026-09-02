@@ -1,23 +1,23 @@
 """
-Neo4j: Treiber-Lebenszyklus.
+Neo4j: driver lifecycle.
 
-Die eine Regel, die man kennen muss:
+The one rule you need to know:
 
-    TREIBER  = langlebig, thread-safe, haelt den Connection-Pool
-               -> GENAU EINER pro Prozess, erzeugt beim App-Start
-    SESSION  = kurzlebig, NICHT thread-safe
-               -> GENAU EINE pro Arbeitseinheit (= pro Request), danach zu
+    DRIVER  = long-lived, thread-safe, owns the connection pool
+              -> EXACTLY ONE per process, created at application start
+    SESSION = short-lived, NOT thread-safe
+              -> EXACTLY ONE per unit of work (= per request), closed afterwards
 
-Ein haeufiger Fehler ist, pro Request einen Treiber zu bauen: das wirft den
-Connection-Pool weg und macht aus jedem Request einen neuen TCP- plus
-TLS-Handshake. Der andere haeufige Fehler ist eine prozessweite Session:
-die ist nicht thread-safe und produziert unter Last sporadische Fehler.
+A common mistake is building a driver per request: that throws the connection
+pool away and turns every request into a fresh TCP plus TLS handshake. The other
+common mistake is a process-wide session: it is not thread-safe and produces
+sporadic failures under load.
 
-Wir nutzen den ASYNCHRONEN Treiber, weil FastAPI-Endpunkte `async def` sind.
-Mit dem synchronen Treiber muesste man die Endpunkte als `def` schreiben --
-FastAPI schiebt die dann in einen Threadpool. Beides funktioniert, aber
-mischen darf man es nicht: ein blockierender Treiberaufruf in `async def`
-blockiert den kompletten Event-Loop und damit alle anderen Requests.
+We use the ASYNCHRONOUS driver because FastAPI endpoints are `async def`. With
+the synchronous driver the endpoints would have to be plain `def` -- FastAPI
+then moves them to a thread pool. Both work, but they must not be mixed: a
+blocking driver call inside `async def` blocks the whole event loop and with it
+every other request.
 """
 from __future__ import annotations
 
@@ -25,43 +25,56 @@ import logging
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
+from data_api.core.errors import ConfigurationError
+
 log = logging.getLogger(__name__)
 
 Auth = tuple[str, str] | str | None
 
 
 def _coerce_auth(auth: Auth) -> tuple[str, str] | None:
-    """Macht aus 'user/passwort' bzw. 'user:passwort' ein (user, pw)-Tupel.
+    """Turns 'user/password' or 'user:password' into a (user, password) tuple.
 
-    Gleiche Konvention wie im Dashboard (data/neo4j.py) -- dieselbe .env passt.
+    Same convention as the dashboard uses -- the same .env fits both.
+
+    A string without a separator is rejected instead of being mapped to None:
+    otherwise a typo (`neo4jpassword` instead of `neo4j/password`) would make
+    the driver connect *without* authentication, and the resulting AuthError
+    would give no hint about the cause.
     """
-    if isinstance(auth, str) and ("/" in auth or ":" in auth):
-        sep = "/" if "/" in auth else ":"
-        user, _, password = auth.partition(sep)
-        return (user, password)
     if isinstance(auth, tuple):
         return auth
+    if isinstance(auth, str) and auth:
+        for separator in ("/", ":"):
+            if separator in auth:
+                user, _, password = auth.partition(separator)
+                return (user, password)
+        raise ConfigurationError(
+            "NEO4J_AUTH must be 'user/password' or 'user:password'."
+        )
     return None
 
 
 async def create_driver(uri: str | None, auth: Auth) -> AsyncDriver | None:
-    """Erzeugt den einen Treiber. Ohne URI: None -> Datenprodukte, die Neo4j
-    brauchen, melden einen Konfigurationsfehler und /readyz meldet 503.
+    """Creates the one driver. Without a URI: None.
 
-    `verify_connectivity()` bewusst beim Start: lieber faellt der Container
-    sofort um, als dass er "healthy" meldet und jeder Request 500 liefert.
+    In that case every data product that needs the graph reports a configuration
+    error and /readyz answers 503.
+
+    `verify_connectivity()` runs at startup on purpose: better for the container
+    to fall over immediately than to report "healthy" and fail every request.
     """
     if not uri:
-        log.warning("NEO4J_URI nicht gesetzt -- Neo4j inaktiv.")
+        log.warning("NEO4J_URI is not set -- Neo4j inactive.")
         return None
 
     driver = AsyncGraphDatabase.driver(uri, auth=_coerce_auth(auth))
     await driver.verify_connectivity()
-    log.info("Neo4j verbunden: %s", uri)
+    log.info("Connected to Neo4j: %s", uri)
     return driver
 
 
 async def close_driver(driver: AsyncDriver | None) -> None:
     if driver is not None:
         await driver.close()
-        log.info("Neo4j-Treiber geschlossen.")
+        log.info("Neo4j driver closed.")

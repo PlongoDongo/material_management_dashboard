@@ -1,24 +1,22 @@
 """
-Postgres: Engine-Lebenszyklus (SQLAlchemy 2.x, async).
+Postgres: engine lifecycle (SQLAlchemy 2.x, async).
 
-Dieselbe Regel wie bei Neo4j, nur anders benannt:
+Same rule as for Neo4j, only the names differ:
 
-    ENGINE   ~ Treiber   -> einer pro Prozess (haelt den Pool)
-    SESSION  ~ Session   -> eine pro Request
+    ENGINE  ~ driver   -> one per process (owns the pool)
+    SESSION ~ session  -> one per request
 
-`expire_on_commit=False`, weil wir nach dem Commit noch aus den Objekten lesen
-wollen, ohne dass SQLAlchemy nachlaedt (die Session ist dann evtl. schon zu).
+`expire_on_commit=False`, because we still want to read from objects after a
+commit without SQLAlchemy reloading them (the session may already be closed).
 
-Der DSN MUSS den Async-Treiber nennen: `postgresql+asyncpg://...`.
-Ein blosses `postgresql://` waehlt psycopg2 (synchron) und blockiert den
-Event-Loop.
+The DSN MUST name the async driver: `postgresql+asyncpg://...`. A plain
+`postgresql://` selects psycopg2 (synchronous) and blocks the event loop.
 """
 from __future__ import annotations
 
 import logging
 
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 log = logging.getLogger(__name__)
 
@@ -27,18 +25,18 @@ SessionMaker = async_sessionmaker[AsyncSession]
 
 def create_engine(dsn: str | None) -> AsyncEngine | None:
     if not dsn:
-        log.warning("POSTGRES_DSN nicht gesetzt -- SQL inaktiv.")
+        log.warning("POSTGRES_DSN is not set -- SQL inactive.")
         return None
     if "+asyncpg" not in dsn and "+psycopg" not in dsn:
-        log.warning("POSTGRES_DSN ohne Async-Treiber (%s) -- erwartet 'postgresql+asyncpg://'.",
+        log.warning("POSTGRES_DSN without an async driver (%s) -- expected 'postgresql+asyncpg://'.",
                     dsn.split("://")[0])
     engine = create_async_engine(
         dsn,
-        pool_size=5,          # gleichzeitige Verbindungen pro Prozess
-        max_overflow=5,       # kurzfristige Spitzen
-        pool_pre_ping=True,   # tote Verbindungen (Firewall-Timeout) erkennen
+        pool_size=5,          # concurrent connections per process
+        max_overflow=5,       # short-lived spikes
+        pool_pre_ping=True,   # detect dead connections (firewall timeouts)
     )
-    log.info("SQL-Engine erzeugt.")
+    log.info("SQL engine created.")
     return engine
 
 
@@ -51,4 +49,4 @@ def create_sessionmaker(engine: AsyncEngine | None) -> SessionMaker | None:
 async def dispose_engine(engine: AsyncEngine | None) -> None:
     if engine is not None:
         await engine.dispose()
-        log.info("SQL-Engine geschlossen.")
+        log.info("SQL engine disposed.")

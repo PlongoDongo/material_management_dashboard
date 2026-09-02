@@ -458,7 +458,7 @@ Deshalb:
 **Der naive Weg:** Es gibt eine API, sie wird bei Bedarf geändert.
 
 **Was daran kaputt ging:** Sobald jemand anderes deine API benutzt, ist jede
-Änderung ein Risiko. Du benennst `bezeichnung` in `description` um — und irgendwo
+Änderung ein Risiko. Du benennst `description` in `description` um — und irgendwo
 zeigt ein Dashboard leere Spalten. Du merkst es nicht, weil es dein Dashboard
 nicht ist.
 
@@ -485,7 +485,7 @@ Deshalb steht bei uns im Pfad nur die Hauptnummer (`/v2`) und die volle Nummer
 kleine Verbesserungen nicht kaputtgehen.
 
 **Der Sonderfall, den man leicht übersieht:** Wenn sich die *Berechnung* hinter
-einem Feld ändert — etwa die Formel für `risiko_score` — bleibt das Schema
+einem Feld ändert — etwa die Formel für `risk_score` — bleibt das Schema
 identisch, aber die Zahlen bedeuten etwas anderes. Das ist eine brechende
 Änderung, obwohl kein Typ sich rührt. Solche Fälle sind gefährlicher als
 umbenannte Felder, weil nichts kaputtgeht; es wird nur still falsch.
@@ -554,7 +554,7 @@ Damit die Teile zusammenkommen, hier ein konkreter Aufruf, Station für Station.
 Das Dashboard fragt:
 
 ```
-GET /api/v1/data-products/material-overview/v2?status=Gesperrt&limit=50
+GET /api/v1/data-products/material-overview/v3?status=Gesperrt&limit=50
 ```
 
 **1. Middleware** (`core/middleware.py`)
@@ -584,7 +584,7 @@ Das `Sources`-Objekt wird gebaut. Es öffnet noch **nichts** — erst wenn das
 Produkt tatsächlich fragt. Alles, was es öffnet, wird am Ende automatisch
 geschlossen.
 
-**7. Das Datenprodukt läuft** (`products/catalog/material_overview_v2.py`)
+**7. Das Datenprodukt läuft** (`products/catalog/material_overview_v3.py`)
 
 ```python
 async def load(sources, params):
@@ -612,7 +612,7 @@ ein Fehler aufgetreten ist.
   "meta": {"product": "material-overview", "version": "2.0",
            "generated_at": "2026-08-20T07:09:05Z", "row_count": 8,
            "total_count": 8, "source": "neo4j", "cache": "miss"},
-  "data": [{"material_nr": "MAT-100777", "bestandswert": 4947.5, ...}]
+  "data": [{"material_number": "MAT-100777", "stock_value": 4947.5, ...}]
 }
 ```
 
@@ -691,7 +691,7 @@ mit den Spalten aus dem `RETURN`. Zwei Dinge, die dabei leicht überraschen:
   `POINT`: beide erben von `tuple` und würden ohne Übersetzung stillschweigend
   als nacktes `[3, 2, 0, 90]` in der Antwort landen — kein Fehler, aber die
   Bedeutung ist weg.
-* **Gib Properties zurück, keine Knoten.** `RETURN m.nr AS material_nr` statt
+* **Gib Properties zurück, keine Knoten.** `RETURN m.nr AS material_number` statt
   `RETURN m`. Ein ganzer Knoten verliert seine Labels und seine ID, und er zieht
   das Graphmodell in den Vertrag: Jede Modelländerung wäre dann automatisch eine
   brechende API-Änderung.
@@ -740,7 +740,7 @@ Jede Katalogdatei endet mit einem Aufruf:
 registry.add(DataProduct(
     name="material-overview",
     version="2.0",
-    item_model=MaterialRowV2,
+    item_model=MaterialRowV3,
     loader=load,
     ...
 ))
@@ -831,7 +831,7 @@ Der Begriff klingt größer als die Sache.
 **Variante A — selbst besorgen.**
 
 ```python
-async def hole_materialien():
+async def hole_materials():
     driver = AsyncGraphDatabase.driver(os.getenv("NEO4J_URI"), auth=...)
     async with driver.session() as session:
         return await session.run("MATCH (m:Material) ...")
@@ -846,7 +846,7 @@ in der Fachlogik gelesen.
 ```python
 driver = AsyncGraphDatabase.driver(...)      # irgendwo auf Modulebene
 
-async def hole_materialien():
+async def hole_materials():
     async with driver.session() as session: ...
 ```
 
@@ -858,7 +858,7 @@ Datenbank. Für Tests müsste man das Modul-Global von außen ersetzen
 **Variante C — gereicht bekommen (Dependency Injection).**
 
 ```python
-async def hole_materialien(session = Depends(get_session)):
+async def hole_materials(session = Depends(get_session)):
     return await session.run("MATCH (m:Material) ...")
 ```
 
@@ -882,7 +882,7 @@ Datenprodukt-Route sieht er so aus:
 
 ```
 endpoint
-├── params      Annotated[MaterialParamsV2, Query()]
+├── params      Annotated[MaterialParamsV3, Query()]
 ├── sources     Depends(get_sources)
 │               └── settings   Depends(get_settings)
 └── principal   Depends(current_principal)
@@ -979,8 +979,8 @@ ist teuer, also nicht bei jedem Klick neu.
 
 ```python
 _API_TO_UI = {
-    "werk_name": "werk",      # die API nennt es anders als die Tabelle
-    ...                       # werk_id und preis stehen nicht drin: nicht gebraucht
+    "plant_name": "werk",      # die API nennt es anders als die Tabelle
+    ...                       # plant_id und preis stehen nicht drin: nicht gebraucht
 }
 ```
 

@@ -1,19 +1,19 @@
 [project]
 name = "data-api"
 version = "0.1.0"
-description = "API-Layer zwischen den Dash-Dashboards und den Datenquellen (Neo4j / Postgres)."
+description = "API layer between the Dash dashboards and the data sources (Neo4j / Postgres)."
 requires-python = ">=3.11"
 dependencies = [
-    # >=0.115 wegen Query-Parameter-Modellen (Annotated[Model, Query()]),
-    # die der Datenprodukt-Router benutzt.
+    # >=0.115 for query parameter models (Annotated[Model, Query()]),
+    # which the data product router relies on.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "neo4j>=5.20",
-    "polars>=0.20",          # Transformationen (dieselbe Bibliothek wie in den Dashboards)
+    "polars>=0.20",          # transformations (the same library the dashboards use)
     "sqlalchemy>=2.0",
-    "httpx>=0.27",           # Client fuer die Dash-Apps + Tests
+    "httpx>=0.27",           # client for the Dash apps + tests
 ]
 
 [project.optional-dependencies]
@@ -21,7 +21,7 @@ postgres = ["asyncpg>=0.29"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.5"]
 
 [project.scripts]
-# Erzeugt docs/architecture.md aus der laufenden App.
+# Generates docs/architecture.md from the running app.
 architecture-docs = "data_api.architecture:main"
 
 [build-system]

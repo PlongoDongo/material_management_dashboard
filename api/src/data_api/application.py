@@ -1,21 +1,20 @@
 """
-App-Fabrik und Lebenszyklus.
+Application factory and lifecycle.
 
-Zwei Dinge, die man in FastAPI-Projekten oft falsch sieht:
+Two things often done wrong in FastAPI projects:
 
-1. `app = FastAPI()` auf Modulebene, danach Router per Import-Nebenwirkung
-   registrieren. Funktioniert, bis Tests zwei Apps mit unterschiedlicher
-   Konfiguration brauchen. Darum eine `create_app()`-FABRIK: jeder Aufruf
-   liefert eine frische, unabhaengige App.
+1. `app = FastAPI()` at module level, with routers registered as an import side
+   effect. That works until tests need two apps with different configuration.
+   Hence a `create_app()` FACTORY: every call returns a fresh, independent app.
 
-2. Verbindungen beim Import oeffnen. Dann verbindet sich jeder `import`
-   (auch der von pytest-Collection oder von einem Alembic-Skript) zur
-   Datenbank. Darum LIFESPAN: FastAPI ruft den Hochlaufteil vor dem ersten
-   Request und den Abbauteil beim Herunterfahren auf.
+2. Opening connections at import time. Then every `import` -- including the one
+   pytest does while collecting tests, or an Alembic script -- connects to the
+   database. Hence LIFESPAN: FastAPI runs the startup part before the first
+   request and the shutdown part when the process stops.
 
-Merksatz zum Lebenszyklus:
-    Lifespan  -> alles, was den ganzen Prozess lang lebt (Treiber, Engine, Pools)
-    Depends   -> alles, was einen Request lang lebt (Sessions, Aufrufer)
+Rule of thumb for the lifecycle:
+    Lifespan -> everything that lives as long as the process (drivers, engines, pools)
+    Depends  -> everything that lives for one request (sessions, the caller)
 """
 from __future__ import annotations
 
@@ -39,17 +38,17 @@ from data_api.products.registry import discover, registry
 log = logging.getLogger(__name__)
 
 DESCRIPTION = """
-Zwischenschicht zwischen den Dash-Dashboards und den Datenquellen
-(Neo4j, Postgres, spaeter weitere Services).
+Layer between the Dash dashboards and the data sources (Neo4j, Postgres, and
+further services later on).
 
-* **Datenprodukte** (`/api/v1/data-products/...`) -- versionierte, lesende
-  Vertraege. Jedes Produkt hat einen Owner und ein festes Schema.
-* **Katalog** (`/api/v1/catalog`) -- welche Produkte gibt es in welchen Versionen.
-* **Kommandos** (z. B. `/api/v1/mappings`) -- schreibende Endpunkte.
+* **Data products** (`/api/v1/data-products/...`) -- versioned, read-only
+  contracts. Every product has an owner and a fixed schema.
+* **Catalog** (`/api/v1/catalog`) -- which products exist in which versions.
+* **Commands** (e.g. `/api/v1/mappings`) -- write endpoints.
 
-Versionierung: im Pfad steht das MAJOR (`/v2`), das volle `MAJOR.MINOR` steht in
-`meta.version` der Antwort. Neues Feld = MINOR, gleiche Route. Feld entfernt oder
-umbenannt = MAJOR, neue Route, alte bleibt bis zum `Sunset`-Datum erreichbar.
+Versioning: the path carries the MAJOR (`/v3`), the full `MAJOR.MINOR` is in
+`meta.version` of the response. New field = MINOR, same route. Field removed or
+renamed = MAJOR, new route, the old one stays available until its `Sunset` date.
 """
 
 
@@ -57,9 +56,9 @@ umbenannt = MAJOR, neue Route, alte bleibt bis zum `Sunset`-Datum erreichbar.
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
 
-    # Die Zuweisungen stehen IM try: faellt `create_engine` um (fehlerhafter
-    # DSN), bliebe der bereits verbundene Neo4j-Treiber sonst offen -- unter
-    # `--reload` sammeln sich die an.
+    # The assignments live INSIDE the try: if `create_engine` fails (a bad
+    # DSN), the already-connected Neo4j driver would otherwise stay open --
+    # under `--reload` those pile up.
     app.state.neo4j_driver = None
     app.state.sql_engine = None
     app.state.sql_sessionmaker = None
@@ -68,7 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.sql_engine = create_engine(settings.postgres_dsn)
         app.state.sql_sessionmaker = create_sessionmaker(app.state.sql_engine)
 
-        log.info("Bereit: %d Datenprodukte, env=%s", len(registry), settings.api_env)
+        log.info("Ready: %d data products, env=%s", len(registry), settings.api_env)
         yield
     finally:
         await close_driver(app.state.neo4j_driver)
@@ -79,8 +78,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.api_log_level)
 
-    # Katalog laden BEVOR die Routen gebaut werden -- die Registry muss beim
-    # Erzeugen des Datenprodukt-Routers vollstaendig sein.
+    # Load the catalog BEFORE building the routes -- the registry must be
+    # complete when the data product router is created.
     discover()
 
     app = FastAPI(
@@ -93,17 +92,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json",
     )
     app.state.settings = settings
-    # Die an create_app() uebergebenen Settings muessen gewinnen -- auch fuer
-    # `Depends(get_settings)` tief in den Routern. Ohne dieses Override liest
-    # jede Dependency wieder aus der Umgebung (get_settings ist lru_cache'd),
-    # und ein Test oder eine zweite App mit anderer Konfiguration haette keine
-    # Wirkung. `dependency_overrides` ist dafuer der vorgesehene Mechanismus.
+    # The settings passed to create_app() must win -- including for
+    # `Depends(get_settings)` deep inside the routers. Without this override
+    # every dependency would read from the environment again (get_settings is
+    # lru_cache'd), and a test or a second app with different configuration
+    # would have no effect. `dependency_overrides` is the intended mechanism.
     app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(RequestContextMiddleware)
     if settings.api_cors_origins:
-        # Noetig, weil die Dash-Apps auf einem anderen Port laufen als die API.
-        # In prod immer explizite Origins -- niemals ["*"] zusammen mit Auth.
+        # Needed because the Dash apps run on a different port than the API.
+        # In production always list explicit origins -- never ["*"] with auth.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.api_cors_origins,

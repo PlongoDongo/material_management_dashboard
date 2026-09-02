@@ -25,7 +25,7 @@ versionierte *Datenprodukte* über die API ab. Warum das so ist, steht in
 
 | Pfad | Inhalt | Status |
 |---|---|---|
-| [`api/`](api/) | FastAPI-Service: Datenprodukte, Cache, Auth | lauffähig, 46 Tests |
+| [`api/`](api/) | FastAPI-Service: Datenprodukte, Cache, Auth. **Code und API-Felder auf Englisch.** | lauffähig, 71 Tests |
 | [`frontend/material_management_dashboard/`](frontend/material_management_dashboard/) | Plotly-Dash-Dashboard für Materialstammdaten | lauffähig |
 | [`docs/`](docs/) | Konzept, Entwicklerleitfaden, Grundlagen, generierte Diagramme | — |
 | `ingestion/` | Befüllung von Neo4j/Postgres aus den Quellsystemen | noch nicht angelegt |

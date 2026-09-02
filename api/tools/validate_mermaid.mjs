@@ -1,15 +1,15 @@
 /**
- * Prueft alle ```mermaid-Bloecke einer Markdown-Datei mit mermaids ECHTEM Parser.
+ * Validates every ```mermaid block in a Markdown file with mermaid's REAL parser.
  *
  *   npm install mermaid jsdom
  *   node tools/validate_mermaid.mjs ../docs/architecture.md
  *
- * Optional, aber empfehlenswert: ein Mermaid-Syntaxfehler faellt sonst erst auf,
- * wenn jemand die Datei in GitHub oder der IDE oeffnet -- und dort steht dann
- * nur "Syntax error in text" statt eines Diagramms.
+ * Optional but recommended: otherwise a mermaid syntax error only shows up when
+ * somebody opens the file in GitHub or an IDE -- and all they see there is
+ * "Syntax error in text" instead of a diagram.
  *
- * mermaid braucht ein DOM. Die Globals muessen VOR dem Import gesetzt werden,
- * weil DOMPurify sich beim Laden ans window haengt.
+ * mermaid needs a DOM. The globals must be set BEFORE the import, because
+ * DOMPurify attaches itself to window while loading.
  */
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
@@ -29,12 +29,12 @@ mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
 
 const file = process.argv[2];
 if (!file) {
-  console.error("Aufruf: node tools/validate_mermaid.mjs <datei.md>");
+  console.error("Usage: node tools/validate_mermaid.mjs <file.md>");
   process.exit(2);
 }
 
 const blocks = [...readFileSync(file, "utf8").matchAll(/```mermaid\n([\s\S]*?)```/g)].map(m => m[1]);
-console.log(`${file}: ${blocks.length} Mermaid-Bloecke`);
+console.log(`${file}: ${blocks.length} mermaid blocks`);
 
 let failed = 0;
 for (const [i, code] of blocks.entries()) {
@@ -44,7 +44,7 @@ for (const [i, code] of blocks.entries()) {
     console.log(`  [${i + 1}] OK       ${kind}`);
   } catch (e) {
     failed++;
-    console.log(`  [${i + 1}] FEHLER   ${kind}`);
+    console.log(`  [${i + 1}] ERROR    ${kind}`);
     console.log("      " + String(e.message).split("\n").slice(0, 8).join("\n      "));
   }
 }

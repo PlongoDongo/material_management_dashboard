@@ -59,8 +59,8 @@ and it makes caching, authorisation and versioning impossible.
 ```
 name          material-overview          stable business name
 version       2.0                        MAJOR.MINOR
-item_model    MaterialRowV2              THE contract: fields, types, optionality
-params_model  MaterialParamsV2           allowed filters, typed
+item_model    MaterialRowV3              THE contract: fields, types, optionality
+params_model  MaterialParamsV3           allowed filters, typed
 loader        async (repos, params)      query + transformation
 owner         team-material-management   who to ask
 cache_ttl     60                         how fresh it must be
@@ -73,7 +73,7 @@ router for a data product.
 ### Two independent version axes
 
 ```
-/api/v1/data-products/material-overview/v2
+/api/v1/data-products/material-overview/v3
  ^^^^^^                                 ^^
  API version                            data product version
  transport contract:                    data contract:
@@ -201,7 +201,7 @@ Always in this order — predictability beats elegance when several teams
 contribute products:
 
 ```python
-"""werk-auslastung v1 — materials and stock per plant."""
+"""plant-utilisation v1 — materials and stock per plant."""
 from __future__ import annotations
 
 from typing import Any
@@ -216,49 +216,49 @@ from data_api.products.registry import registry
 # 1. THE QUERY ─ lives with the product that owns it.
 CYPHER = """
 MATCH (m:Material)-[:LOCATED_IN]->(w:Werk)
-RETURN w.id AS werk_id, w.name AS werk_name, m.bestand AS bestand
+RETURN w.id AS plant_id, w.name AS plant_name, m.bestand AS stock
 """
 
 
 # 2. THE CONTRACT ─ what consumers may rely on.
-class WerkRow(BaseModel):
-    werk_id: str
-    werk_name: str | None = None
-    materialien: int = Field(description="Number of distinct materials.")
-    bestand_gesamt: int
+class PlantRow(BaseModel):
+    plant_id: str
+    plant_name: str | None = None
+    materials: int = Field(description="Number of distinct materials.")
+    stock_total: int
 
 
 # 3. THE FILTERS ─ everything a caller may pass as a query parameter.
-class WerkParams(ProductParams):
-    min_materialien: int = Field(0, ge=0)
+class PlantParams(ProductParams):
+    min_materials: int = Field(0, ge=0)
 
 
 # 4. THE BUSINESS LOGIC ─ pure. No database, no FastAPI. Test this.
-def transform(rows: list[dict[str, Any]], params: WerkParams) -> list[dict[str, Any]]:
-    per_werk: dict[str, dict[str, Any]] = {}
+def transform(rows: list[dict[str, Any]], params: PlantParams) -> list[dict[str, Any]]:
+    per_plant: dict[str, dict[str, Any]] = {}
     for row in rows:
-        entry = per_werk.setdefault(row["werk_id"], {
-            "werk_id": row["werk_id"], "werk_name": row["werk_name"],
-            "materialien": 0, "bestand_gesamt": 0,
+        entry = per_plant.setdefault(row["plant_id"], {
+            "plant_id": row["plant_id"], "plant_name": row["plant_name"],
+            "materials": 0, "stock_total": 0,
         })
-        entry["materialien"] += 1
-        entry["bestand_gesamt"] += row.get("bestand") or 0
-    return [w for w in per_werk.values() if w["materialien"] >= params.min_materialien]
+        entry["materials"] += 1
+        entry["stock_total"] += row.get("stock") or 0
+    return [w for w in per_plant.values() if w["materials"] >= params.min_materials]
 
 
 # 5. THE WIRING ─ keep this boring.
-async def load(sources: Sources, params: WerkParams) -> list[dict[str, Any]]:
+async def load(sources: Sources, params: PlantParams) -> list[dict[str, Any]]:
     """Aggregated key figures per plant."""
     return transform(await sources.neo4j(CYPHER), params)
 
 
 # 6. PUBLISH ─ this is what makes the route appear.
 registry.add(DataProduct(
-    name="werk-auslastung",
+    name="plant-utilisation",
     version="1.0",
     summary="Materials and stock per plant",
-    item_model=WerkRow,
-    params_model=WerkParams,
+    item_model=PlantRow,
+    params_model=PlantParams,
     loader=load,
     owner="team-material-management",
     tags=("werk", "aggregat"),
@@ -272,7 +272,7 @@ drift.
 
 After a restart you automatically get:
 
-* `GET /api/v1/data-products/werk-auslastung/v1`
+* `GET /api/v1/data-products/plant-utilisation/v1`
 * the `/latest` alias
 * a full OpenAPI entry with schema under `/docs`
 * a catalog entry under `/api/v1/catalog`
@@ -308,7 +308,7 @@ CYPHER = """
 MATCH (m:Material)
 WHERE ($status IS NULL OR m.status IN $status)
   AND ($werk   IS NULL OR m.werk   IN $werk)
-RETURN m.nr AS material_nr, m.status AS status
+RETURN m.nr AS material_number, m.status AS status
 ORDER BY m.nr
 """
 
@@ -338,7 +338,7 @@ async def load(sources, params):
 
 `($param IS NULL OR ...)` is the standard idiom for an **optional** filter: pass
 nothing and the condition disappears; pass something and it applies. No string
-building, no second query. `supplier-risk` uses it for `land`.
+building, no second query. `supplier-risk` uses it for `country`.
 
 The idiom has one sharp edge, and `ProductParams` files it off for you: an
 **empty list** is not `NULL`. `[] IS NULL` is false and `x IN []` is false for
@@ -387,7 +387,7 @@ The last row is not a trade-off, it is a bug — see the warning above. The firs
 three are all correct because pagination happens in exactly one place.
 
 The products in `catalog/` mix the first and second setups: `supplier-risk`
-filters `land` in Cypher and everything derived in `transform()`. Move a filter
+filters `country` in Cypher and everything derived in `transform()`. Move a filter
 into the query when the data volume justifies it — per product, not globally.
 
 ### What this costs in testing
@@ -401,11 +401,11 @@ the unit test asserts they arrived:
 
 ```python
 def test_filter_reaches_the_query(client, fake_sources):
-    antwort = client.get("/api/v1/data-products/supplier-risk/v1",
-                         params={"land": ["DE"]})
+    antwort = client.get("/api/v1/data-products/supplier-risk/v2",
+                         params={"country": ["DE"]})
     assert antwort.status_code == 200          # otherwise a 500 looks like success
-    cypher, parameter = fake_sources.aufrufe[0]
-    assert parameter["land"] == ["DE"]
+    cypher, parameter = fake_sources.calls[0]
+    assert parameter["country"] == ["DE"]
 ```
 
 `fake_sources` is a fixture in `conftest.py` that pins the one `FakeSources`
@@ -414,7 +414,7 @@ test can say *which* query a value reached — important for a product with two
 sources, where a flat dict would let identically named parameters overwrite each
 other.
 
-Always assert the status code as well. `fake_sources.aufrufe[0]` is already
+Always assert the status code as well. `fake_sources.calls[0]` is already
 populated by the first `await sources.neo4j(...)`; everything after it — the
 second source, `transform()`, envelope validation, cache, headers — could fail
 without the test noticing.
@@ -443,7 +443,7 @@ and it must stay testable in milliseconds.
 | Field type changed | MAJOR → `/v3` | new route | migration required |
 | **Meaning** of a field changed (formula!) | MAJOR → `/v3` | new route | migration required |
 
-The last row is the dangerous one: if the calculation behind `risiko_score`
+The last row is the dangerous one: if the calculation behind `risk_score`
 changes, the schema is identical but the numbers mean something else. That is a
 breaking change even though no type moved.
 
@@ -563,11 +563,11 @@ there are no copied query strings that can drift.
 
 ```python
 def test_something(client):                 # app + FakeSources, ready to go
-    body = client.get("/api/v1/data-products/werk-auslastung/v1").json()
+    body = client.get("/api/v1/data-products/plant-utilisation/v1").json()
     assert body["meta"]["source"] == "neo4j"
 ```
 
-Use `client_ohne_datenquellen` when you want the app **without** the override —
+Use `client_without_sources` when you want the app **without** the override —
 that fixture verifies what happens when a source is genuinely missing.
 
 **When you add a data product, add at minimum:**
@@ -672,7 +672,7 @@ The diagrams are derived, never maintained by hand:
 | version, owner, cache, contract fields | the registry |
 | product → data source | AST of the loader (`sources.X()` calls) |
 
-`test_dokumentation_ist_aktuell` fails the build if you change the architecture
+`test_documentation_is_current` fails the build if you change the architecture
 without regenerating. Run `architecture-docs` and commit the result.
 
 ---
@@ -725,11 +725,11 @@ Cypher  ──►  sources.neo4j()  ──►  transform()  ──►  item_mode
 They often look almost identical, and that is fine. But they are separate on
 purpose:
 
-* `MaterialRowV2.bestandswert` does not exist in Neo4j at all — it is computed in
+* `MaterialRowV3.stock_value` does not exist in Neo4j at all — it is computed in
   `transform()`.
 * `material-overview` v1 and v2 run **different** Cypher and expose **different**
   row models, while describing the same subject.
-* If the graph renames `m.name` to `m.bezeichnung`, you change the Cypher and the
+* If the graph renames `m.name` to `m.description`, you change the Cypher and the
   `AS` alias — the row model, and therefore every dashboard, stays untouched.
 
 That last point is the whole reason the two are separate. If the row model simply
@@ -738,7 +738,7 @@ mirrored the query result, every graph change would be a breaking API change.
 ### 16a. Values inside a row that aren't plain JSON
 
 The Neo4j driver returns its own classes for several property types. `Sources`
-translates them for you (`db/sources.py::_als_python_wert`), so this is handled —
+translates them for you (`db/sources.py::_to_python_value`), so this is handled —
 but it is worth knowing what you get, and why it matters:
 
 | Neo4j type | Without translation | What you get |
@@ -755,7 +755,7 @@ does".
 
 **Two rules that follow from this:**
 
-**Return properties, not nodes.** `RETURN m.nr AS material_nr` — not `RETURN m`.
+**Return properties, not nodes.** `RETURN m.nr AS material_number` — not `RETURN m`.
 Returning a whole node loses its labels and its id, and it leaks the graph model
 into the contract, so every schema change becomes a breaking API change.
 
@@ -775,7 +775,7 @@ Do not invent a second shape for this.
 
 ```python
 async def load(sources, params):
-    return [{"gesamtbestandswert": ..., "stichtag": ...}]     # one row
+    return [{"total_stock_value": ..., "as_of": ...}]     # one row
 ```
 
 **Nested data (a material with its suppliers).** A row may contain nested
@@ -783,12 +783,12 @@ objects; JSON and Pydantic both handle it. Declare the nesting in the model:
 
 ```python
 class Lieferung(BaseModel):
-    lieferant_id: str
+    supplier_id: str
     menge: int
 
 class MaterialRow(BaseModel):
-    material_nr: str
-    lieferungen: list[Lieferung] = []      # nested, still one "row" per material
+    material_number: str
+    deliveries: list[Lieferung] = []      # nested, still one "row" per material
 ```
 
 Note that a Dash `DataTable` cannot render a nested column — the dashboard either

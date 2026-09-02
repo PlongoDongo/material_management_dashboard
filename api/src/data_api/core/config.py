@@ -1,15 +1,15 @@
 """
-Konfiguration -- die EINE Wahrheit fuer alles, was von aussen kommt.
+Configuration -- the single source of truth for everything coming from outside.
 
-Warum pydantic-settings statt os.getenv() im ganzen Code verteilt?
-  * Alle Schalter stehen an einer Stelle und sind typisiert (ein falsch
-    geschriebenes NEO4J_UIR faellt beim Start auf, nicht im ersten Request).
-  * Defaults sind sichtbar dokumentiert.
-  * In Tests laesst sich das Settings-Objekt ueber `dependency_overrides`
-    austauschen, ohne Umgebungsvariablen zu setzen.
+Why pydantic-settings instead of os.getenv() scattered through the code?
+  * Every switch lives in one place and is typed (a misspelled NEO4J_UIR fails
+    at startup, not inside the first request).
+  * Defaults are visibly documented.
+  * In tests the Settings object can be swapped via `dependency_overrides`,
+    without setting environment variables.
 
-Die Variablennamen sind absichtlich identisch zu denen des Dashboards
-(NEO4J_URI, NEO4J_AUTH, NEO4J_DB) -- dieselbe .env funktioniert fuer beide.
+The variable names deliberately match the dashboard's (NEO4J_URI, NEO4J_AUTH,
+NEO4J_DB) -- the same .env works for both.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     # --- Neo4j -------------------------------------------------------------
     neo4j_uri: str | None = None
-    neo4j_auth: str | None = None          # "user/passwort" oder "user:passwort"
+    neo4j_auth: str | None = None          # "user/password" or "user:password"
     neo4j_db: str = "neo4j"
 
     # --- Postgres ----------------------------------------------------------
@@ -38,18 +38,18 @@ class Settings(BaseSettings):
     api_title: str = "Data Products API"
     api_log_level: str = "INFO"
 
-    # `NoDecode` ist hier PFLICHT, nicht Geschmack: pydantic-settings versucht
-    # komplexe Felder (list[str]) schon in der Quelle als JSON zu lesen -- also
-    # BEVOR ein Validator laeuft. Ohne NoDecode scheitert der Start an
-    # `API_CORS_ORIGINS=http://a,http://b`, weil das kein JSON ist. Mit NoDecode
-    # kommt der Rohtext an und `_split_csv` unten greift wie vorgesehen.
+    # `NoDecode` is mandatory here, not a matter of taste: pydantic-settings
+    # tries to parse complex fields (list[str]) as JSON inside the *source* --
+    # that is, BEFORE any validator runs. Without NoDecode the app fails to
+    # start on `API_CORS_ORIGINS=http://a,http://b`, because that is not JSON.
+    # With it the raw string arrives and `_split_csv` below does its job.
     api_cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     @field_validator("api_cors_origins", "api_keys", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
-        """Erlaubt kommagetrennte Listen in der .env (CORS=a,b,c)."""
+        """Allows comma-separated lists in the .env (CORS=a,b,c)."""
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
@@ -61,5 +61,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Einmal lesen, prozessweit wiederverwenden (per Depends injizierbar)."""
+    """Read once, reuse process-wide (injectable via Depends)."""
     return Settings()

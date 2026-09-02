@@ -1,13 +1,13 @@
 """
-Einstiegspunkt.
+Entry point.
 
-    Entwicklung:  uvicorn data_api.main:app --reload --port 8000
-    Produktion :  uvicorn data_api.main:app --host 0.0.0.0 --port 8000 --workers 4
+    Development:  uvicorn data_api.main:app --reload --port 8000
+    Production :  uvicorn data_api.main:app --host 0.0.0.0 --port 8000 --workers 4
 
-Zu --workers: jeder Worker ist ein eigener Prozess mit eigenem Neo4j-Treiber,
-eigenem SQL-Pool und eigenem In-Process-Cache. Das ist bei der Dimensionierung
-der Datenbank-Pools zu beruecksichtigen (pool_size * workers) und der Grund,
-warum der Cache spaeter nach Redis wandern sollte.
+On --workers: each worker is a separate process with its own Neo4j driver, its
+own SQL pool and its own in-process cache. Keep that in mind when sizing the
+database pools (pool_size * workers), and it is the reason the cache should move
+to Redis eventually.
 """
 from __future__ import annotations
 

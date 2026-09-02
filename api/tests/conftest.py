@@ -1,17 +1,17 @@
 """
-Test-Fixtures.
+Test fixtures.
 
-Zwei Techniken tragen die gesamte Testsuite:
+Two techniques carry the whole test suite:
 
-1. **App-Fabrik.** `create_app(settings)` liefert bei jedem Aufruf eine frische
-   App mit EXPLIZITER Konfiguration -- keine Umgebungsvariablen, kein
-   Monkeypatching. Der Test kontrolliert die Konfiguration direkt.
+1. **App factory.** `create_app(settings)` returns a fresh app with EXPLICIT
+   configuration on every call -- no environment variables, no monkeypatching.
+   The test controls the configuration directly.
 
-2. **`dependency_overrides`.** FastAPIs eingebauter Mechanismus, um eine
-   Dependency zu ersetzen. Wir tauschen `get_sources` gegen einen Fake aus
-   (tests/fakes.py). Damit laeuft die KOMPLETTE Kette -- Route, Validierung,
-   Produkt-Loader, Transformation, Umschlag, Cache, Header -- ohne dass eine
-   Datenbank existieren muss. Ersetzt wird nur die unterste Schicht.
+2. **`dependency_overrides`.** FastAPI's built-in mechanism for replacing a
+   dependency. We swap `get_sources` for a fake (tests/fakes.py). That runs the
+   COMPLETE chain -- route, validation, product loader, transformation,
+   envelope, cache, headers -- without any database having to exist. Only the
+   bottom layer is replaced.
 """
 from __future__ import annotations
 
@@ -33,14 +33,14 @@ def settings() -> Settings:
         api_env="dev",
         api_keys=[],
         api_log_level="WARNING",
-        _env_file=None,          # .env des Entwicklers darf Tests nicht beeinflussen
+        _env_file=None,          # a developer's .env must not influence tests
     )
 
 
 @pytest.fixture
 def app(settings: Settings):
-    """App mit echter Verdrahtung, aber ohne Datenbank."""
-    cache.invalidate()           # Testisolation: kein Cache-Uebersprung
+    """A fully wired app, but without a database."""
+    cache.invalidate()           # test isolation: no cache bleed-through
     application = create_app(settings)
     application.dependency_overrides[get_sources] = FakeSources
     return application
@@ -54,12 +54,12 @@ def client(app):
 
 @pytest.fixture
 def fake_sources(app):
-    """DIE eine FakeSources-Instanz, die der Request benutzt.
+    """THE one FakeSources instance the request uses.
 
-    Ohne diese Fixture erzeugt `dependency_overrides[get_sources] = FakeSources`
-    pro Request ein neues Objekt -- ein Test kaeme nie an die Aufzeichnung
-    heran. Hier wird eine Instanz festgehalten und zurueckgegeben, sodass ein
-    Test nach dem Aufruf `fake_sources.aufrufe` auswerten kann.
+    Without this fixture, `dependency_overrides[get_sources] = FakeSources`
+    creates a new object per request and a test could never reach the recorded
+    calls. Here one instance is pinned and returned, so a test can inspect
+    `fake_sources.calls` afterwards.
     """
     fake = FakeSources()
     app.dependency_overrides[get_sources] = lambda: fake
@@ -67,8 +67,8 @@ def fake_sources(app):
 
 
 @pytest.fixture
-def client_ohne_datenquellen(settings: Settings):
-    """App OHNE Override -- zeigt, was ohne konfigurierte Datenquelle passiert."""
+def client_without_sources(settings: Settings):
+    """An app WITHOUT the override -- shows what happens with no data source."""
     cache.invalidate()
     with TestClient(create_app(settings)) as test_client:
         yield test_client

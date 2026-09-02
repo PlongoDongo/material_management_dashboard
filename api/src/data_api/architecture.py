@@ -1,29 +1,29 @@
 """
-Erzeugt die visuelle Architekturdokumentation aus der LAUFENDEN App.
+Generates the visual architecture documentation from the RUNNING app.
 
     python -m data_api.architecture --out ../docs/architecture.md
-    python -m data_api.architecture --check          # CI: schlaegt fehl, wenn veraltet
+    python -m data_api.architecture --check          # CI: fails when stale
 
-Warum selbst gebaut und kein fertiges Paket?
+Why hand-built instead of an off-the-shelf package?
 
-Generische Werkzeuge (fastapi-router-viz, fastapi-di-viz, pydeps) analysieren
-entweder den Quelltext oder die Dependency-Kette. Beides greift hier zu kurz:
+Generic tools (fastapi-router-viz, fastapi-di-viz, pydeps) analyse either the
+source code or the dependency chain. Neither is enough here:
 
-  * Unsere Datenprodukt-Routen EXISTIEREN NICHT im Quelltext -- sie entstehen
-    zur Laufzeit aus der Registry. Ein statischer Parser sieht sie schlicht nicht.
-  * Alle Routen haengen an derselben Dependency (`get_sources`). Ein DI-Graph
-    zeigt darum fuer jede Route dasselbe Bild und verraet nichts darueber,
-    WELCHE Quelle ein Produkt tatsaechlich nutzt.
+  * Our data product routes DO NOT EXIST in the source code -- they are created
+    at runtime from the registry. A static parser simply cannot see them.
+  * Every route hangs off the same dependency (`get_sources`). A DI graph
+    therefore looks identical for every route and says nothing about WHICH
+    source a product actually uses.
 
-Diese 200 Zeilen wissen dagegen, was die Werkzeuge raten muessten: Version,
-Owner, Cache-TTL, Deprecation, Vertragsfelder -- alles steht schon in der
-Registry. Die fehlende Information (welches Produkt nutzt welches Repository)
-wird per AST aus dem Loader gelesen (products/introspect.py), statt sie von
-Hand zu pflegen.
+These 200 lines, by contrast, know what those tools would have to guess:
+version, owner, cache TTL, deprecation, contract fields -- it is all in the
+registry already. The one missing piece (which product uses which source) is
+read from the loader via the AST (products/introspect.py) instead of being
+maintained by hand.
 
-Konsequenz: Das Diagramm kann nicht veralten. Wer ein Datenprodukt anlegt oder
-eine Quelle wechselt, aendert das Diagramm automatisch mit -- und `--check`
-sorgt dafuer, dass niemand vergisst, es neu zu erzeugen.
+The consequence: the diagram cannot go stale. Adding a data product or
+switching a source changes the diagram automatically -- and `--check` makes sure
+nobody forgets to regenerate it.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ from data_api.products.introspect import sources_used_by
 
 
 # ---------------------------------------------------------------------------
-# Einsammeln (Introspektion)
+# Collecting (introspection)
 # ---------------------------------------------------------------------------
 
 _HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
@@ -77,7 +77,7 @@ def _first_arg_name(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> str | None:
 
 
 def _parse_function(obj: Any) -> ast.AsyncFunctionDef | ast.FunctionDef | None:
-    """Holt den AST einer Funktion. Dekoratoren stoeren dabei nicht."""
+    """Parses a function into an AST. Decorators do not get in the way."""
     try:
         source = textwrap.dedent(inspect.getsource(obj))
     except (OSError, TypeError):
@@ -94,12 +94,12 @@ def collect(app: FastAPI) -> Architecture:
         for product in registry.all()
     ]
 
-    # Routen aus dem OpenAPI-Schema lesen, nicht aus `app.routes`.
-    # Der Grund: FastAPI haelt eingebundene Router intern als `_IncludedRouter`
-    # -- eine private Struktur, die sich zwischen Versionen aendert (genau das
-    # ist beim Bauen hier passiert). Das OpenAPI-Schema ist dagegen der
-    # oeffentliche, stabile Vertrag der App und enthaelt alles, was wir
-    # brauchen: Pfad, Methoden, Summary, Tags, Deprecated-Flag.
+    # Read the routes from the OpenAPI schema, not from `app.routes`.
+    # The reason: FastAPI keeps included routers internally as `_IncludedRouter`
+    # -- a private structure that changes between versions (which is exactly
+    # what happened while building this). The OpenAPI schema, by contrast, is
+    # the app's public, stable contract and contains everything we need: path,
+    # methods, summary, tags, deprecated flag.
     routes: list[RouteInfo] = []
     schema = app.openapi()
     for path, operations in schema.get("paths", {}).items():
@@ -134,17 +134,17 @@ def collect(app: FastAPI) -> Architecture:
 
 
 # ---------------------------------------------------------------------------
-# Rendern (Mermaid)
+# Rendering (Mermaid)
 # ---------------------------------------------------------------------------
 
 def _id(*parts: str) -> str:
-    """Mermaid-Knoten-IDs duerfen keine Sonderzeichen enthalten."""
+    """Mermaid node ids must not contain special characters."""
     raw = "_".join(parts)
     return "".join(c if c.isalnum() or c == "_" else "_" for c in raw)
 
 
 def diagram_dataflow(arch: Architecture) -> str:
-    """Das Hauptdiagramm: Route -> Datenprodukt -> Datenquelle."""
+    """The main diagram: route -> data product -> data source."""
     lines = [
         "flowchart LR",
         "  subgraph clients[\"Konsumenten\"]",
@@ -155,7 +155,7 @@ def diagram_dataflow(arch: Architecture) -> str:
     ]
     for route in arch.routes:
         if route.is_alias:
-            continue          # Alias zeigt auf dieselbe Version -- verdoppelt nur Kanten
+            continue          # the alias points at the same version -- duplicate edges
         label = route.path.replace("/api/v1", "")
         marker = " ⚠" if route.deprecated else ""
         lines.append(f'    {_id("r", route.path)}["{"/".join(m for m in route.methods)} '
@@ -163,7 +163,7 @@ def diagram_dataflow(arch: Architecture) -> str:
     lines.append("  end")
     lines.append("")
 
-    lines.append('  subgraph products["Datenprodukte"]')
+    lines.append('  subgraph products["Data products"]')
     for info in arch.products:
         node = _id("p", info.product.name, str(info.product.major))
         marker = " ⚠" if info.product.deprecated else ""
@@ -173,7 +173,7 @@ def diagram_dataflow(arch: Architecture) -> str:
     lines.append("")
 
     all_sources = sorted({s for info in arch.products for s in info.sources})
-    lines.append('  subgraph sources["Datenquellen"]')
+    lines.append('  subgraph sources["Data sources"]')
     for source in all_sources:
         shape = f'[("{source}")]'
         lines.append(f'    {_id("src", source)}{shape}')
@@ -203,7 +203,7 @@ def diagram_dataflow(arch: Architecture) -> str:
 
 
 def diagram_versions(arch: Architecture) -> str:
-    """Versionsstaende je Produktfamilie -- was ist live, was laeuft aus."""
+    """Version states per product family -- what is live, what is being retired."""
     families: dict[str, list[ProductInfo]] = {}
     for info in arch.products:
         families.setdefault(info.product.name, []).append(info)
@@ -216,19 +216,19 @@ def diagram_versions(arch: Architecture) -> str:
         for info in sorted(infos, key=lambda i: i.product.major):
             node = _id("v", name, str(info.product.major))
             product = info.product
-            status = "auslaufend" if product.deprecated else "aktiv"
+            status = "retiring" if product.deprecated else "active"
             sunset = f"<br/>Sunset {product.sunset}" if product.sunset else ""
             lines.append(f'    {node}["v{product.major} · {product.version}'
                          f'<br/>{status}{sunset}"]')
             if previous:
-                lines.append(f"    {previous} -.->|abgeloest durch| {node}")
+                lines.append(f"    {previous} -.->|superseded by| {node}")
             previous = node
         lines.append("  end")
     return "\n".join(lines)
 
 
 def diagram_contracts(arch: Architecture) -> str:
-    """Die Vertraege selbst -- welche Felder liefert welche Version."""
+    """The contracts themselves -- which fields each version returns."""
     lines = ["classDiagram"]
     for info in arch.products:
         model = info.product.item_model
@@ -246,48 +246,48 @@ def diagram_contracts(arch: Architecture) -> str:
 
 
 def render_markdown(arch: Architecture) -> str:
-    # BEWUSST kein Zeitstempel: Der Inhalt dieser Datei muss eine reine Funktion
-    # des Codes sein. Stuende hier das Tagesdatum, schluege der Veraltungs-Check
-    # (tests/test_architecture.py) jeden Tag fehl, ohne dass sich etwas geaendert
-    # haette -- und ein taeglicher Fehlalarm bringt dem Team bei, rote Builds zu
-    # ignorieren. Wann die Datei zuletzt erzeugt wurde, weiss ohnehin git log.
+    # DELIBERATELY no timestamp: the content of this file must be a pure
+    # function of the code. With today's date in it, the staleness check
+    # (tests/test_architecture.py) would fail every day without anything having
+    # changed -- and a daily false alarm teaches a team to ignore red builds.
+    # When the file was last generated is what git log is for.
     parts = [
-        "# Architektur (automatisch erzeugt)",
+        "# Architecture (generated)",
         "",
-        "> Diese Datei wird von `python -m data_api.architecture` aus der laufenden",
-        "> App erzeugt. **Nicht von Hand bearbeiten** -- Aenderungen gehen beim",
-        "> naechsten Lauf verloren. Das Konzept dahinter steht in",
+        "> This file is generated from the running app by",
+        "> `python -m data_api.architecture`. **Do not edit by hand** -- changes are",
+        "> lost on the next run. The reasoning behind the design is in",
         "> [`api_layer_concept.md`](api_layer_concept.md).",
         "",
-        f"{len(arch.products)} Datenprodukte · "
-        f"{len([r for r in arch.routes if not r.is_alias])} Routen",
+        f"{len(arch.products)} data products · "
+        f"{len([r for r in arch.routes if not r.is_alias])} routes",
         "",
-        "## Datenfluss",
+        "## Data flow",
         "",
-        "Von der Route über das Datenprodukt bis zur Datenquelle.",
-        "⚠ markiert auslaufende Versionen.",
+        "From the route through the data product to the data source.",
+        "⚠ marks versions that are being retired.",
         "",
         "```mermaid",
         diagram_dataflow(arch),
         "```",
         "",
-        "## Versionsstaende",
+        "## Version states",
         "",
         "```mermaid",
         diagram_versions(arch),
         "```",
         "",
-        "## Vertraege",
+        "## Contracts",
         "",
-        "Die Felder, auf die sich die Dashboards verlassen.",
+        "The fields the dashboards rely on.",
         "",
         "```mermaid",
         diagram_contracts(arch),
         "```",
         "",
-        "## Routeninventar",
+        "## Route inventory",
         "",
-        "| Route | Methoden | Produkt | Version | Owner | Cache | Status |",
+        "| Route | Methods | Product | Version | Owner | Cache | Status |",
         "|---|---|---|---|---|---|---|",
     ]
     for route in arch.routes:
@@ -298,10 +298,10 @@ def render_markdown(arch: Architecture) -> str:
             f"| {product.version if product else '–'} "
             f"| {product.owner if product else '–'} "
             f"| {f'{product.cache_ttl}s' if product else '–'} "
-            f"| {'auslaufend' if route.deprecated else ('Alias' if route.is_alias else 'aktiv')} |"
+            f"| {'retiring' if route.deprecated else ('alias' if route.is_alias else 'active')} |"
         )
 
-    parts += ["", "## Datenprodukte im Detail", ""]
+    parts += ["", "## Data products in detail", ""]
     for info in arch.products:
         product = info.product
         parts += [
@@ -310,10 +310,10 @@ def render_markdown(arch: Architecture) -> str:
             f"{product.summary}",
             "",
             f"* **Owner:** {product.owner}",
-            f"* **Quellen:** {' + '.join(info.sources) or '–'}",
+            f"* **Sources:** {' + '.join(info.sources) or '–'}",
             f"* **Cache:** {product.cache_ttl}s",
-            f"* **Filter:** {', '.join(f'`{f}`' for f in product.params_model.model_fields)}",
-            f"* **Modul:** `{product.loader.__module__.replace('.', '/')}.py`",
+            f"* **Filters:** {', '.join(f'`{f}`' for f in product.params_model.model_fields)}",
+            f"* **Module:** `{product.loader.__module__.replace('.', '/')}.py`",
             "",
         ]
     return "\n".join(parts) + "\n"
@@ -323,7 +323,7 @@ def render_markdown(arch: Architecture) -> str:
 # CLI
 # ---------------------------------------------------------------------------
 
-# src/data_api/architecture.py -> src/data_api -> src -> api -> Repo-Wurzel
+# src/data_api/architecture.py -> src/data_api -> src -> api -> repo root
 DEFAULT_OUT = Path(__file__).resolve().parents[3] / "docs" / "architecture.md"
 
 
@@ -336,9 +336,9 @@ def build() -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
-                        help=f"Zieldatei (Standard: {DEFAULT_OUT}).")
+                        help=f"Output file (default: {DEFAULT_OUT}).")
     parser.add_argument("--check", action="store_true",
-                        help="Nur pruefen, ob die Datei aktuell ist (fuer CI).")
+                        help="Only check whether the file is current (for CI).")
     args = parser.parse_args(argv)
 
     markdown = build()
@@ -346,15 +346,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         vorhanden = args.out.read_text(encoding="utf-8") if args.out.exists() else ""
         if vorhanden != markdown:
-            print(f"{args.out} ist veraltet. Bitte erneut erzeugen:", file=sys.stderr)
+            print(f"{args.out} is out of date. Please regenerate:", file=sys.stderr)
             print("  python -m data_api.architecture", file=sys.stderr)
             return 1
-        print(f"{args.out} ist aktuell.")
+        print(f"{args.out} is up to date.")
         return 0
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(markdown, encoding="utf-8")
-    print(f"{args.out} geschrieben.")
+    print(f"{args.out} written.")
     return 0
 
 

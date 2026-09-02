@@ -1,21 +1,22 @@
 """
-Client fuer die Dash-Apps -- Vorlage zum Kopieren.
+Client for the Dash apps -- a template to copy.
 
-Diese Datei wird in jedes Dashboard kopiert (z. B. nach `data/api_client.py`),
-nicht importiert: `api/` haengt an FastAPI, dem Neo4j-Treiber und SQLAlchemy --
-nichts davon soll ins Dashboard, das nur `httpx` braucht.
+This file is copied into each dashboard (e.g. as `data/api_client.py`) rather
+than imported: `api/` depends on FastAPI, the Neo4j driver and SQLAlchemy --
+none of which belong in a dashboard that only needs `httpx`.
 
-Benutzung:
+Usage:
 
-    client = DataProductClient()                       # einmal pro Prozess
-    rows, meta = client.fetch("material-overview", "v2", limit=50_000)
+    client = DataProductClient()                       # once per process
+    rows, meta = client.fetch("material-overview", "v3", limit=50_000)
 
-`rows` ist eine Liste von dicts, `meta` sind die Metadaten der Antwort
-(Version, Zeitstempel, Quelle, Zeilenzahl).
+`rows` is a list of dicts, `meta` is the response metadata (version, timestamp,
+source, row count).
 
-Warum synchron und nicht async? Dash-Callbacks sind normale, synchrone
-Funktionen. Ein `asyncio.run()` darin waere ein Fehler mit Ansage. Dass der
-Server intern async arbeitet, ist seine Sache und hier unsichtbar.
+Why synchronous and not async? Dash callbacks are ordinary, synchronous
+functions. An `asyncio.run()` inside one would be a mistake waiting to happen.
+That the server works asynchronously internally is its own business and
+invisible here.
 """
 from __future__ import annotations
 
@@ -27,18 +28,18 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-# Eine Zeile ist ein dict, die Metadaten sind ein dict. Diese beiden Namen
-# machen die Signaturen unten lesbar.
+# A row is a dict and the metadata is a dict. These two names keep the
+# signatures below readable.
 Row = dict[str, Any]
 Meta = dict[str, Any]
 
 
 class DataProductError(RuntimeError):
-    """Die API war nicht erreichbar oder hat einen Fehler gemeldet."""
+    """The API was unreachable or reported an error."""
 
 
 class DataProductClient:
-    """Haelt EINE HTTP-Verbindung offen und holt damit Datenprodukte."""
+    """Keeps ONE HTTP connection open and fetches data products through it."""
 
     def __init__(
         self,
@@ -47,83 +48,91 @@ class DataProductClient:
         timeout: float = 15.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        """`transport` dient nur Tests (httpx.MockTransport) -- sonst leer lassen."""
+        """`transport` is for tests only (httpx.MockTransport) -- leave it unset."""
         url = base_url or os.getenv("DATA_API_URL", "http://localhost:8000")
-        schluessel = api_key or os.getenv("DATA_API_KEY")
+        key = api_key or os.getenv("DATA_API_KEY")
 
         headers = {"Accept": "application/json"}
-        if schluessel:
-            headers["X-API-Key"] = schluessel
+        if key:
+            headers["X-API-Key"] = key
 
-        # EIN Client pro Prozess: er haelt den Verbindungspool offen. Ein
-        # `httpx.get(...)` pro Callback wuerde jedes Mal neu verbinden --
-        # derselbe Gedanke wie beim Datenbanktreiber im Server.
+        # One client per process: it keeps the connection pool open. An
+        # `httpx.get(...)` per callback would reconnect every time -- the same
+        # reasoning as for the database driver in the server.
         self._client = httpx.Client(
             base_url=url.rstrip("/"), headers=headers, timeout=timeout, transport=transport
         )
 
-    def fetch(self, product: str, version: str, **filter: Any) -> tuple[list[Row], Meta]:
-        """Holt ein Datenprodukt. Gibt (Zeilen, Metadaten) zurueck.
+    def fetch(self, product: str, version: str, **filters: Any) -> tuple[list[Row], Meta]:
+        """Fetches a data product. Returns (rows, metadata).
 
-            rows, meta = client.fetch("material-overview", "v2", status=["Gesperrt"])
+            rows, meta = client.fetch("material-overview", "v3", status=["Gesperrt"])
 
-        Listen werden zu wiederholten Query-Parametern
-        (?status=Aktiv&status=Gesperrt) -- genau das erwartet die API.
-        Leere Werte werden weggelassen, damit `status=None` nicht als Filter zaehlt.
+        Lists become repeated query parameters
+        (?status=Aktiv&status=Gesperrt) -- exactly what the API expects.
+        Empty values are dropped so that `status=None` does not count as a filter.
         """
-        pfad = f"/api/v1/data-products/{product}/{version}"
-        parameter = {name: wert for name, wert in filter.items() if wert not in (None, [], "")}
+        path = f"/api/v1/data-products/{product}/{version}"
+        parameters = {name: value for name, value in filters.items() if value not in (None, [], "")}
 
         try:
-            antwort = self._client.get(pfad, params=parameter)
-        except httpx.HTTPError as fehler:
-            raise DataProductError(f"API nicht erreichbar: {fehler}") from fehler
+            response = self._client.get(path, params=parameters)
+        except httpx.HTTPError as error:
+            raise DataProductError(f"API unreachable: {error}") from error
 
-        if antwort.status_code >= 400:
-            raise DataProductError(f"{product}/{version}: {_fehlertext(antwort)}")
+        if response.status_code >= 400:
+            raise DataProductError(f"{product}/{version}: {_error_text(response)}")
 
-        inhalt = antwort.json()
-        meta = inhalt["meta"]
+        body = response.json()
+        meta = body["meta"]
         if meta.get("deprecated"):
-            log.warning("Datenprodukt %s/%s ist abgekuendigt (Sunset: %s) -- bitte migrieren.",
+            log.warning("Data product %s/%s is deprecated (sunset: %s) -- please migrate.",
                         product, version, meta.get("sunset"))
-        return inhalt["data"], meta
+        return body["data"], meta
 
     def catalog(self) -> list[Row]:
-        """Welche Datenprodukte gibt es? Nuetzlich zum Nachschauen."""
-        antwort = self._client.get("/api/v1/catalog")
-        if antwort.status_code >= 400:
-            raise DataProductError(_fehlertext(antwort))
-        return antwort.json()
+        """Which data products exist? Useful for looking things up."""
+        response = self._client.get("/api/v1/catalog")
+        if response.status_code >= 400:
+            raise DataProductError(_error_text(response))
+        return response.json()
 
     def close(self) -> None:
         self._client.close()
 
 
-def _fehlertext(antwort: httpx.Response) -> str:
-    """Macht aus einer Fehlerantwort eine lesbare Meldung.
+def _error_text(response: httpx.Response) -> str:
+    """Turns an error response into a readable message.
 
-    Die API antwortet im Problem-Details-Format ({"title": ..., "detail": ...}).
-    Falls doch etwas anderes kommt (z. B. ein Proxy dazwischen), wird der
-    Rohtext gekuerzt.
+    The API answers in Problem Details format ({"title": ..., "detail": ...}).
+    If something else arrives (a proxy in between, say), the raw text is
+    truncated instead.
     """
     try:
-        inhalt = antwort.json()
-        return f"{antwort.status_code} {inhalt.get('title')}: {inhalt.get('detail')}"
+        body = response.json()
+        return f"{response.status_code} {body.get('title')}: {body.get('detail')}"
     except Exception:                                  # noqa: BLE001
-        return f"{antwort.status_code} {antwort.text[:200]}"
+        return f"{response.status_code} {response.text[:200]}"
 
 
-# --- Umgesetztes Beispiel ---------------------------------------------------
+# --- Worked example ---------------------------------------------------------
 #
-# Das Material-Management-Dashboard benutzt diesen Client bereits:
+# The material management dashboard already uses this client:
 #
-#   frontend/material_management_dashboard/data/api_client.py   (Kopie)
-#   frontend/material_management_dashboard/data/repository.py   (Anwendung)
+#   frontend/material_management_dashboard/data/api_client.py   (the copy)
+#   frontend/material_management_dashboard/data/repository.py   (the usage)
 #   frontend/material_management_dashboard/tests/test_repository.py
-#       -> zeigt, wie man ihn mit httpx.MockTransport ohne Server testet
+#       -> shows how to test it with httpx.MockTransport, without a server
 #
-# Moegliche Erweiterung: Die API schickt zu jeder Antwort ein ETag. Wer beim
-# Abholen `If-None-Match` mitschickt, bekommt bei unveraenderten Daten ein
-# leeres "304 Not Modified" zurueck und spart die Uebertragung. Bewusst nicht
-# eingebaut -- es kostet Lesbarkeit und lohnt erst bei haeufigem Polling.
+# In short:
+#
+#   _client = DataProductClient()          # once per process (keeps the pool)
+#
+#   def load_materials() -> pl.DataFrame:
+#       rows, meta = _client.fetch("material-overview", "v3", limit=50_000)
+#       return _rows_to_frame(rows)        # API fields -> table columns
+#
+# Possible extension: the API sends an ETag with every response. Sending
+# `If-None-Match` back would yield an empty "304 Not Modified" when nothing
+# changed, saving the transfer. Deliberately not built in -- it costs
+# readability and only pays off with frequent polling.

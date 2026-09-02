@@ -1,20 +1,19 @@
 """
-Fehlerbehandlung: EIN Fehlerformat fuer die ganze API.
+Error handling: ONE error format for the whole API.
 
-Format ist RFC 9457 "Problem Details" (application/problem+json):
+The format is RFC 9457 "Problem Details" (application/problem+json):
 
-    {"type": "about:blank", "title": "Data product not found",
-     "status": 404, "detail": "...", "code": "product_not_found",
+    {"type": "about:blank", "title": "Data source unavailable",
+     "status": 503, "detail": "...", "code": "upstream_unavailable",
      "request_id": "3f2a..."}
 
-Warum das wichtig ist: die Dash-Callbacks brauchen EINEN Pfad fuer
-Fehlerbehandlung. Wenn FastAPI mal `{"detail": ...}`, mal `{"error": ...}` und
-bei einem Neo4j-Timeout einen HTML-Stacktrace liefert, steht diese Logik in
-jedem Dashboard neu.
+Why this matters: the Dash callbacks need ONE path for error handling. If the
+API sometimes returns `{"detail": ...}`, sometimes `{"error": ...}` and an HTML
+stack trace on a Neo4j timeout, that logic gets rewritten in every dashboard.
 
-Regel im Code: NIEMALS `raise HTTPException(...)` in der Domaenenschicht.
-Dort wird eine `AppError`-Unterklasse geworfen -- die kennt kein HTTP und ist
-damit ohne Webserver testbar. Die Uebersetzung nach HTTP passiert genau hier.
+The rule in code: NEVER `raise HTTPException(...)` in the domain layer. Raise an
+`AppError` subclass instead -- those know nothing about HTTP and are therefore
+testable without a web server. The translation to HTTP happens right here.
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ log = logging.getLogger(__name__)
 
 
 class AppError(Exception):
-    """Basisklasse aller fachlichen Fehler. Kennt bewusst kein FastAPI."""
+    """Base class of all domain errors. Deliberately knows nothing about FastAPI."""
 
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
     code: str = "internal_error"
@@ -44,11 +43,11 @@ class AppError(Exception):
 
 
 class ForbiddenError(AppError):
-    """Aufrufer ist bekannt, darf dieses Datenprodukt aber nicht sehen.
+    """The caller is known but is not allowed to see this data product.
 
-    Ersetzt ein `raise HTTPException(403, ...)` im Router: so bekommt auch der
-    403 einen `code`, auf den ein Dashboard pruefen kann, und die Regel
-    "in der Domaenenschicht keine HTTPException" gilt ohne Ausnahme.
+    Replaces a `raise HTTPException(403, ...)` in the router: this way the 403
+    also carries a `code` a dashboard can check for, and the rule "no
+    HTTPException in the domain layer" holds without exceptions.
     """
 
     status_code = status.HTTP_403_FORBIDDEN
@@ -57,10 +56,10 @@ class ForbiddenError(AppError):
 
 
 class UpstreamUnavailableError(AppError):
-    """Datenquelle (Neo4j/Postgres) nicht erreichbar -> 503, nicht 500.
+    """A data source (Neo4j/Postgres) is unreachable -> 503, not 500.
 
-    Unterschied ist fuer die Dashboards relevant: 503 heisst "spaeter nochmal",
-    500 heisst "Bug, bitte melden".
+    The distinction matters to the dashboards: 503 means "try again later",
+    500 means "this is a bug, please report it".
     """
 
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
@@ -77,9 +76,9 @@ class ConfigurationError(AppError):
 def _problem(
     request: Request, status_code: int, title: str, detail: str, code: str
 ) -> JSONResponse:
-    # Erst das Request-Objekt, dann der ContextVar: bei einem 500er laeuft
-    # dieser Handler ausserhalb der RequestContextMiddleware, deren `finally`
-    # den ContextVar bereits zurueckgesetzt hat.
+    # Request object first, ContextVar second: on a 500 this handler runs
+    # outside RequestContextMiddleware, whose `finally` has already reset the
+    # ContextVar.
     request_id = getattr(request.state, "request_id", None) or request_id_var.get()
     return JSONResponse(
         status_code=status_code,
@@ -92,8 +91,8 @@ def _problem(
             "code": code,
             "request_id": request_id,
         },
-        # Auch als Header: bei einem 500er kommt die Antwort nicht mehr durch
-        # die RequestContextMiddleware, die ihn sonst setzt.
+        # Also as a header: on a 500 the response no longer passes through the
+        # middleware that would otherwise set it.
         headers={"X-Request-ID": request_id},
     )
 
@@ -115,10 +114,10 @@ def register_exception_handlers(app: FastAPI) -> None:
             request,
             422,
             "Invalid request",
-            "Die Anfrageparameter sind ungueltig.",
+            "The request parameters are invalid.",
             "validation_error",
         )
-        # Feldgenaue Fehler anhaengen -- hilft beim Debuggen der Dash-Callbacks.
+        # Attach the field-level errors -- helps when debugging Dash callbacks.
         import json
 
         body = json.loads(response.body)
@@ -128,6 +127,6 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        log.exception("Unbehandelter Fehler: %s", exc)
+        log.exception("Unhandled error: %s", exc)
         return _problem(request, 500, "Internal server error",
-                        "Unerwarteter Fehler.", "internal_error")
+                        "Unexpected error.", "internal_error")

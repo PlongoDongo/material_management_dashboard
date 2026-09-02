@@ -1,26 +1,30 @@
-# Seed-Daten
+# Seed data
 
-Mock-Daten fuer Quellen, die es noch nicht gibt, gehoeren **in die Datenbank** --
-nicht in die API. Vorteile gegenueber Beispieldaten im Anwendungscode:
+Mock data for sources that do not exist yet belongs **in the database** -- not in
+the API. Advantages over sample data in the application code:
 
-* Die API bleibt schlank: ein Codepfad, keine Schalter, kein Sicherheitsnetz.
-* Der komplette echte Weg wird geuebt -- Cypher, Treiber, Session, Typen.
-  Beispieldaten im Code ueberspringen genau die Stellen, an denen es spaeter knallt.
-* Zum Ausbauen loescht man Knoten, statt Code umzubauen. Jeder Seed-Knoten
-  traegt dafuer das Label `:Mock`.
+* The API stays lean: one code path, no switches, no safety net.
+* The **real** path gets exercised -- Cypher, driver, session, type conversion.
+  Sample data in code skips exactly the places that break later.
+* Removing it means deleting nodes, not rewriting code. Every seeded node
+  carries the `:Mock` label for that purpose.
 
 ## Neo4j
 
 ```bash
 export NEO4J_URI=bolt://localhost:7687
-export NEO4J_AUTH=neo4j/passwort
-python seed/seed_neo4j.py            # anlegen
-python seed/seed_neo4j.py --purge    # nur loeschen (alles mit Label :Mock)
+export NEO4J_AUTH=neo4j/password
+python seed/seed_neo4j.py            # create
+python seed/seed_neo4j.py --purge    # delete only (everything labelled :Mock)
 ```
 
-Erzeugt 64 `:Material`, die zugehoerigen `:Warengruppe`- und `:Werk`-Knoten und
-4 `:Lieferant` mit `SUPPLIES`-Kanten -- passend zu den Queries in
-`src/data_api/repositories/materials.py`.
+Creates 64 `:Material` nodes, the matching `:Warengruppe` and `:Werk` nodes, and
+4 `:Lieferant` nodes with `SUPPLIES` edges -- matching the queries in
+`src/data_api/products/catalog/`.
+
+> The node labels and property names are German because they mirror the graph
+> model, not the code. The Cypher aliases (`RETURN m.nr AS material_number`) are
+> where that vocabulary meets the English API contract.
 
 ## Postgres
 
@@ -28,16 +32,16 @@ Erzeugt 64 `:Material`, die zugehoerigen `:Warengruppe`- und `:Werk`-Knoten und
 psql "$POSTGRES_DSN_PSQL" -f seed/seed_postgres.sql
 ```
 
-Legt die Tabelle `lieferungen` an und fuellt sie mit ca. 160 Zeilen -- passend
-zur Query in `src/data_api/repositories/deliveries.py`.
+Creates the `deliveries` table and fills it with roughly 160 rows -- matching
+`SQL` in `src/data_api/products/catalog/supplier_risk_v2.py`.
 
-> Hinweis: `psql` braucht einen normalen DSN (`postgresql://...`), waehrend die
-> API `postgresql+asyncpg://...` erwartet. Gleicher Server, andere Notation.
+> Note: `psql` needs a plain DSN (`postgresql://...`), while the API expects
+> `postgresql+asyncpg://...`. Same server, different notation.
 
-## Wenn die echte Quelle kommt
+## When the real source arrives
 
 ```cypher
 MATCH (n:Mock) DETACH DELETE n
 ```
 
-Danach die echten Daten laden. Am API-Code aendert sich nichts.
+Then load the real data. Nothing in the API code changes.

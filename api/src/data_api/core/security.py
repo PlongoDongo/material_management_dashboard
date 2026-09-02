@@ -1,19 +1,21 @@
 """
-Authentifizierung -- bewusst minimal, aber an der richtigen Stelle verdrahtet.
+Authentication -- deliberately minimal, but wired in at the right place.
 
-Aktuell: optionaler API-Key im Header `X-API-Key`. Ist `API_KEYS` leer, ist die
-Pruefung aus (Entwicklung).
+Right now: an optional API key in the `X-API-Key` header. If `API_KEYS` is
+empty, the check is disabled (development).
 
-Der Punkt dieses Moduls ist nicht der API-Key, sondern die *Form*: Auth ist eine
-FastAPI-Dependency. Der Wechsel auf OIDC/JWT (Azure AD o. ae.) tauscht nur die
-Implementierung von `current_principal` aus -- kein Router und kein Datenprodukt
-muss angefasst werden. Genauso haengt spaeteres RBAC hier: `Principal.groups`
-kommt aus dem Token, und ein Datenprodukt kann `required_groups` deklarieren.
+The point of this module is not the API key but the *shape*: authentication is
+a FastAPI dependency that yields a `Principal`. Switching to OIDC/JWT (Azure AD
+or similar) only replaces the implementation of `current_principal` -- no router
+and no data product has to change. Later row-level authorisation hangs here too:
+`Principal.groups` comes from the token, and a data product can declare
+`required_groups`.
 """
 from __future__ import annotations
 
 import hashlib
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -24,26 +26,26 @@ from data_api.core.config import Settings, get_settings
 
 @dataclass(frozen=True)
 class Principal:
-    """Wer fragt? Spaeter aus dem OIDC-Token statt aus dem API-Key."""
+    """Who is asking? Later this comes from the OIDC token instead of an API key."""
 
     subject: str
     groups: frozenset[str] = field(default_factory=frozenset)
-    auth_aktiv: bool = True
+    auth_enabled: bool = True
 
-    def darf(self, benoetigt) -> bool:
-        """Darf dieser Aufrufer ein Produkt sehen, das `benoetigt` verlangt?
+    def may_access(self, required_groups: Iterable[str]) -> bool:
+        """May this caller see a product that declares `required_groups`?
 
-        Ist die Authentifizierung ausgeschaltet (Entwicklung), ist ALLES offen.
-        Ohne diese Zeile waere die Entwicklung strenger als die Produktion: der
-        anonyme Aufrufer haette nur die Gruppe "public" und bekaeme bei einem
-        Produkt mit required_groups=("internal",) ein 403 -- obwohl Auth aus ist.
+        When authentication is switched off (development), everything is open.
+        Without that line development would be *stricter* than production: the
+        anonymous caller only has the group "public" and would get a 403 on a
+        product with required_groups=("internal",) -- even though auth is off.
         """
-        if not self.auth_aktiv:
+        if not self.auth_enabled:
             return True
-        return not benoetigt or bool(self.groups.intersection(benoetigt))
+        return not required_groups or bool(self.groups.intersection(required_groups))
 
 
-ANONYMOUS = Principal(subject="anonymous", groups=frozenset({"public"}), auth_aktiv=False)
+ANONYMOUS = Principal(subject="anonymous", groups=frozenset({"public"}), auth_enabled=False)
 
 
 async def current_principal(
@@ -52,18 +54,20 @@ async def current_principal(
 ) -> Principal:
     if not settings.auth_enabled:
         return ANONYMOUS
-    # `compare_digest` statt `in`: der Vergleich laeuft in konstanter Zeit und
-    # verraet ueber die Antwortdauer nicht, wie viele Zeichen gestimmt haben.
-    if not any(secrets.compare_digest(x_api_key or "", bekannt) for bekannt in settings.api_keys):
+
+    # `compare_digest` instead of `in`: the comparison runs in constant time and
+    # does not leak, via response timing, how many characters matched.
+    if not any(secrets.compare_digest(x_api_key or "", known) for known in settings.api_keys):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Gueltiger X-API-Key erforderlich.",
+            detail="A valid X-API-Key is required.",
         )
-    # Der Bezeichner landet in Logs und in Antworten (MappingOut.geaendert_von).
-    # Deshalb ein Hash und keine Zeichen des Schluessels selbst: gleich gut zum
-    # Unterscheiden, aber nicht rueckrechenbar.
-    kennung = hashlib.sha256(x_api_key.encode()).hexdigest()[:8]
-    return Principal(subject=f"apikey:{kennung}", groups=frozenset({"internal"}))
+
+    # This subject ends up in logs and in responses (MappingOut.changed_by), so
+    # it is a hash rather than characters of the key itself: equally usable for
+    # telling keys apart, but not reversible.
+    fingerprint = hashlib.sha256(x_api_key.encode()).hexdigest()[:8]
+    return Principal(subject=f"apikey:{fingerprint}", groups=frozenset({"internal"}))
 
 
 CurrentPrincipal = Annotated[Principal, Depends(current_principal)]

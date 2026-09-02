@@ -1,28 +1,27 @@
-# API-Layer (FastAPI)
+# API layer (FastAPI)
 
-Zwischenschicht zwischen den Dash-Dashboards und den Datenquellen (Neo4j,
-Postgres, später weitere Services).
+The layer between the Dash dashboards and the data sources (Neo4j, Postgres, and
+further services later on).
 
-Dieses README ist die Kurzfassung zum Loslegen. Ausführlicher:
+This README is the short version to get started. In more depth:
 
-| Dokument | Wofür |
+| Document | Purpose |
 |---|---|
-| [`docs/api_development_guide.md`](../docs/api_development_guide.md) | **Entwicklerleitfaden** (englisch) — Rezepte zum Erweitern, Konventionen, Review-Checkliste |
-| [`docs/api_layer_concept.md`](../docs/api_layer_concept.md) | Konzept und Begründungen der Architekturentscheidungen |
-| [`docs/api_grundlagen.md`](../docs/api_grundlagen.md) | Grundlagen für Einsteiger — was ist ein Router, eine Session, async? Inklusive Historie |
-| [`docs/architecture.md`](../docs/architecture.md) | Automatisch erzeugte Diagramme des Ist-Zustands |
+| [`docs/api_development_guide.md`](../docs/api_development_guide.md) | **Developer guide** — recipes for extending it, conventions, review checklist |
+| [`docs/api_layer_concept.md`](../docs/api_layer_concept.md) | Concept and the reasoning behind the architectural decisions |
+| [`docs/api_grundlagen.md`](../docs/api_grundlagen.md) | Background for newcomers — what is a router, a session, async? Includes the history (German) |
+| [`docs/architecture.md`](../docs/architecture.md) | Auto-generated diagrams of the current state |
 
 ---
 
-## Schnellstart
+## Quick start
 
-Die **Tests** laufen ohne Datenbank (Test-Doubles via `dependency_overrides`).
-Der **Server** braucht seine Quellen: fehlt `NEO4J_URI` bzw. `POSTGRES_DSN`,
-melden die betroffenen Datenprodukte einen Konfigurationsfehler und `/readyz`
-meldet 503.
+The **tests** run without a database (test doubles via `dependency_overrides`).
+The **server** needs its sources: without `NEO4J_URI` or `POSTGRES_DSN` the
+affected data products report a configuration error and `/readyz` answers 503.
 
-Für Quellen, die es noch nicht gibt, legt ihr Mock-Daten **in der Datenbank** an
-statt im Code — siehe [`seed/`](seed/).
+For sources that do not exist yet, create mock data **in the database** rather
+than in the code — see [`seed/`](seed/).
 
 ```bash
 uv venv && uv pip install -e ".[dev]"
@@ -33,7 +32,7 @@ uv venv && uv pip install -e ".[dev]"
 .venv/bin/python -m pytest -q
 ```
 
-Dann im Browser: <http://localhost:8000/docs>
+Then in the browser: <http://localhost:8000/docs>
 
 ```bash
 curl -s localhost:8000/api/v1/catalog | python -m json.tool
@@ -41,137 +40,173 @@ curl -s localhost:8000/api/v1/catalog | python -m json.tool
 
 ---
 
-## Die zentralen Begriffe in 60 Sekunden
+## The core ideas in 60 seconds
 
-**Datenprodukt** – ein benannter, versionierter Vertrag über einen Datensatz.
-Nicht „eine Route, die zufällig die DB abfragt". Hat ein Schema, einen Owner,
-eine Cache-Dauer und einen Lebenszyklus.
+**Data product** — a named, versioned contract over a dataset. Not "a route that
+happens to query the database". It has a schema, an owner, a cache duration and
+a lifecycle.
 
-**Zwei Versionsachsen** – die verwechselt man leicht:
+**Two version axes** — easy to confuse:
 
 ```
-/api/v1/data-products/material-overview/v2
+/api/v1/data-products/material-overview/v3
  ^^^^^^                                 ^^
- API-Version (Transport:                Datenprodukt-Version
- Fehlerformat, Auth, Umschlag)          (Felder dieser Tabelle)
+ API version (transport:                data product version
+ error format, auth, envelope)          (fields of this dataset)
 ```
 
-Im Pfad steht nur das **MAJOR** (`v2`), die volle Version (`2.1`) steht in
-`meta.version` der Antwort. Feld ergänzt → MINOR, gleiche Route. Feld entfernt,
-umbenannt, Typ oder *Bedeutung* geändert → MAJOR, neue Route, alte bleibt bis
-zum Sunset-Datum.
+The path carries only the **MAJOR** (`v3`); the full version (`3.0`) is in
+`meta.version` of the response. Field added → MINOR, same route. Field removed,
+renamed, retyped **or its meaning changed** → MAJOR, new route, the old one
+stays until its sunset date.
 
-**Treiber vs. Session** – Treiber/Engine leben den ganzen Prozess (Lifespan),
-Sessions genau einen Request (Depends). Nie umgekehrt.
+**Driver vs. session** — drivers and engines live for the whole process
+(lifespan), sessions for exactly one request (depends). Never the other way
+round.
 
 ---
 
-## Verzeichnisse
+## Directories
 
-| Pfad | Inhalt |
+| Path | Contents |
 |---|---|
-| `src/data_api/products/catalog/` | **Hier kommen neue Datenprodukte rein** — eine Datei pro Produkt und Major-Version |
-| `src/data_api/products/` | Das Framework: Registry, Routen-Generator, Cache, Basismodelle |
-| `src/data_api/db/` | Treiber-/Engine-Lebenszyklus und `Sources` (`sources.neo4j(...)`) pro Request |
-| `src/data_api/api/v1/` | Handgeschriebene Router (Health, Katalog, Schreibseite) |
-| `src/data_api/core/` | Settings, Logging, Fehlerformat, Auth |
-| `src/data_api/clients/` | Client-Vorlage für die Dash-Apps |
-| `seed/` | Mock-Daten für Neo4j/Postgres, solange Quellen fehlen |
-| `tests/fakes.py` | Test-Doubles — die einzigen Beispieldaten im Repo |
+| `src/data_api/products/catalog/` | **New data products go here** — one file per product and major version |
+| `src/data_api/products/` | The framework: registry, route generator, cache, base models |
+| `src/data_api/db/` | Driver/engine lifecycle and `Sources` (`sources.neo4j(...)`) per request |
+| `src/data_api/api/v1/` | Hand-written routers (health, catalog, write side) |
+| `src/data_api/core/` | Settings, logging, error format, auth |
+| `src/data_api/clients/` | Client template for the Dash apps |
+| `seed/` | Mock data for Neo4j/Postgres while sources are missing |
+| `tests/fakes.py` | Test doubles — the only sample data in the repository |
 
 ---
 
-## Endpunkte
+## Endpoints
 
 ```
-GET   /api/v1/healthz                                  Liveness (prüft nur den Prozess)
-GET   /api/v1/readyz                                   Readiness (prüft die Datenquellen)
-GET   /api/v1/catalog                                  alle Datenprodukte + Versionen
-GET   /api/v1/catalog/{name}                           ein Produkt im Detail
-GET   /api/v1/data-products/{name}/v{major}            die Daten
-GET   /api/v1/data-products/{name}/latest              Alias (nicht für Dashboards!)
-POST  /api/v1/mappings                                 Beispiel Schreibseite
+GET   /api/v1/healthz                                  liveness (process only)
+GET   /api/v1/readyz                                   readiness (checks the sources)
+GET   /api/v1/catalog                                  all data products + versions
+GET   /api/v1/catalog/{name}                           one product in detail
+GET   /api/v1/data-products/{name}/v{major}            the data
+GET   /api/v1/data-products/{name}/latest              alias (not for dashboards!)
+POST  /api/v1/mappings                                 write-side example
 PATCH /api/v1/mappings/{id}
 ```
 
-Antwortformat aller Datenprodukte:
+Response format of every data product:
 
 ```json
 {
-  "meta": {"product": "...", "version": "2.0", "generated_at": "...",
+  "meta": {"product": "...", "version": "3.0", "generated_at": "...",
            "row_count": 64, "total_count": 64, "source": "neo4j",
            "cache": "hit", "deprecated": false, "sunset": null},
   "data": [ ... ]
 }
 ```
 
-`meta.source` zeigt, aus welchen Quellen die Antwort zusammengesetzt wurde.
+`meta.source` shows which sources fed the response.
 
 ---
 
-## Neues Datenprodukt anlegen
+## Adding a data product
 
-Eine Datei in `src/data_api/products/catalog/`, sonst nichts:
+One file in `src/data_api/products/catalog/`, nothing else:
 
 ```python
-CYPHER = """MATCH (m:Material)-[:LOCATED_IN]->(w:Werk) RETURN ..."""
+CYPHER = """MATCH (m:Material)-[:LOCATED_IN]->(p:Werk) RETURN ..."""
 
-async def load(sources: Sources, params: WerkParams):
+async def load(sources: Sources, params: PlantParams):
     return transform(await sources.neo4j(CYPHER), params)
 
 registry.add(DataProduct(
-    name="werk-auslastung", version="1.0",
-    summary="Materialien und Bestand je Werk",
-    item_model=WerkRow, params_model=WerkParams, loader=load,
+    name="plant-utilisation", version="1.0",
+    summary="Materials and stock per plant",
+    item_model=PlantRow, params_model=PlantParams, loader=load,
     owner="team-material-management", cache_ttl=120,
 ))
 ```
 
-Nach dem Neustart existieren automatisch: Route, `/latest`-Alias,
-OpenAPI-Eintrag mit Schema, Katalogeintrag, Caching, ETag, Paginierung,
-Fehlerformat und Auth-Prüfung. Kein Router wird angefasst.
+After a restart you automatically get: the route, the `/latest` alias, a full
+OpenAPI entry with schema, a catalog entry, caching, ETag, pagination, the error
+format and the auth check. No router is touched.
 
-Konvention pro Datei — immer in dieser Reihenfolge:
+Convention per file — always in this order:
 
-1. **`CYPHER` / `SQL`** → die Abfrage
-2. **Row-Modell** → der Vertrag
-3. **Params-Modell** → die erlaubten Filter
-4. **`transform()`** → reine Funktion, ohne I/O — hier liegt die Fachlichkeit
-5. **`load()`** → holt die Rohzeilen, ruft `transform()`
-6. **`registry.add(...)`** → veröffentlicht das Produkt
+1. **`CYPHER` / `SQL`** → the query
+2. **row model** → the contract
+3. **params model** → the allowed filters
+4. **`transform()`** → pure function, no I/O — this is where the domain logic lives
+5. **`load()`** → fetches the raw rows, calls `transform()`
+6. **`registry.add(...)`** → publishes the product
 
-Die Trennung von 4 und 5 ist der Grund, warum die Fachlogik ohne Datenbank
-testbar ist (`tests/test_transformations.py`). Eine Datei = ein Datenprodukt =
-alles darüber; es gibt bewusst keine eigene Repository-Schicht.
+The split between 4 and 5 is why the domain logic is testable without a database
+(`tests/test_transformations.py`). One file = one data product = everything about
+it; there is deliberately no separate repository layer.
+
+Then add the query to `tests/fakes.py` so `FakeSources` knows how to answer it.
 
 ---
 
-## Architekturdiagramm erzeugen
+## Configuration
 
-Die visuelle Dokumentation wird aus der **laufenden App** erzeugt, nicht von Hand
-gepflegt:
+`cp .env.example .env` and fill it in. The Neo4j variables deliberately match
+the dashboard's — the same `.env` works for both.
 
-```bash
-.venv/bin/architecture-docs            # schreibt ../docs/architecture.md
-.venv/bin/architecture-docs --check    # CI: schlägt fehl, wenn veraltet
+| Variable | Meaning |
+|---|---|
+| `NEO4J_URI`, `NEO4J_AUTH`, `NEO4J_DB` | required — missing means 503 on `/readyz` |
+| `POSTGRES_DSN` | must be `postgresql+asyncpg://` (async driver) |
+| `API_CORS_ORIGINS` | ports of the Dash apps, comma-separated |
+| `API_KEYS` | empty = auth disabled (development only) |
+
+> Comments belong on their own line, never after a value: `python-dotenv` only
+> strips a trailing comment when a value precedes it, so `API_KEYS=  # empty`
+> would read the comment as a key and switch auth on.
+
+---
+
+## Connecting a dashboard
+
+`src/data_api/clients/dash_client.py` is the template. In the dashboard only
+`data/repository.py` changes:
+
+```python
+from data.api_client import DataProductClient
+_client = DataProductClient()          # once per process
+
+def load_materials() -> pl.DataFrame:
+    rows, meta = _client.fetch("material-overview", "v3", limit=50_000)
+    return _rows_to_frame(rows)
 ```
 
-Ergebnis: [`../docs/architecture.md`](../docs/architecture.md) mit drei
-Mermaid-Diagrammen (Datenfluss Route → Produkt → Quelle,
-Versionsstände, Vertragsschemata), Routeninventar und Steckbrief je Produkt.
+The version is pinned explicitly rather than using `latest`: a version change
+should show up in the git diff, not happen silently.
 
-Die Verbindungen werden abgeleitet, nicht gepflegt:
+---
 
-| Information | Quelle |
+## Generating the architecture diagram
+
+The visual documentation is generated from the **running app**, not maintained
+by hand:
+
+```bash
+.venv/bin/architecture-docs            # writes ../docs/architecture.md
+.venv/bin/architecture-docs --check    # CI: fails when stale
+```
+
+The connections are derived, never maintained:
+
+| Information | Source |
 |---|---|
-| Routen, Methoden, Deprecation | `app.openapi()` |
-| Version, Owner, Cache, Vertragsfelder | die Registry |
-| Produkt → Datenquelle | AST des Loaders (`sources.X()`-Aufrufe) |
+| routes, methods, deprecation | `app.openapi()` |
+| version, owner, cache, contract fields | the registry |
+| product → data source | AST of the loader (`sources.X()` calls) |
 
-`tests/test_architecture.py::test_dokumentation_ist_aktuell` sorgt dafür, dass
-niemand ein Produkt anlegt und das Diagramm veralten lässt.
+`tests/test_architecture.py::test_documentation_is_current` makes sure nobody
+adds a product and lets the diagram go stale.
 
-Optional, prüft die Mermaid-Syntax mit dem echten Parser:
+Optionally, validate the mermaid syntax with the real parser:
 
 ```bash
 npm install mermaid jsdom && node tools/validate_mermaid.mjs ../docs/architecture.md
@@ -179,63 +214,32 @@ npm install mermaid jsdom && node tools/validate_mermaid.mjs ../docs/architectur
 
 ---
 
-## Konfiguration
+## Mock data for missing sources
 
-`cp .env.example .env` und anpassen. Die Neo4j-Variablen sind absichtlich
-identisch zu denen des Dashboards — dieselbe `.env` funktioniert für beide.
-
-| Variable | Bedeutung |
-|---|---|
-| `NEO4J_URI`, `NEO4J_AUTH`, `NEO4J_DB` | Pflicht — leer → 503 bei `/readyz` |
-| `POSTGRES_DSN` | muss `postgresql+asyncpg://` sein (async!) |
-| `API_CORS_ORIGINS` | Ports der Dash-Apps, kommagetrennt |
-| `API_KEYS` | leer = Auth aus (nur dev) |
-
----
-
-## Dashboard anbinden
-
-`src/data_api/clients/dash_client.py` ist die Vorlage. Im Dashboard ändert sich
-nur `data/repository.py`:
-
-```python
-from data_api.clients.dash_client import DataProductClient
-_client = DataProductClient()          # einmal pro Prozess
-
-def load_materials() -> pl.DataFrame:
-    rows, meta = _client.fetch("material-overview", "v2", limit=50_000)
-    return pl.DataFrame(rows)
+```bash
+python seed/seed_neo4j.py            # create (every node gets the :Mock label)
+python seed/seed_neo4j.py --purge    # remove again
+psql "$DSN" -f seed/seed_postgres.sql
 ```
 
-`data/neo4j.py` und der Cypher im Dashboard entfallen — inklusive der
-Neo4j-Zugangsdaten in der Dashboard-Umgebung.
-
-Die Version wird **fest** angegeben, nicht `latest`: Ein Versionswechsel soll im
-Git-Diff auftauchen, nicht still passieren.
+Details in [`seed/README.md`](seed/README.md).
 
 ---
 
 ## Tests
 
 ```
-tests/test_transformations.py   Fachlogik pur, ohne DB und HTTP   ← die meisten Tests
-tests/test_registry.py          Registry-Regeln (Versionskollisionen etc.)
-tests/test_data_products.py     Ende-zu-Ende über HTTP
-tests/test_health.py            Betriebsendpunkte
-tests/test_architecture.py      Diagramm-Generator + Veraltungs-Check
-tests/fakes.py                  Test-Doubles (kein Test, sondern Werkzeug)
+tests/test_transformations.py   domain logic only, no DB, no HTTP  <- most tests
+tests/test_registry.py          registry rules (version collisions etc.)
+tests/test_data_products.py     end-to-end over HTTP
+tests/test_operations.py        request ids, cache metadata, auth, readiness
+tests/test_health.py            operational endpoints
+tests/test_architecture.py      diagram generator + staleness check
+tests/test_integration_neo4j.py against a REAL database (skipped without NEO4J_URI)
+tests/fakes.py                  test doubles (a tool, not a test)
 ```
 
-Alle laufen ohne Datenbank und ohne Docker: `conftest.py` hängt über
-`app.dependency_overrides[get_sources]` einen Fake ein. Ersetzt wird nur
-die unterste Schicht — alles darüber läuft unverändert.
-
-## Mock-Daten für fehlende Quellen
-
-```bash
-python seed/seed_neo4j.py            # anlegen (jeder Knoten trägt Label :Mock)
-python seed/seed_neo4j.py --purge    # wieder entfernen
-psql "$DSN" -f seed/seed_postgres.sql
-```
-
-Details in [`seed/README.md`](seed/README.md).
+Everything except the integration tests runs without a database and without
+Docker: `conftest.py` injects a fake via
+`app.dependency_overrides[get_sources]`. Only the bottom layer is replaced —
+everything above it runs for real.

@@ -1,15 +1,15 @@
 """
-Was ist ein Datenprodukt?
+What is a data product?
 
-Ein Datenprodukt ist ein benannter, versionierter Datensatz mit einem Besitzer
--- nicht einfach "eine Route, die zufaellig die Datenbank abfragt".
+A data product is a named, versioned dataset with an owner -- not simply "a
+route that happens to query the database".
 
-Diese Datei enthaelt vier Dinge:
+This file contains four things:
 
-    ProductParams     Basis fuer die erlaubten Query-Parameter eines Produkts
-    ProductMeta       die Metadaten, die jede Antwort mitliefert
-    ProductEnvelope   das Antwortformat: {"meta": {...}, "data": [...]}
-    DataProduct       die Beschreibung eines Produkts (Name, Version, Loader ...)
+    ProductParams     base class for a product's allowed query parameters
+    ProductMeta       the metadata every response carries
+    ProductEnvelope   the response format: {"meta": {...}, "data": [...]}
+    DataProduct       the description of a product (name, version, loader, ...)
 """
 from __future__ import annotations
 
@@ -21,99 +21,98 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProductParams(BaseModel):
-    """Basis aller Parameter-Modelle. Jedes Produkt erbt davon.
+    """Base class of all parameter models. Every product inherits from it.
 
-    `extra="forbid"` heisst: ein unbekannter Query-Parameter ist ein Fehler.
-    Schreibt ein Dashboard `?limmit=10`, gibt es 422 -- statt stillschweigend
-    die ungefilterten Daten. Das ist der Unterschied zwischen "faellt im Test
-    auf" und "faellt im Management-Meeting auf".
+    `extra="forbid"` means an unknown query parameter is an error. If a
+    dashboard sends `?limmit=10` it gets a 422 instead of silently receiving
+    unfiltered data. That is the difference between "caught in a test" and
+    "caught in a management meeting".
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    # limit/offset paginieren die FERTIGE Produktantwort und werden vom Router
-    # angewandt -- NICHT in der Abfrage. Steht SKIP/LIMIT zusaetzlich im Cypher,
-    # wird zweimal geschnitten und ab Seite 2 ist die Antwort leer.
-    limit: int = Field(1000, ge=1, le=50_000, description="Maximale Zeilenzahl.")
-    offset: int = Field(0, ge=0, description="Zeilen, die uebersprungen werden.")
+    # limit/offset paginate the FINISHED product response and are applied by the
+    # router -- NOT in the query. If SKIP/LIMIT also appear in the Cypher, the
+    # result is sliced twice and every page after the first comes back empty.
+    limit: int = Field(1000, ge=1, le=50_000, description="Maximum number of rows.")
+    offset: int = Field(0, ge=0, description="Rows to skip.")
 
     @field_validator("*", mode="after")
     @classmethod
-    def _leere_liste_ist_kein_filter(cls, wert: object) -> object:
-        """Eine leere Liste bedeutet "kein Filter", nicht "filtere auf nichts".
+    def _empty_list_means_no_filter(cls, value: object) -> object:
+        """An empty list means "no filter", not "filter on nothing".
 
-        Ohne diese Regel wird aus einem leeren Mehrfach-Auswahlfeld im Dashboard
-        ein Filter, der alles wegwirft:
+        Without this rule an empty multi-select in a dashboard becomes a filter
+        that discards everything:
 
             Python:  status=[]
             Cypher:  WHERE $status IS NULL OR m.status IN $status
-                     -> [] IS NULL ist false, x IN [] ist false
-                     -> null Zeilen, ohne Fehler und ohne Hinweis
+                     -> [] IS NULL is false, x IN [] is false
+                     -> zero rows, no error, no hint
 
-        Der Client raeumt leere Werte zwar heute schon weg, aber das ist eine
-        Zusage des Aufrufers -- ein curl aus einem Notebook oder ein Dash-Callback,
-        der direkt an httpx uebergibt, haette sie nicht. Deshalb hier, an EINER
-        Stelle fuer alle Datenprodukte.
+        The client already strips empty values today, but that is a promise made
+        by the caller -- a curl from a notebook, or a Dash callback handing its
+        value straight to httpx, would not keep it. So the rule lives here, in
+        ONE place, for every data product.
 
-        Voraussetzung: Listenfilter werden als `list[X] | None` deklariert.
+        Requirement: declare list filters as `list[X] | None` so the conversion
+        is valid.
         """
-        if isinstance(wert, list) and not wert:
+        if isinstance(value, list) and not value:
             return None
-        return wert
+        return value
 
     def cache_key(self) -> str:
-        """Die Parameter als Text -- Teil des Cache-Schluessels.
+        """The parameters as text -- part of the cache key.
 
-        `limit`/`offset` sind bewusst AUSGENOMMEN: gecacht wird das vollstaendige
-        Ergebnis des Loaders, geschnitten wird erst danach. Stuenden sie im
-        Schluessel, waere jede Seite ein kompletter Neulauf (bei supplier-risk
-        zwei Datenbankabfragen plus Polars-Aggregation) und derselbe Datensatz
-        laege N-mal im Cache. Sie waehlen einen Ausschnitt, sie bestimmen nicht
-        den Datensatz.
+        `limit`/`offset` are deliberately EXCLUDED: the cache holds the loader's
+        complete result and the slicing happens afterwards. If they were part of
+        the key, every page would be a full re-run (for supplier-risk two
+        database queries plus the Polars aggregation) and the same dataset would
+        sit in the cache N times. They select a window; they do not define the
+        dataset.
         """
         return self.model_dump_json(exclude={"limit", "offset"})
 
 
 class ProductMeta(BaseModel):
-    """Steht in jeder Antwort unter "meta". Beantwortet: was, welche Version, wie alt?"""
+    """Appears under "meta" in every response: what, which version, how old?"""
 
     product: str
     version: str
     api_version: str = "v1"
     generated_at: dt.datetime
     row_count: int
-    total_count: int | None = Field(None, description="Zeilen vor limit/offset.")
-    source: str = Field("unknown", description="neo4j | postgres | Kombination.")
+    total_count: int | None = Field(None, description="Rows before limit/offset.")
+    source: str = Field("unknown", description="neo4j | postgres | combination.")
     cache: str = Field("miss", description="hit | miss | bypass")
     deprecated: bool = False
     sunset: dt.date | None = None
 
 
 # --------------------------------------------------------------------------
-# Das Antwortformat.
+# The response format.
 #
-# Die naechsten drei Zeilen sind der einzige "fortgeschrittene" Teil dieser
-# Datei. Sie sorgen dafuer, dass jedes Produkt in der API-Dokumentation unter
-# /docs sein EIGENES Schema zeigt:
+# The next three lines are the only "advanced" part of this file. They make each
+# product show its OWN schema in the API documentation under /docs:
 #
-#     ProductEnvelope[MaterialRowV2]  ->  {"meta": {...}, "data": [MaterialRowV2]}
+#     ProductEnvelope[MaterialRowV3]   ->  {"meta": {...}, "data": [MaterialRowV3]}
 #     ProductEnvelope[SupplierRiskRow] ->  {"meta": {...}, "data": [SupplierRiskRow]}
 #
-# `TypeVar` ist der Platzhalter fuer "irgendein Zeilentyp", `Generic` sagt
-# Pydantic, dass die Klasse mit einem Typ ausgefuellt werden kann. Man braucht
-# das nur an dieser einen Stelle; beim Anlegen eines Datenprodukts kommt es
-# nicht mehr vor.
+# `TypeVar` is the placeholder for "some row type", `Generic` tells Pydantic the
+# class can be filled in with a type. You only need this in this one place; it
+# never comes up when adding a data product.
 # --------------------------------------------------------------------------
 ItemT = TypeVar("ItemT")
 
 
 class ProductEnvelope(BaseModel, Generic[ItemT]):
-    """Umschlag um die Daten: `meta` + `data`.
+    """Envelope around the data: `meta` + `data`.
 
-    Warum ein Umschlag statt einer nackten Liste? Weil das Dashboard so erfaehrt,
-    WELCHE Version es bekommen hat und wie alt die Daten sind. Und weil sich
-    spaeter Metadaten ergaenzen lassen, ohne den Vertrag zu brechen -- bei einer
-    nackten Liste waere schon der Wechsel zum Umschlag eine brechende Aenderung.
+    Why an envelope instead of a bare list? Because it tells the dashboard WHICH
+    version it received and how old the data is. And because metadata can be
+    added later without breaking the contract -- with a bare list, even moving
+    to an envelope would itself be a breaking change.
     """
 
     meta: ProductMeta
@@ -122,45 +121,45 @@ class ProductEnvelope(BaseModel, Generic[ItemT]):
 
 @dataclass(frozen=True)
 class DataProduct:
-    """Die Beschreibung eines Datenprodukts.
+    """The description of a data product.
 
-    Wird in products/catalog/ angelegt und mit `registry.add(...)` veroeffentlicht.
+    Created in products/catalog/ and published with `registry.add(...)`.
 
-    Zur Version: MAJOR.MINOR, z. B. "2.1".
-      * Feld ergaenzt        -> MINOR hoch, gleiche Route  (bricht kein Dashboard)
-      * Feld weg/umbenannt   -> MAJOR hoch, neue Route /v3
-      * Bedeutung geaendert  -> MAJOR hoch (auch wenn das Schema gleich bleibt!)
-    Im URL-Pfad steht nur das MAJOR, die volle Version in meta.version.
+    On versions: MAJOR.MINOR, e.g. "2.1".
+      * field added       -> bump MINOR, same route   (breaks no dashboard)
+      * field removed or renamed -> bump MAJOR, new route /v3
+      * meaning changed   -> bump MAJOR (even if the schema stays identical!)
+    Only the MAJOR appears in the URL path; the full version is in meta.version.
     """
 
     name: str                       # "material-overview"
     version: str                    # "2.1"
-    summary: str                    # eine Zeile fuer die Doku
-    item_model: type[BaseModel]     # das Zeilenschema = der Vertrag
+    summary: str                    # one line for the documentation
+    item_model: type[BaseModel]     # the row schema = the contract
     loader: Any                     # async def load(sources, params) -> list[dict]
     params_model: type[ProductParams] = ProductParams
-    owner: str = "unassigned"       # wen fragt man bei Fragen?
+    owner: str = "unassigned"       # who to ask about this product
     description: str = ""
     tags: tuple[str, ...] = ()
-    cache_ttl: int = 60             # Sekunden; 0 = nicht cachen
+    cache_ttl: int = 60             # seconds; 0 = do not cache
     deprecated: bool = False
-    sunset: dt.date | None = None   # ab wann diese Version abgeschaltet wird
+    sunset: dt.date | None = None   # when this version will be switched off
     required_groups: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        teile = self.version.split(".")
-        if len(teile) < 2 or not (teile[0].isdigit() and teile[1].isdigit()):
+        parts = self.version.split(".")
+        if len(parts) < 2 or not (parts[0].isdigit() and parts[1].isdigit()):
             raise ValueError(
-                f"{self.name}: version muss 'MAJOR.MINOR' sein (z. B. '1.0'), "
-                f"nicht {self.version!r}."
+                f"{self.name}: version must be 'MAJOR.MINOR' (e.g. '1.0'), "
+                f"not {self.version!r}."
             )
 
     @property
     def major(self) -> int:
-        """Die Hauptversionsnummer als Zahl: '2.1' -> 2."""
+        """The major version as a number: '2.1' -> 2."""
         return int(self.version.split(".")[0])
 
     @property
     def path_version(self) -> str:
-        """Was im URL-Pfad steht: 'v2'."""
+        """What appears in the URL path: 'v2'."""
         return f"v{self.major}"

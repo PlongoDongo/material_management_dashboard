@@ -70,8 +70,8 @@ Vertrag mit einem Besitzer:
 ```
 name         material-overview          stabiler fachlicher Name
 version      2.0                        MAJOR.MINOR
-item_model   MaterialRowV2              DER Vertrag: Felder, Typen, Pflicht/Optional
-params_model MaterialParamsV2           erlaubte Filter, typisiert
+item_model   MaterialRowV3              DER Vertrag: Felder, Typen, Pflicht/Optional
+params_model MaterialParamsV3           erlaubte Filter, typisiert
 loader       async (repos, params)      Query + Transformation
 owner        team-material-management   wen fragt man
 cache_ttl    60                         wie frisch muss es sein
@@ -163,8 +163,8 @@ api/
 │       │   ├── cache.py            #   TTL-Cache + ETag
 │       │   └── catalog/            #   ← HIER kommen neue Produkte rein
 │       │       ├── material_overview_v1.py
-│       │       ├── material_overview_v2.py
-│       │       └── supplier_risk_v1.py
+│       │       ├── material_overview_v3.py
+│       │       └── supplier_risk_v2.py
 │       │
 │       ├── api/                    # handgeschriebene Router
 │       │   ├── deps.py             #   gemeinsame Dependencies
@@ -272,10 +272,10 @@ GET   /api/v1/healthz                                       Liveness
 GET   /api/v1/readyz                                        Readiness (prüft DBs)
 GET   /api/v1/catalog                                       alle Datenprodukte
 GET   /api/v1/catalog/{name}                                ein Produkt, alle Versionen
-GET   /api/v1/data-products/material-overview/v1            [deprecated]
-GET   /api/v1/data-products/material-overview/v2
+GET   /api/v1/data-products/material-overview/v3_OLD            [deprecated]
+GET   /api/v1/data-products/material-overview/v3
 GET   /api/v1/data-products/material-overview/latest        Alias
-GET   /api/v1/data-products/supplier-risk/v1
+GET   /api/v1/data-products/supplier-risk/v2
 POST  /api/v1/mappings                                      Schreibseite
 PATCH /api/v1/mappings/{mapping_id}
 ```
@@ -289,7 +289,7 @@ meisten Projekte durcheinanderkommen. Der Schlüssel: **es gibt zwei unabhängig
 Versionsachsen.**
 
 ```
-/api/v1/data-products/material-overview/v2
+/api/v1/data-products/material-overview/v3
  ^^^^^^                                 ^^
  API-Version                            Datenprodukt-Version
  Transportvertrag:                      Datenvertrag:
@@ -318,7 +318,7 @@ kann durch einen Minor-Release nicht brechen — und trotzdem ist in jeder Antwo
 und in jedem Log nachvollziehbar, welcher exakte Stand geliefert wurde.
 
 Die letzte Zeile der Tabelle ist die gefährlichste: Wenn sich die *Berechnung*
-hinter `risiko_score` ändert, ist das Schema identisch, aber die Zahlen bedeuten
+hinter `risk_score` ändert, ist das Schema identisch, aber die Zahlen bedeuten
 etwas anderes. Das ist eine brechende Änderung, auch wenn kein Typ sich rührt.
 
 ### Warum Pfad-Versionierung und nicht Header
@@ -436,7 +436,7 @@ Ein Datenprodukt sieht nicht die Sessions, sondern ein Objekt mit zwei Methoden
 ```python
 async def load(sources: Sources, params):
     lieferanten = await sources.neo4j(CYPHER)             # Session öffnet sich hier
-    lieferungen = await sources.postgres(SQL, seit=...)   # und hier
+    deliveries = await sources.postgres(SQL, seit=...)   # und hier
     ...
 ```
 
@@ -576,7 +576,7 @@ Jedes Datenprodukt antwortet gleich — mit einem Umschlag:
     "deprecated": false,
     "sunset": null
   },
-  "data": [ { "material_nr": "MAT-100777", ... } ]
+  "data": [ { "material_number": "MAT-100777", ... } ]
 }
 ```
 
@@ -875,14 +875,14 @@ Isolation der Datenschicht und die eigentliche Probe darauf, ob der Vertrag trä
 
 ### Die Grenze zwischen API-Vertrag und Tabellenspalten
 
-Beides ist nicht dasselbe. Die API liefert `werk_id` und `werk_name`, die Tabelle
+Beides ist nicht dasselbe. Die API liefert `plant_id` und `plant_name`, die Tabelle
 hat historisch eine Spalte `werk`. Übersetzt wird an einer sichtbaren Stelle:
 
 ```python
 # data/repository.py
 _API_TO_UI = {
-    "werk_name": "werk",      # die einzige echte Umbenennung
-    ...                       # werk_id und preis fehlen: nicht gebraucht
+    "plant_name": "werk",      # die einzige echte Umbenennung
+    ...                       # plant_id und preis fehlen: nicht gebraucht
 }
 ```
 
@@ -908,8 +908,8 @@ Er ist bewusst **synchron** (`httpx.Client`) — Dash-Callbacks sind synchron, e
 Das Dashboard holt weiterhin die volle Tabelle und filtert lokal in Polars. Das
 war der kleinstmögliche Umbau. Sobald die echten Datenmengen bekannt sind, lohnt
 der zweite Schritt: die Filter als Query-Parameter mitschicken
-(`?status=Gesperrt&werk_id=W-KOE`). Die Parametermodelle dafür existieren bereits
-(`MaterialParamsV2`), und `meta.total_count` liefert die Gesamtzahl für echtes
+(`?status=Gesperrt&plant_id=W-KOE`). Die Parametermodelle dafür existieren bereits
+(`MaterialParamsV3`), und `meta.total_count` liefert die Gesamtzahl für echtes
 serverseitiges Paging.
 
 ## 17. Ein neues Datenprodukt anlegen
@@ -918,7 +918,7 @@ Der Test, ob das Konzept „leicht erweiterbar" hält. Eine Datei in
 `products/catalog/`, sonst nichts:
 
 ```python
-# products/catalog/werk_auslastung_v1.py
+# products/catalog/plant_utilisation_v1.py
 from pydantic import BaseModel
 from data_api.db.sources import Sources
 from data_api.products.base import DataProduct, ProductParams
@@ -927,49 +927,49 @@ from data_api.products.registry import registry
 # 1. die Abfrage
 CYPHER = """
 MATCH (m:Material)-[:LOCATED_IN]->(w:Werk)
-RETURN w.id AS werk_id, w.name AS werk_name, m.bestand AS bestand
+RETURN w.id AS plant_id, w.name AS plant_name, m.bestand AS stock
 """
 
 
-class WerkRow(BaseModel):              # 2. der Vertrag
-    werk_id: str
-    werk_name: str | None = None
-    materialien: int
-    bestand_gesamt: int
+class PlantRow(BaseModel):              # 2. der Vertrag
+    plant_id: str
+    plant_name: str | None = None
+    materials: int
+    stock_total: int
 
 
-class WerkParams(ProductParams):       # 3. die erlaubten Filter
-    min_materialien: int = 0
+class PlantParams(ProductParams):       # 3. die erlaubten Filter
+    min_materials: int = 0
 
 
 def transform(rows, params):           # 4. die Fachlichkeit — rein, testbar
     nach_werk: dict[str, dict] = {}
     for row in rows:
-        eintrag = nach_werk.setdefault(row["werk_id"], {
-            "werk_id": row["werk_id"], "werk_name": row["werk_name"],
-            "materialien": 0, "bestand_gesamt": 0,
+        eintrag = nach_werk.setdefault(row["plant_id"], {
+            "plant_id": row["plant_id"], "plant_name": row["plant_name"],
+            "materials": 0, "stock_total": 0,
         })
-        eintrag["materialien"] += 1
-        eintrag["bestand_gesamt"] += row.get("bestand") or 0
-    return [w for w in nach_werk.values() if w["materialien"] >= params.min_materialien]
+        eintrag["materials"] += 1
+        eintrag["stock_total"] += row.get("stock") or 0
+    return [w for w in nach_werk.values() if w["materials"] >= params.min_materials]
 
 
-async def load(sources: Sources, params: WerkParams):    # 5. die Verdrahtung
+async def load(sources: Sources, params: PlantParams):    # 5. die Verdrahtung
     """Aggregierte Kennzahlen je Werk."""
     return transform(await sources.neo4j(CYPHER), params)
 
 
 registry.add(DataProduct(              # 6. veröffentlichen
-    name="werk-auslastung", version="1.0",
+    name="plant-utilisation", version="1.0",
     summary="Materialien und Bestand je Werk",
-    item_model=WerkRow, params_model=WerkParams, loader=load,
+    item_model=PlantRow, params_model=PlantParams, loader=load,
     owner="team-material-management", cache_ttl=120,
 ))
 ```
 
 Nach dem Neustart existiert automatisch:
 
-* die Route `GET /api/v1/data-products/werk-auslastung/v1`
+* die Route `GET /api/v1/data-products/plant-utilisation/v1`
 * der Alias `/latest`
 * der vollständige OpenAPI-Eintrag mit Schema unter `/docs`
 * der Katalogeintrag unter `/api/v1/catalog`
@@ -1039,7 +1039,7 @@ Aufrufe auf dessen erstem Parameter — per AST und nicht per Regex, damit ein
 ### Der Teil, der es am Leben hält
 
 ```python
-def test_dokumentation_ist_aktuell():
+def test_documentation_is_current():
     assert DEFAULT_OUT.read_text() == build()
 ```
 

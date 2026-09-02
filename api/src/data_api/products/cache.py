@@ -1,17 +1,17 @@
 """
-Caching der Datenprodukte.
+Caching of data products.
 
-Warum ueberhaupt? Dashboards fragen dieselben Daten oft an (jeder Callback,
-jeder Nutzer, jeder Reload). Eine Cypher-Aggregation, die 800 ms braucht, darf
-nicht 40x pro Minute laufen.
+Why at all? Dashboards ask for the same data constantly (every callback, every
+user, every reload). A Cypher aggregation that takes 800 ms must not run 40
+times a minute.
 
-Cache-Schluessel = (Produktname, Major, Parameter). Verschiedene Filter sind
-verschiedene Antworten -- das ist die haeufigste Cache-Bug-Quelle.
+Cache key = (product name, major, parameters). Different filters are different
+answers -- forgetting that is the classic cache bug.
 
-Grenze dieser Implementierung: der Cache liegt IM PROZESS. Mit mehreren
-uvicorn-Workern hat jeder Worker seinen eigenen. Fuer den Anfang voellig okay
-(die Daten sind ohnehin nur sekundenaktuell). Sobald das stoert, tauscht man
-`TTLCache` gegen Redis -- die Schnittstelle (get/set) bleibt gleich.
+Limitation of this implementation: the cache lives IN THE PROCESS. With several
+uvicorn workers each worker has its own. Fine to start with (the data is only
+seconds-fresh anyway). Once it matters, swap `TTLCache` for Redis -- the
+interface (get/set) stays the same.
 """
 from __future__ import annotations
 
@@ -48,13 +48,13 @@ class TTLCache:
         if ttl <= 0:
             return
         if len(self._store) >= self._max:
-            # Simpelste Verdraengung: aeltestes Ablaufdatum zuerst.
+            # Simplest eviction: earliest expiry first.
             oldest = min(self._store, key=lambda k: self._store[k][0])
             self._store.pop(oldest, None)
         self._store[key] = (time.monotonic() + ttl, value)
 
     def invalidate(self, product: str | None = None) -> int:
-        """Nach einem Schreibvorgang gezielt leeren (siehe api/v1/mappings.py)."""
+        """Clear selectively after a write (see api/v1/mappings.py)."""
         if product is None:
             count = len(self._store)
             self._store.clear()
@@ -69,11 +69,10 @@ cache = TTLCache()
 
 
 def etag_for(payload: Any) -> str:
-    """Schwaches ETag ueber den serialisierten Payload.
+    """Weak ETag over the serialised payload.
 
-    Nutzen: das Dashboard schickt beim Polling `If-None-Match` und bekommt 304
-    ohne Body zurueck, wenn sich nichts geaendert hat. Spart Bandbreite und
-    das erneute Rendern grosser Tabellen.
+    Benefit: a polling client can send `If-None-Match` and get a 304 with no
+    body when nothing changed. Saves bandwidth and re-rendering of large tables.
     """
     raw = json.dumps(payload, sort_keys=True, default=str).encode()
     return 'W/"' + hashlib.sha256(raw).hexdigest()[:32] + '"'
