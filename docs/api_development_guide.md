@@ -30,8 +30,9 @@ Related documents:
 13. [Caching](#13-caching)
 14. [Architecture docs](#14-architecture-docs)
 15. [Review checklist](#15-review-checklist)
-16. [Why there is no repository layer](#16-why-there-is-no-repository-layer)
-17. [Pitfalls](#17-pitfalls)
+16. [When the data isn't rows](#16-when-the-data-isnt-rows)
+17. [Why there is no repository layer](#17-why-there-is-no-repository-layer)
+18. [Pitfalls](#18-pitfalls)
 
 ---
 
@@ -96,7 +97,7 @@ products. A `transform()` function knows nothing about databases. That is why
 the business logic is testable in milliseconds.
 
 There is deliberately **no repository layer**. Each data product owns its query,
-in the same file. See [section 16](#16-why-there-is-no-repository-layer).
+in the same file. See [section 17](#17-why-there-is-no-repository-layer).
 
 ---
 
@@ -552,7 +553,124 @@ For a pull request that adds or changes a data product:
 
 ---
 
-## 16. Why there is no repository layer
+## 16. When the data isn't rows
+
+Two different questions hide behind this, and they have different answers.
+
+### 16a. Values inside a row that aren't plain JSON
+
+The Neo4j driver returns its own classes for several property types. `Sources`
+translates them for you (`db/sources.py::_als_python_wert`), so this is handled —
+but it is worth knowing what you get, and why it matters:
+
+| Neo4j type | Without translation | What you get |
+|---|---|---|
+| `DATE`, `DATETIME`, `TIME` | Pydantic **rejects** it — even for a `date` field | `datetime.date` / `.datetime` / `.time` → ISO string in JSON |
+| `DURATION` | subclasses `tuple` → silently becomes `[3, 2, 0, 90]` | `"P3M2DT1M30S"` (ISO 8601) |
+| `POINT` | subclasses `tuple` → silently becomes `[7.1, 50.7]` | `{"srid": 4979, "x": 7.1, "y": 50.7}` |
+| `Node`, `Relationship` | — | its properties as a dict (labels and element id are **lost**) |
+| lists, maps (`collect()`, map projections) | — | translated recursively |
+
+The `DURATION`/`POINT` rows are the dangerous ones: no error, but the meaning is
+gone. That is why the translation is explicit rather than "whatever `json.dumps`
+does".
+
+**Two rules that follow from this:**
+
+**Return properties, not nodes.** `RETURN m.nr AS material_nr` — not `RETURN m`.
+Returning a whole node loses its labels and its id, and it leaks the graph model
+into the contract, so every schema change becomes a breaking API change.
+
+**Return large ids as strings.** Neo4j `INTEGER` is 64-bit; a JavaScript number
+is a 53-bit float. An id above 9,007,199,254,740,992 silently loses precision in
+the browser. If a value is an identifier rather than something you do arithmetic
+on, declare it `str` in the row model and cast in Cypher (`toString(id)`).
+
+### 16b. The product as a whole isn't a table
+
+Most data products are a list of rows, and the envelope reflects that:
+`{"meta": {...}, "data": [row, row, ...]}`. Some are not. Work down this list:
+
+**A single value (one KPI).** Return a one-element list. It keeps the envelope,
+caching, and the client code identical, and it costs one `[0]` at the call site.
+Do not invent a second shape for this.
+
+```python
+async def load(sources, params):
+    return [{"gesamtbestandswert": ..., "stichtag": ...}]     # one row
+```
+
+**Nested data (a material with its suppliers).** A row may contain nested
+objects; JSON and Pydantic both handle it. Declare the nesting in the model:
+
+```python
+class Lieferung(BaseModel):
+    lieferant_id: str
+    menge: int
+
+class MaterialRow(BaseModel):
+    material_nr: str
+    lieferungen: list[Lieferung] = []      # nested, still one "row" per material
+```
+
+Note that a Dash `DataTable` cannot render a nested column — the dashboard either
+flattens it or uses a different component. That is a dashboard concern, not an
+API concern.
+
+**Aggregates plus detail (KPI tiles plus a table).** Prefer **two data products**
+over one mixed payload. They have different refresh rates, different cache TTLs,
+and often different audiences — and the dashboard can load them independently.
+The material-management dashboard does exactly this today, computing its KPIs
+from the same rows.
+
+**A graph (nodes and edges) for a network view.** This is the one case where
+rows genuinely distort the data — `{"nodes": [...], "edges": [...]}` is two
+collections, not one table.
+
+There is deliberately **no support for this yet**, because no product needs it.
+When one does, the change is small and does not affect any existing product:
+
+```python
+# products/base.py — make the envelope generic over the payload, not the row
+PayloadT = TypeVar("PayloadT")
+
+class ProductEnvelope(BaseModel, Generic[PayloadT]):
+    meta: ProductMeta
+    data: PayloadT
+
+# products/router.py — declare list[...] explicitly for tabular products
+response_model=ProductEnvelope[list[product.item_model]]
+```
+
+Plus a branch in the router so `limit`/`offset` only apply when the payload is a
+list. Roughly ten lines. Add them when the first graph product exists — see
+[section 17](#17-why-there-is-no-repository-layer) for why we wait.
+
+**A file (Excel, PDF, image).** Not a data product. Data products are JSON with a
+schema, cacheable and versioned. A file download is a hand-written endpoint
+returning a `StreamingResponse` with the right content type, in a normal router
+under `api/v1/`.
+
+**Very many rows (millions).** The envelope buffers everything in memory. Before
+reaching for streaming (NDJSON), check the two cheaper options first: aggregate
+in Cypher so fewer rows leave the database, and use `limit`/`offset`, which the
+envelope already supports via `meta.total_count`.
+
+### Deciding quickly
+
+| The product is… | Do this |
+|---|---|
+| a table | list of rows — the normal case |
+| one value | a one-element list |
+| rows with nested detail | nested Pydantic models, still one list |
+| KPIs *and* a table | two data products |
+| a graph for a network view | generalise the envelope (~10 lines, when needed) |
+| a file | not a data product — its own endpoint |
+| millions of rows | aggregate in Cypher first, then paginate |
+
+---
+
+## 17. Why there is no repository layer
 
 An earlier draft had a `repositories/` package: `Protocol` ports, Neo4j/SQL
 adapters, one module per business domain. It was removed. Worth knowing why,
@@ -582,7 +700,7 @@ on its own.
 
 ---
 
-## 17. Pitfalls
+## 18. Pitfalls
 
 **Blocking calls inside `async def`.** The synchronous Neo4j driver, `requests`,
 `time.sleep` — any of these blocks the whole event loop, so *every* concurrent

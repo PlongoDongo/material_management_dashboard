@@ -680,6 +680,26 @@ mehr Begriffe, schwerer zu lesen), der Nutzen kommt nie.
 > tatsächlich gibt — nicht, wenn man ihn für möglich hält. Der Umbau kostet dann
 > eine halbe Stunde. Ein Jahr mit einer unnötigen Schicht zu leben, kostet mehr.
 
+#### Was "Zeile" hier eigentlich heisst
+
+`sources.neo4j()` gibt eine Liste von dicts zurück — pro Ergebniszeile ein dict
+mit den Spalten aus dem `RETURN`. Zwei Dinge, die dabei leicht überraschen:
+
+* **Neo4j hat eigene Typen.** Ein `DATE`-Property kommt als `neo4j.time.Date`
+  zurück, und Pydantic lehnt das ab. `Sources` übersetzt solche Werte deshalb
+  automatisch in normale Python-Typen. Besonders tückisch sind `DURATION` und
+  `POINT`: beide erben von `tuple` und würden ohne Übersetzung stillschweigend
+  als nacktes `[3, 2, 0, 90]` in der Antwort landen — kein Fehler, aber die
+  Bedeutung ist weg.
+* **Gib Properties zurück, keine Knoten.** `RETURN m.nr AS material_nr` statt
+  `RETURN m`. Ein ganzer Knoten verliert seine Labels und seine ID, und er zieht
+  das Graphmodell in den Vertrag: Jede Modelländerung wäre dann automatisch eine
+  brechende API-Änderung.
+
+Und wenn ein Datenprodukt gar keine Tabelle ist — ein KPI-Einzelwert, ein Netz
+aus Knoten und Kanten, eine Excel-Datei? Die Entscheidungshilfe dafür steht im
+[Entwicklerleitfaden, Abschnitt 16](api_development_guide.md#16-when-the-data-isnt-rows).
+
 #### Wenn doch mal zwei Produkte dieselbe Abfrage brauchen
 
 Dann steht sie in einem gemeinsamen Modul, und beide importieren sie:
