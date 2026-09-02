@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import datetime as dt
 import inspect
 import sys
 import textwrap
@@ -62,7 +61,6 @@ class RouteInfo:
 @dataclass
 class ProductInfo:
     product: DataProduct
-    repositories: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
 
 
@@ -70,7 +68,6 @@ class ProductInfo:
 class Architecture:
     routes: list[RouteInfo]
     products: list[ProductInfo]
-    repo_sources: dict[str, list[str]]
 
 
 def _first_arg_name(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> str | None:
@@ -87,12 +84,12 @@ def _parse_function(obj: Any) -> ast.AsyncFunctionDef | ast.FunctionDef | None:
     return node if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) else None
 
 
-def repositories_used_by(loader: Any) -> list[str]:
-    """Welche Repositories ruft dieser Loader auf?
+def sources_used_by(loader: Any) -> list[str]:
+    """Welche Datenquellen fragt dieser Loader ab?
 
-    Gelesen aus `await repos.materials()` im Quelltext des Loaders. Per AST und
-    nicht per Regex, damit ein `repos.materials` in einem Kommentar oder String
-    nicht mitgezaehlt wird.
+    Gelesen aus `await sources.neo4j(...)` bzw. `await sources.postgres(...)` im
+    Quelltext des Loaders. Per AST und nicht per Regex, damit ein
+    `sources.neo4j` in einem Kommentar oder String nicht mitgezaehlt wird.
     """
     fn = _parse_function(loader)
     if fn is None:
@@ -111,53 +108,11 @@ def repositories_used_by(loader: Any) -> list[str]:
     return sorted(found)
 
 
-def repository_sources() -> dict[str, list[str]]:
-    """Welche Adapter (und damit welche Quellen) kann jedes Repository liefern?
-
-    Gelesen aus den `return XyzRepository(...)`-Anweisungen im
-    Repositories-Container; die Quelle steht als Klassenattribut `source` am
-    Adapter. Eine neue Quelle taucht damit automatisch im Diagramm auf.
-    """
-    from data_api.db import repositories as module
-
-    container = _parse_function_container(module.Repositories)
-    result: dict[str, list[str]] = {}
-    for method in container:
-        if method.name.startswith("_"):
-            continue
-        sources: list[str] = []
-        for node in ast.walk(method):
-            if (
-                isinstance(node, ast.Return)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name)
-            ):
-                adapter = getattr(module, node.value.func.id, None)
-                source = getattr(adapter, "source", None)
-                if source and source not in sources:
-                    sources.append(source)
-        if sources:
-            result[method.name] = sources
-    return result
-
-
-def _parse_function_container(cls: type) -> list[ast.AsyncFunctionDef | ast.FunctionDef]:
-    source = textwrap.dedent(inspect.getsource(cls))
-    class_node = ast.parse(source).body[0]
-    return [n for n in class_node.body if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef)]
-
-
 def collect(app: FastAPI) -> Architecture:
     from data_api.products.registry import registry
 
-    repo_sources = repository_sources()
-
     products = [
-        ProductInfo(
-            product=product,
-            repositories=(used := repositories_used_by(product.loader)),
-            sources=sorted({s for r in used for s in repo_sources.get(r, [])}),
-        )
+        ProductInfo(product=product, sources=sources_used_by(product.loader))
         for product in registry.all()
     ]
 
@@ -197,7 +152,7 @@ def collect(app: FastAPI) -> Architecture:
             )
         )
     routes.sort(key=lambda r: r.path)
-    return Architecture(routes=routes, products=products, repo_sources=repo_sources)
+    return Architecture(routes=routes, products=products)
 
 
 # ---------------------------------------------------------------------------
@@ -239,14 +194,8 @@ def diagram_dataflow(arch: Architecture) -> str:
     lines.append("  end")
     lines.append("")
 
-    lines.append('  subgraph repos["Repositories (Ports)"]')
-    for repo in sorted(arch.repo_sources):
-        lines.append(f'    {_id("repo", repo)}["{repo}"]')
-    lines.append("  end")
-    lines.append("")
-
-    all_sources = sorted({s for srcs in arch.repo_sources.values() for s in srcs})
-    lines.append('  subgraph sources["Datenquellen (Adapter)"]')
+    all_sources = sorted({s for info in arch.products for s in info.sources})
+    lines.append('  subgraph sources["Datenquellen"]')
     for source in all_sources:
         shape = f'[("{source}")]'
         lines.append(f'    {_id("src", source)}{shape}')
@@ -261,11 +210,8 @@ def diagram_dataflow(arch: Architecture) -> str:
                      f'{_id("p", route.product.name, str(route.product.major))}')
     for info in arch.products:
         product_node = _id("p", info.product.name, str(info.product.major))
-        for repo in info.repositories:
-            lines.append(f"  {product_node} --> {_id('repo', repo)}")
-    for repo, srcs in sorted(arch.repo_sources.items()):
-        for source in srcs:
-            lines.append(f"  {_id('repo', repo)} --> {_id('src', source)}")
+        for source in info.sources:
+            lines.append(f"  {product_node} --> {_id('src', source)}")
 
     lines += [
         "",
@@ -322,7 +268,11 @@ def diagram_contracts(arch: Architecture) -> str:
 
 
 def render_markdown(arch: Architecture) -> str:
-    heute = dt.date.today().isoformat()
+    # BEWUSST kein Zeitstempel: Der Inhalt dieser Datei muss eine reine Funktion
+    # des Codes sein. Stuende hier das Tagesdatum, schluege der Veraltungs-Check
+    # (tests/test_architecture.py) jeden Tag fehl, ohne dass sich etwas geaendert
+    # haette -- und ein taeglicher Fehlalarm bringt dem Team bei, rote Builds zu
+    # ignorieren. Wann die Datei zuletzt erzeugt wurde, weiss ohnehin git log.
     parts = [
         "# Architektur (automatisch erzeugt)",
         "",
@@ -331,12 +281,13 @@ def render_markdown(arch: Architecture) -> str:
         "> naechsten Lauf verloren. Das Konzept dahinter steht in",
         "> [`api_layer_concept.md`](api_layer_concept.md).",
         "",
-        f"Stand: {heute} · {len(arch.products)} Datenprodukte · "
+        f"{len(arch.products)} Datenprodukte · "
         f"{len([r for r in arch.routes if not r.is_alias])} Routen",
         "",
         "## Datenfluss",
         "",
-        "Von der Route bis zur Datenquelle. ⚠ markiert auslaufende Versionen.",
+        "Von der Route über das Datenprodukt bis zur Datenquelle.",
+        "⚠ markiert auslaufende Versionen.",
         "",
         "```mermaid",
         diagram_dataflow(arch),
@@ -381,8 +332,7 @@ def render_markdown(arch: Architecture) -> str:
             f"{product.summary}",
             "",
             f"* **Owner:** {product.owner}",
-            f"* **Quelle:** {' + '.join(info.sources) or '–'} "
-            f"(ueber {', '.join(info.repositories) or '–'})",
+            f"* **Quellen:** {' + '.join(info.sources) or '–'}",
             f"* **Cache:** {product.cache_ttl}s",
             f"* **Filter:** {', '.join(f'`{f}`' for f in product.params_model.model_fields)}",
             f"* **Modul:** `{product.loader.__module__.replace('.', '/')}.py`",

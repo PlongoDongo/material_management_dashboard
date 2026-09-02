@@ -24,8 +24,9 @@ Zeile in unserem Code welchem historischen Schmerz entspricht.
 * [Teil 2 — Die Geschichte in acht Schritten](#teil-2--die-geschichte-in-acht-schritten)
 * [Teil 3 — Vier Nebenstränge](#teil-3--vier-nebenstränge)
 * [Teil 4 — Ein Request durch unseren Code](#teil-4--ein-request-durch-unseren-code)
-* [Teil 5 — Glossar](#teil-5--glossar)
-* [Teil 6 — Was du nicht wissen musst](#teil-6--was-du-nicht-wissen-musst)
+* [Teil 5 — Vier Bausteine im Detail](#teil-5--vier-bausteine-im-detail)
+* [Teil 6 — Glossar](#teil-6--glossar)
+* [Teil 7 — Was du nicht wissen musst](#teil-7--was-du-nicht-wissen-musst)
 
 ---
 
@@ -118,8 +119,8 @@ Das war ein enormer Produktivitätssprung. Man sah sofort, was passiert.
    kopieren. Beim ersten Bugfix ändert man eine der Kopien und vergisst die anderen.
 
 > **Was davon übrig ist:** Die Regel „Zugriff auf Daten wird von der Darstellung
-> getrennt" — und zwar räumlich, in eigenen Dateien. Bei uns ist das
-> `repositories/` gegenüber `products/`.
+> getrennt" — und zwar räumlich, in eigenen Funktionen. Bei uns ist das die
+> reine `transform()` gegenüber dem `load()`, das die Datenbank anfasst.
 
 ---
 
@@ -148,6 +149,11 @@ ohne Dateien zu verschieben.
 **Zweitens: das Repository-Muster.** Der Datenbankzugriff wandert in eigene
 Objekte. Der Rest des Programms ruft `kunden_repository.finde_alle()` auf und
 weiß nicht, ob dahinter SQL, eine Datei oder ein fremder Dienst steckt.
+
+> Wir benutzen dieses Muster bewusst **nicht** — warum, steht in
+> [Abschnitt 5.1](#51-datenzugriff-eine-klasse-zwei-methoden). Es lohnt sich,
+> wenn dieselben Daten aus wechselnden Quellen kommen können. Bei uns kommen sie
+> aus dem Graphen, und jedes Datenprodukt stellt seine eigene Frage.
 
 **Was daran kaputt ging:** Die Frameworks wurden groß und meinungsstark. Vor
 allem aber lösten sie ein Problem *nicht*, das mit dem Aufkommen von Handy-Apps
@@ -573,20 +579,20 @@ ein `Principal` mit Gruppen — der Haken, an dem später Berechtigungen hängen
 **5. Cache prüfen** (`products/cache.py`)
 Schlüssel aus Produkt, Version und Parametern. Treffer → weiter bei Schritt 9.
 
-**6. Datenzugriff vorbereiten** (`api/deps.py`, `db/repositories.py`)
-Der `Repositories`-Container wird gebaut. Er öffnet noch **nichts** — erst wenn
-das Produkt tatsächlich fragt. Alles, was er öffnet, wird am Ende automatisch
+**6. Datenzugriff vorbereiten** (`api/deps.py`, `db/sources.py`)
+Das `Sources`-Objekt wird gebaut. Es öffnet noch **nichts** — erst wenn das
+Produkt tatsächlich fragt. Alles, was es öffnet, wird am Ende automatisch
 geschlossen.
 
 **7. Das Datenprodukt läuft** (`products/catalog/material_overview_v2.py`)
 
 ```python
-async def load(repos, params):
-    repo = await repos.materials()          # hier öffnet sich die Neo4j-Session
-    return transform(await repo.fetch_materials(), params)
+async def load(sources, params):
+    rows = await sources.neo4j(CYPHER)      # hier öffnet sich die Neo4j-Session
+    return transform(rows, params)
 ```
 
-`fetch_materials()` schickt den Cypher. `transform()` filtert und rechnet den
+`sources.neo4j()` schickt den Cypher. `transform()` filtert und rechnet den
 Bestandswert aus — **ohne Datenbank, ohne HTTP**, und ist deshalb in
 Millisekunden testbar.
 
@@ -615,7 +621,368 @@ ein einheitliches Fehlerformat mit derselben Request-ID.
 
 ---
 
-## Teil 5 — Glossar
+## Teil 5 — Vier Bausteine im Detail
+
+Vier Stellen, die beim Lesen des Codes am häufigsten Fragen auslösen.
+
+---
+
+### 5.1 Datenzugriff: eine Klasse, zwei Methoden
+
+Ein Datenprodukt bekommt genau ein Objekt herein und stellt damit seine Abfragen:
+
+```python
+rows = await sources.neo4j(CYPHER)
+rows = await sources.postgres(SQL, seit=params.seit)
+```
+
+Das ist alles. `Sources` (`db/sources.py`, rund 100 Zeilen) kümmert sich um drei
+Dinge, die man sonst in jedem Datenprodukt neu richtig machen müsste:
+
+1. **Lazy öffnen.** Ein Produkt, das nur den Graphen abfragt, öffnet keine
+   Postgres-Verbindung.
+2. **Teilen.** Zwei Abfragen im selben Request nutzen dieselbe Verbindung.
+3. **Schließen.** Alles wird am Ende zuverlässig geschlossen — auch wenn die
+   Abfrage einen Fehler wirft. Darum steht in keinem Datenprodukt je
+   `session.close()`.
+
+Punkt 3 ist der Grund, warum es diese Klasse überhaupt gibt. Der Mechanismus
+dahinter (`AsyncExitStack` in einer `yield`-Dependency) steht in Abschnitt 5.3.
+
+#### Warum die Abfrage im Datenprodukt steht
+
+Der Cypher liegt in derselben Datei wie das Schema, die Filter und die
+Transformation. **Eine Datei = ein Datenprodukt = alles darüber.**
+
+```python
+CYPHER = """MATCH (m:Material) ... RETURN ..."""
+
+async def load(sources, params):
+    return transform(await sources.neo4j(CYPHER), params)
+```
+
+Ein früherer Entwurf hatte dafür eine eigene Schicht: ein Verzeichnis
+`repositories/`, nach Geschäftsdomänen unterteilt (`materials.py`,
+`deliveries.py`), mit `Protocol`-Klassen und Adaptern. **Die ist bewusst wieder
+entfernt worden**, und der Grund ist lehrreich genug, um ihn festzuhalten:
+
+| Annahme im ersten Entwurf | Wie es tatsächlich ist |
+|---|---|
+| Mehrere Produkte teilen sich eine Abfrage | Fast nie. Jedes Produkt beantwortet eine eigene Frage. |
+| Abfragen lassen sich nach Domänen ordnen | Der Graph existiert gerade, um Domänen zu **vereinen** — Datenprodukte sind übergreifend. Eine Aufteilung nach Domänen arbeitet gegen das Datenmodell. |
+| Mehrere Umsetzungen je Port rechtfertigen ein `Protocol` | Es gab nur eine. Das `Protocol` beschrieb einen Adapter, den es nicht gab. |
+
+Das ist der klassische Fehler *speculative generality*: eine Abstraktion für
+einen Fall bauen, der nie eintritt. Die Kosten trägt man sofort (mehr Dateien,
+mehr Begriffe, schwerer zu lesen), der Nutzen kommt nie.
+
+> **Faustregel:** Eine Abstraktion einführen, wenn es den zweiten Fall
+> tatsächlich gibt — nicht, wenn man ihn für möglich hält. Der Umbau kostet dann
+> eine halbe Stunde. Ein Jahr mit einer unnötigen Schicht zu leben, kostet mehr.
+
+#### Wenn doch mal zwei Produkte dieselbe Abfrage brauchen
+
+Dann steht sie in einem gemeinsamen Modul, und beide importieren sie:
+
+```python
+from data_api.products.catalog.material_overview_v2 import CYPHER
+```
+
+Oder man legt `products/queries.py` an. Beides ist in zehn Minuten gemacht —
+wenn es so weit ist.
+
+### 5.2 Die Registry — wie aus einer Datei eine Route wird
+
+Die Registry (`products/registry.py`) ist ein Verzeichnis aller Datenprodukte.
+Sie ist ungefähr 100 Zeilen und besteht aus drei Teilen.
+
+#### Teil 1: ein Verzeichnis
+
+Im Kern ein Wörterbuch. Schlüssel ist `(Name, Hauptversion)`, Wert das
+Datenprodukt:
+
+```python
+{("material-overview", 1): DataProduct(...),
+ ("material-overview", 2): DataProduct(...),
+ ("supplier-risk",     1): DataProduct(...)}
+```
+
+Beim Eintragen wird geprüft, ob der Schlüssel schon belegt ist. Wären zwei
+Produkte unter `material-overview` + `v2` registriert, gäbe es zwei Routen mit
+demselben Pfad — und welche antwortet, hinge von der Importreihenfolge ab. Ein
+Startfehler ist besser als ein Zufall.
+
+#### Teil 2: eintragen
+
+Jede Katalogdatei endet mit einem Aufruf:
+
+```python
+registry.add(DataProduct(
+    name="material-overview",
+    version="2.0",
+    item_model=MaterialRowV2,
+    loader=load,
+    ...
+))
+```
+
+Mehr passiert nicht: Es wird ein Objekt gebaut und in ein Wörterbuch gelegt.
+
+> Ein früherer Entwurf benutzte hier einen Dekorator (`@data_product(...)`).
+> Der las sich am Aufrufort hübsch, brauchte in `registry.py` aber eine
+> 40-zeilige Parameterliste, die jedes Feld von `DataProduct` doppelte. Ein
+> Konzept weniger und 40 Zeilen weniger sind den kleinen Verlust an Eleganz
+> wert — zumal `registry.add(DataProduct(...))` ohne Vorwissen lesbar ist.
+
+**Wichtig ist der Zeitpunkt:** Der Aufruf läuft, sobald die Datei **importiert**
+wird — nicht wenn jemand `load()` aufruft. Ein Import genügt, damit das Produkt
+im Verzeichnis steht.
+
+#### Teil 3: die Datei finden
+
+Damit `registry.add(...)` läuft, muss die Datei importiert werden. Statt einer
+Liste, die jemand pflegen müsste, sieht `discover()` nach, welche Dateien im
+Katalogordner liegen:
+
+```python
+def discover(package="data_api.products.catalog"):
+    module = importlib.import_module(package)
+    for info in pkgutil.iter_modules(module.__path__):   # liest das Verzeichnis
+        importlib.import_module(f"{package}.{info.name}")
+```
+
+Deshalb reicht es, eine Datei abzulegen: Sie wird gefunden, importiert,
+`registry.add(...)` läuft, das Produkt steht im Verzeichnis.
+
+#### Der Ablauf beim Start
+
+```
+1. create_app()
+2.   discover()                    ── importiert products/catalog/*.py
+3.                                    └─ jedes registry.add(...) trägt sich ein
+4.   build_products_router()       ── läuft die Registry durch und baut
+5.                                    pro Eintrag eine echte FastAPI-Route
+6.   app.include_router(...)
+```
+
+Schritt 4 ist der interessante. Für jedes Produkt entsteht eine Funktion,
+die dieses eine Produkt bedient:
+
+```python
+for product in registry.all():
+    endpoint = _make_endpoint(product)        # Funktion für genau dieses Produkt
+    router.add_api_route(
+        f"/{product.name}/{product.path_version}",
+        endpoint,
+        response_model=ProductEnvelope[product.item_model],   # <- eigenes Schema!
+        ...
+    )
+```
+
+`response_model=` ist der Grund für den ganzen Aufwand. Damit weiß FastAPI, welche
+Felder diese eine Route liefert — und kann daraus die Dokumentation unter `/docs`
+erzeugen. Bei einer einzigen generischen Route (`/{name}/{version}`) stünde dort
+nur „gibt irgendein JSON zurück".
+
+#### Wo es aufhört, magisch zu sein
+
+Die Reihenfolge ist die einzige echte Bedingung: `discover()` **vor**
+`build_products_router()`. Wäre es umgekehrt, wäre das Verzeichnis beim
+Routenbauen noch leer und die API hätte null Datenprodukte. Beides steht direkt
+untereinander in `application.py::create_app()`.
+
+Und eine Stolperfalle, die uns beim Bauen erwischt hat: In `products/router.py`
+darf **kein** `from __future__ import annotations` stehen. Die Typangaben der
+erzeugten Funktionen sind zur Laufzeit erzeugte Objekte; mit dieser Zeile würden
+sie zu Text, und FastAPI könnte sie nicht mehr auflösen. Es steht als Kommentar in
+der Datei — bitte nicht „aufräumen".
+
+---
+
+### 5.3 Dependency Injection — was, warum, wie
+
+Der Begriff klingt größer als die Sache.
+
+> **Dependency Injection heißt: eine Funktion holt sich ihre Hilfsmittel nicht
+> selbst, sondern bekommt sie gereicht.**
+
+#### Die drei Möglichkeiten
+
+**Variante A — selbst besorgen.**
+
+```python
+async def hole_materialien():
+    driver = AsyncGraphDatabase.driver(os.getenv("NEO4J_URI"), auth=...)
+    async with driver.session() as session:
+        return await session.run("MATCH (m:Material) ...")
+```
+
+Probleme: Bei jedem Aufruf ein neuer Treiber (der Verbindungspool wird
+weggeworfen). Nicht testbar ohne echte Datenbank. Die Konfiguration wird mitten
+in der Fachlogik gelesen.
+
+**Variante B — globales Objekt.**
+
+```python
+driver = AsyncGraphDatabase.driver(...)      # irgendwo auf Modulebene
+
+async def hole_materialien():
+    async with driver.session() as session: ...
+```
+
+Besser bei der Performance, aber: Die Verbindung entsteht beim **Import**. Jedes
+`import`, auch das von pytest beim Einsammeln der Tests, verbindet sich zur
+Datenbank. Für Tests müsste man das Modul-Global von außen ersetzen
+(*monkeypatching*) — und dann teilen sich alle Tests dasselbe Objekt.
+
+**Variante C — gereicht bekommen (Dependency Injection).**
+
+```python
+async def hole_materialien(session = Depends(get_session)):
+    return await session.run("MATCH (m:Material) ...")
+```
+
+Die Funktion sagt nur noch *was* sie braucht. Wer es liefert und wann es
+aufgeräumt wird, steht woanders.
+
+#### Wie FastAPI das technisch macht
+
+Beim Start liest FastAPI mit `inspect.signature()` die Signatur jeder
+Endpunktfunktion. Für jeden Parameter entscheidet es anhand der Typangabe:
+
+| Parameter | FastAPI erkennt | Woher der Wert kommt |
+|---|---|---|
+| `kunde_id: int` und `{kunde_id}` steht im Pfad | Pfadparameter | aus der URL, in `int` umgewandelt |
+| `limit: int = 100` | Query-Parameter | aus `?limit=...` |
+| `daten: KundeIn` (Pydantic-Modell) | Request-Body | aus dem JSON |
+| `session = Depends(get_session)` | **Dependency** | Ergebnis von `get_session()` |
+
+Aus diesen Angaben entsteht einmalig ein Abhängigkeitsbaum. Für unsere
+Datenprodukt-Route sieht er so aus:
+
+```
+endpoint
+├── params      Annotated[MaterialParamsV2, Query()]
+├── sources     Depends(get_sources)
+│               └── settings   Depends(get_settings)
+└── principal   Depends(current_principal)
+                └── settings   Depends(get_settings)   ← nur EINMAL ausgewertet
+```
+
+Drei Eigenschaften, die den Unterschied machen:
+
+**Zwischenspeichern pro Anfrage.** `get_settings` steht zweimal im Baum, wird
+aber nur einmal aufgerufen. Bei einer Datenbank-Session ist das entscheidend:
+Zwei Abfragen bekommen dieselbe Session, nicht zwei.
+
+**Aufräumen mit `yield`.** Eine Dependency, die `yield` benutzt, ist zweigeteilt:
+
+```python
+async def get_sources(request, settings):
+    async with AsyncExitStack() as stack:
+        yield Sources(stack=stack, ...)          # alles davor: vor dem Endpunkt
+    # alles danach: NACH der Antwort — auch wenn der Endpunkt einen Fehler warf
+```
+
+Deshalb steht in keinem Datenprodukt jemals `session.close()`.
+
+**Austauschbar in Tests.** Das ist der praktische Hauptgewinn:
+
+```python
+app.dependency_overrides[get_sources] = FakeSources
+```
+
+Eine Zeile, und die gesamte Datenschicht ist ersetzt. Kein Monkeypatching, keine
+Umgebungsvariablen, keine laufende Datenbank. Route, Validierung, Produkt-Logik,
+Umschlag, Cache und Header laufen dabei **echt** — nur die unterste Schicht ist
+getauscht. Genau darauf beruhen die 46 Tests der API.
+
+Das Dashboard nutzt dasselbe Prinzip an anderer Stelle: `httpx.MockTransport`
+ersetzt nur die HTTP-Schicht, alles darüber läuft echt
+(`tests/test_repository.py`).
+
+#### Und was, wenn man es nicht braucht?
+
+Für ein Skript: nicht nötig. Der Nutzen entsteht, sobald es (a) etwas gibt, das
+länger lebt als eine Anfrage (Verbindungspools), (b) etwas zuverlässig aufgeräumt
+werden muss, und (c) Tests ohne die echte Infrastruktur laufen sollen. Alle drei
+treffen auf diesen Dienst zu.
+
+---
+
+### 5.4 Wie ein Dashboard die API benutzt
+
+`clients/dash_client.py` im API-Projekt ist eine **Vorlage zum Kopieren**, kein
+Modul, das ein Dashboard importiert.
+
+Der Grund ist praktisch: `api/` ist ein eigenes Projekt mit eigener virtueller
+Umgebung und hängt an FastAPI, dem Neo4j-Treiber und SQLAlchemy. Nichts davon
+soll ins Dashboard, das nur `httpx` braucht. Also liegt im Dashboard eine Kopie
+unter `data/api_client.py`.
+
+> Sobald das **dritte** Dashboard denselben Client benutzt, lohnt sich ein kleines
+> gemeinsames Paket. Bei zweien ist Kopieren billiger als die Paketverwaltung —
+> und der Client ist generisch (er kennt kein einziges Feld eines Datenprodukts),
+> die Kopien driften also nicht fachlich auseinander.
+
+#### Was sich beim Umbau geändert hat
+
+```
+vorher:   Dashboard ──Bolt/Cypher──► Neo4j
+nachher:  Dashboard ──HTTP/JSON────► API-Layer ──► Neo4j
+```
+
+| Datei | Vorher | Nachher |
+|---|---|---|
+| `data/neo4j.py` | Treiber, Zugangsdaten | **gelöscht** |
+| `data/repository.py` | Cypher + Mock-Daten | ruft den API-Client |
+| `data/api_client.py` | — | **neu**, kennt HTTP |
+| `app.py` | legt Treiber an | nichts mehr davon |
+| `requirements.txt` | `neo4j` | `httpx` |
+
+**Alles andere blieb unangetastet** — Filter, KPIs, Tabelle, Callbacks, Sidebar.
+Der Grund: Sie kannten schon vorher nur `get_materials()`. Genau dafür war die
+Datenschicht von Anfang an auf eine Datei isoliert.
+
+#### Die zwei interessanten Stellen
+
+**Ein Client pro Prozess, nicht pro Callback:**
+
+```python
+_client = DataProductClient()      # hält den Verbindungspool offen
+```
+
+Derselbe Gedanke wie beim Datenbanktreiber (Abschnitt 3.1) — Verbindungsaufbau
+ist teuer, also nicht bei jedem Klick neu.
+
+**Die Übersetzung an der Grenze:**
+
+```python
+_API_TO_UI = {
+    "werk_name": "werk",      # die API nennt es anders als die Tabelle
+    ...                       # werk_id und preis stehen nicht drin: nicht gebraucht
+}
+```
+
+Zwei Effekte. Erstens musste beim Umbau keine einzige Filter- oder Callback-Datei
+angefasst werden. Zweitens — und wichtiger: **Ein neues Feld in der API kann das
+Dashboard nie brechen**, weil nur übernommen wird, was in dieser Tabelle steht.
+Das ist der Grund, warum ein hinzugefügtes Feld nur eine Unterversion ist.
+
+#### Für das nächste Dashboard
+
+1. `data/api_client.py` kopieren.
+2. Ein `repository.py` schreiben: Produkt und Version als Konstanten, eine
+   Abbildung von API-Feldern auf die eigenen Spalten, `get_materials()`-Äquivalent
+   mit kurzem Cache.
+3. Welche Produkte es gibt, zeigt `GET /api/v1/catalog`; welche Felder eine
+   Version liefert, `GET /api/v1/catalog/<name>`.
+4. Version **fest** verdrahten, nicht `latest` — ein Versionswechsel soll im
+   Git-Diff auftauchen.
+
+---
+
+## Teil 6 — Glossar
 
 | Begriff | In einem Satz |
 |---|---|
@@ -629,7 +996,7 @@ ein einheitliches Fehlerformat mit derselben Request-ID.
 | **Treiber / Engine** | Das Objekt, das den Vorrat an Datenbankverbindungen hält. Eines pro Programm. |
 | **Session** | Eine ausgeliehene Verbindung für eine Arbeitseinheit. Eine pro Request. |
 | **Pool** | Der Vorrat offener Verbindungen. |
-| **Repository** | Die Schicht, die als einzige Datenbankabfragen enthält. |
+| **`Sources`** | Das Objekt, über das ein Datenprodukt seine Abfragen stellt (`sources.neo4j(...)`). Kümmert sich um Öffnen, Teilen und Schließen der Verbindungen. |
 | **Protocol** | Eine Beschreibung „welche Methoden muss so ein Objekt haben" — ohne Vererbung. Ermöglicht Austausch (echt ↔ Test). |
 | **Pydantic-Modell** | Eine Klasse, die Felder und Typen beschreibt. Daraus entstehen Prüfung *und* Dokumentation. |
 | **Schema** | Die Beschreibung eines Datensatzes (bei uns = das Pydantic-Modell). |
@@ -647,7 +1014,7 @@ ein einheitliches Fehlerformat mit derselben Request-ID.
 
 ---
 
-## Teil 6 — Was du nicht wissen musst
+## Teil 7 — Was du nicht wissen musst
 
 Damit die Liste oben nicht abschreckend wirkt — für den Alltag reicht deutlich
 weniger. Wenn du ein Datenprodukt anlegst, brauchst du genau vier Dinge:

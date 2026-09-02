@@ -30,7 +30,8 @@ Related documents:
 13. [Caching](#13-caching)
 14. [Architecture docs](#14-architecture-docs)
 15. [Review checklist](#15-review-checklist)
-16. [Pitfalls](#16-pitfalls)
+16. [Why there is no repository layer](#16-why-there-is-no-repository-layer)
+17. [Pitfalls](#17-pitfalls)
 
 ---
 
@@ -85,14 +86,17 @@ API; changing the auth mechanism must not re-version every product.
 
 ```
 Router      transport: paths, status codes, headers, OpenAPI
-Product     business logic: which sources, which formula
-Repository  data access: Cypher, SQL
+Product     the query + the business logic (one file per product)
+Sources     connections: open, share, close
 Infra       drivers, pools, lifecycle
 ```
 
-Dependencies only ever point **down**. A repository knows nothing about FastAPI.
-A `transform()` function knows nothing about databases. That is why the business
-logic is testable in milliseconds.
+Dependencies only ever point **down**. `Sources` knows nothing about data
+products. A `transform()` function knows nothing about databases. That is why
+the business logic is testable in milliseconds.
+
+There is deliberately **no repository layer**. Each data product owns its query,
+in the same file. See [section 16](#16-why-there-is-no-repository-layer).
 
 ---
 
@@ -115,15 +119,11 @@ api/
 │   ├── db/
 │   │   ├── neo4j.py            driver lifecycle
 │   │   ├── sql.py              engine + sessionmaker
-│   │   └── repositories.py     Repositories container (per request)
-│   │
-│   ├── repositories/           port (Protocol) + adapter, per business area
-│   │   ├── materials.py
-│   │   └── deliveries.py
+│   │   └── sources.py          sources.neo4j() / .postgres()  (per request)
 │   │
 │   ├── products/               the data product framework
 │   │   ├── base.py             DataProduct, envelope, meta, params
-│   │   ├── registry.py         registry, @data_product, auto-discovery
+│   │   ├── registry.py         registry + auto-discovery
 │   │   ├── router.py           builds typed routes from the registry
 │   │   ├── cache.py            TTL cache + ETag
 │   │   └── catalog/            ← YOUR NEW PRODUCT GOES HERE
@@ -143,16 +143,16 @@ api/
 
 ## 4. The four rules
 
-**1. Dependencies point down.** `repositories/` must not import from `products/`
-or `api/`. `products/` must not import FastAPI. If you need something from a
-layer above, you are solving the problem in the wrong place.
+**1. Dependencies point down.** `db/` must not import from `products/` or
+`api/`. `products/` must not import FastAPI. If you need something from a layer
+above, you are solving the problem in the wrong place.
 
 **2. Never raise `HTTPException` outside `api/` and `products/router.py`.**
 Business code raises an `AppError` subclass (`core/errors.py`). Those know
 nothing about HTTP and are testable without a web server. The translation to
 status codes happens in one place.
 
-**3. Keep `transform()` pure.** No I/O, no `Repositories`, no `Request`. It takes
+**3. Keep `transform()` pure.** No I/O, no `Sources`, no `Request`. It takes
 rows and params, returns rows. This is where the bugs live, so it must be
 testable in milliseconds.
 
@@ -207,12 +207,19 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from data_api.db.repositories import Repositories
-from data_api.products.base import ProductParams
-from data_api.products.registry import data_product
+from data_api.db.sources import Sources
+from data_api.products.base import DataProduct, ProductParams
+from data_api.products.registry import registry
 
 
-# 1. THE CONTRACT ─ what consumers may rely on.
+# 1. THE QUERY ─ lives with the product that owns it.
+CYPHER = """
+MATCH (m:Material)-[:LOCATED_IN]->(w:Werk)
+RETURN w.id AS werk_id, w.name AS werk_name, m.bestand AS bestand
+"""
+
+
+# 2. THE CONTRACT ─ what consumers may rely on.
 class WerkRow(BaseModel):
     werk_id: str
     werk_name: str | None = None
@@ -220,12 +227,12 @@ class WerkRow(BaseModel):
     bestand_gesamt: int
 
 
-# 2. THE FILTERS ─ everything a caller may pass as a query parameter.
+# 3. THE FILTERS ─ everything a caller may pass as a query parameter.
 class WerkParams(ProductParams):
     min_materialien: int = Field(0, ge=0)
 
 
-# 3. THE BUSINESS LOGIC ─ pure. No database, no FastAPI. Test this.
+# 4. THE BUSINESS LOGIC ─ pure. No database, no FastAPI. Test this.
 def transform(rows: list[dict[str, Any]], params: WerkParams) -> list[dict[str, Any]]:
     per_werk: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -238,22 +245,29 @@ def transform(rows: list[dict[str, Any]], params: WerkParams) -> list[dict[str, 
     return [w for w in per_werk.values() if w["materialien"] >= params.min_materialien]
 
 
-# 4. THE WIRING ─ fetch raw rows, call transform. Keep this boring.
-@data_product(
+# 5. THE WIRING ─ keep this boring.
+async def load(sources: Sources, params: WerkParams) -> list[dict[str, Any]]:
+    """Aggregated key figures per plant."""
+    return transform(await sources.neo4j(CYPHER), params)
+
+
+# 6. PUBLISH ─ this is what makes the route appear.
+registry.add(DataProduct(
     name="werk-auslastung",
     version="1.0",
     summary="Materials and stock per plant",
     item_model=WerkRow,
     params_model=WerkParams,
+    loader=load,
     owner="team-material-management",
     tags=("werk", "aggregat"),
     cache_ttl=120,
-)
-async def load(repos: Repositories, params: WerkParams) -> list[dict[str, Any]]:
-    """Aggregated key figures per plant."""
-    repo = await repos.materials()
-    return transform(await repo.fetch_materials(), params)
+))
 ```
+
+Then add the query to `tests/fakes.py` so `FakeSources` knows how to answer it —
+the fake matches on the query constant, so there are no copied strings that can
+drift.
 
 After a restart you automatically get:
 
@@ -286,7 +300,7 @@ changes the underlying data.
 Filter as early as possible. Ideally the parameters end up in the Cypher/SQL
 `WHERE` clause rather than in Python after loading two million rows. The current
 products filter after loading because the datasets are small; moving that into
-the query is a change local to one repository method plus one `transform()`.
+the query is a change local to that one product file.
 
 ---
 
@@ -310,8 +324,8 @@ Procedure:
 2. Mark the old one deprecated and give it a sunset date:
 
    ```python
-   @data_product(name="...", version="2.4", ..., deprecated=True,
-                 sunset=date(2027, 6, 30))
+   registry.add(DataProduct(name="...", version="2.4", ..., deprecated=True,
+                            sunset=date(2027, 6, 30)))
    ```
 
    This automatically emits `Deprecation: true` and `Sunset: …` response headers,
@@ -329,29 +343,8 @@ only one dashboard uses it" is the standard way versioning fails.
 
 Say we add a REST service for quality data.
 
-**Step 1 — port and adapter** in `repositories/quality.py`:
-
-```python
-@runtime_checkable
-class QualityRepository(Protocol):
-    source: str
-    async def fetch_defect_rates(self, seit: dt.date) -> list[dict[str, Any]]: ...
-
-
-class HttpQualityRepository:
-    source = "quality-service"
-
-    def __init__(self, client: httpx.AsyncClient) -> None:
-        self._client = client
-
-    async def fetch_defect_rates(self, seit: dt.date) -> list[dict[str, Any]]:
-        response = await self._client.get("/defect-rates", params={"since": seit.isoformat()})
-        response.raise_for_status()
-        return response.json()["items"]
-```
-
-**Step 2 — lifecycle** in `application.py`, if it needs a long-lived connection
-pool. Long-lived objects belong in the lifespan, never in a module global:
+**Step 1 — lifecycle** in `application.py`. Long-lived objects belong in the
+lifespan, never in a module global:
 
 ```python
 app.state.quality_client = httpx.AsyncClient(base_url=settings.quality_url)
@@ -359,17 +352,25 @@ app.state.quality_client = httpx.AsyncClient(base_url=settings.quality_url)
 await app.state.quality_client.aclose()
 ```
 
-**Step 3 — one method** on the `Repositories` container in `db/repositories.py`:
+**Step 2 — one method** on `Sources` in `db/sources.py`, next to `neo4j` and
+`postgres`:
 
 ```python
-async def quality(self) -> QualityRepository:
+async def quality(self, path: str, **parameter: Any) -> list[Row]:
+    """Fragt den Qualitaetsdienst ab."""
     if self._quality_client is None:
-        raise ConfigurationError("QUALITY_URL is not configured.")
-    self.sources_used.add(HttpQualityRepository.source)
-    return HttpQualityRepository(self._quality_client)
+        raise ConfigurationError("QUALITY_URL ist nicht konfiguriert.")
+    self.used.add("quality-service")
+    response = await self._quality_client.get(path, params=parameter)
+    response.raise_for_status()
+    return response.json()["items"]
 ```
 
-**Step 4 — use it.** `await repos.quality()` in any product loader.
+**Step 3 — use it.** `await sources.quality("/defect-rates", since=...)` in any
+product loader.
+
+**Step 4 — teach the test fake.** Add a branch to `FakeSources` in
+`tests/fakes.py` so tests can answer the new source.
 
 The architecture diagram picks the new source up automatically: it reads the
 `return` statements of the container methods and the `source` attribute of the
@@ -425,14 +426,16 @@ Everything runs without a database. Two mechanisms make that work:
 **App factory.** `create_app(settings)` returns a fresh app with explicit
 configuration — no environment variables, no monkeypatching.
 
-**`dependency_overrides`.** `conftest.py` swaps `get_repositories` for
-`FakeRepositories`. Only the bottom layer is replaced; route, validation, loader,
-transformation, envelope, cache and headers all run for real.
+**`dependency_overrides`.** `conftest.py` swaps `get_sources` for `FakeSources`.
+Only the bottom layer is replaced; route, validation, loader, transformation,
+envelope, cache and headers all run for real. `FakeSources` maps each query
+constant to canned rows — it imports the constants from the catalog modules, so
+there are no copied query strings that can drift.
 
 ```python
-def test_something(client):                 # app + fake repositories, ready to go
+def test_something(client):                 # app + FakeSources, ready to go
     body = client.get("/api/v1/data-products/werk-auslastung/v1").json()
-    assert body["meta"]["source"] == "fake"
+    assert body["meta"]["source"] == "neo4j"
 ```
 
 Use `client_ohne_datenquellen` when you want the app **without** the override —
@@ -524,8 +527,7 @@ The diagrams are derived, never maintained by hand:
 |---|---|
 | routes, methods, deprecation | `app.openapi()` |
 | version, owner, cache, contract fields | the registry |
-| product → repository | AST of the loader (`repos.X()` calls) |
-| repository → data source | AST of the `Repositories` container + adapter `source` |
+| product → data source | AST of the loader (`sources.X()` calls) |
 
 `test_dokumentation_ist_aktuell` fails the build if you change the architecture
 without regenerating. Run `architecture-docs` and commit the result.
@@ -550,7 +552,37 @@ For a pull request that adds or changes a data product:
 
 ---
 
-## 16. Pitfalls
+## 16. Why there is no repository layer
+
+An earlier draft had a `repositories/` package: `Protocol` ports, Neo4j/SQL
+adapters, one module per business domain. It was removed. Worth knowing why,
+because the reasoning generalises.
+
+| Assumption behind the layer | What is actually true here |
+|---|---|
+| Several products share a query | Almost never — each product answers its own question |
+| Queries can be grouped by business domain | The graph exists precisely to **unify** domains; products are cross-domain. Splitting by domain works against the data model |
+| Several implementations justify a `Protocol` | There was exactly one. The `Protocol` described an adapter that did not exist |
+
+This is *speculative generality*: an abstraction built for a case that never
+arrives. You pay for it immediately (more files, more concepts, harder to read)
+and the benefit never materialises.
+
+> **Rule of thumb:** introduce an abstraction when the second case actually
+> exists — not when you think it might. Extracting it later takes half an hour.
+> Living with an unnecessary layer for a year costs far more.
+
+**If two products do end up sharing a query**, put it in a shared module and
+import it from both, or add `products/queries.py`. Fifteen minutes, when the
+time comes.
+
+**What did survive** is `Sources` — it owns opening, sharing and closing
+connections, which is the part every product would otherwise have to get right
+on its own.
+
+---
+
+## 17. Pitfalls
 
 **Blocking calls inside `async def`.** The synchronous Neo4j driver, `requests`,
 `time.sleep` — any of these blocks the whole event loop, so *every* concurrent

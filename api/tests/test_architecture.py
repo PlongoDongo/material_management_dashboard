@@ -15,8 +15,7 @@ from data_api.architecture import (
     diagram_contracts,
     diagram_dataflow,
     diagram_versions,
-    repositories_used_by,
-    repository_sources,
+    sources_used_by,
 )
 from data_api.application import create_app
 from data_api.core.config import Settings
@@ -24,16 +23,10 @@ from data_api.products.catalog.material_overview_v2 import load as load_material
 from data_api.products.catalog.supplier_risk_v1 import load as load_risk
 
 
-def test_ast_erkennt_die_genutzten_repositories():
+def test_ast_erkennt_die_genutzten_quellen():
     """Die Kernidee: welche Quelle ein Produkt nutzt, wird gelesen, nicht gepflegt."""
-    assert repositories_used_by(load_material) == ["materials"]
-    assert repositories_used_by(load_risk) == ["deliveries", "materials"]
-
-
-def test_ast_erkennt_die_adapter_je_repository():
-    quellen = repository_sources()
-    assert quellen["materials"] == ["neo4j"]
-    assert quellen["deliveries"] == ["postgres"]
+    assert sources_used_by(load_material) == ["neo4j"]
+    assert sources_used_by(load_risk) == ["neo4j", "postgres"]
 
 
 def test_collect_findet_generierte_routen(settings: Settings):
@@ -64,8 +57,9 @@ def test_routen_werden_ihrem_datenprodukt_zugeordnet(settings: Settings):
 def test_produkte_kennen_ihre_quellen(settings: Settings):
     arch = collect(create_app(settings))
     risiko = next(p for p in arch.products if p.product.name == "supplier-risk")
-    assert risiko.repositories == ["deliveries", "materials"]
-    assert set(risiko.sources) == {"neo4j", "postgres"}
+    assert risiko.sources == ["neo4j", "postgres"]
+    material = next(p for p in arch.products if p.product.major == 2)
+    assert material.sources == ["neo4j"]      # kein Postgres -> keine Kante im Diagramm
 
 
 def test_diagramme_enthalten_die_erwarteten_knoten(settings: Settings):

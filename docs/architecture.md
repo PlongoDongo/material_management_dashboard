@@ -5,11 +5,12 @@
 > naechsten Lauf verloren. Das Konzept dahinter steht in
 > [`api_layer_concept.md`](api_layer_concept.md).
 
-Stand: 2026-08-20 · 3 Datenprodukte · 9 Routen
+3 Datenprodukte · 9 Routen
 
 ## Datenfluss
 
-Von der Route bis zur Datenquelle. ⚠ markiert auslaufende Versionen.
+Von der Route über das Datenprodukt bis zur Datenquelle.
+⚠ markiert auslaufende Versionen.
 
 ```mermaid
 flowchart LR
@@ -35,12 +36,7 @@ flowchart LR
     p_supplier_risk_1["supplier-risk<br/>v1 · 1.0"]
   end
 
-  subgraph repos["Repositories (Ports)"]
-    repo_deliveries["deliveries"]
-    repo_materials["materials"]
-  end
-
-  subgraph sources["Datenquellen (Adapter)"]
+  subgraph sources["Datenquellen"]
     src_neo4j[("neo4j")]
     src_postgres[("postgres")]
   end
@@ -49,12 +45,10 @@ flowchart LR
   r__api_v1_data_products_material_overview_v1 --> p_material_overview_1
   r__api_v1_data_products_material_overview_v2 --> p_material_overview_2
   r__api_v1_data_products_supplier_risk_v1 --> p_supplier_risk_1
-  p_material_overview_1 --> repo_materials
-  p_material_overview_2 --> repo_materials
-  p_supplier_risk_1 --> repo_deliveries
-  p_supplier_risk_1 --> repo_materials
-  repo_deliveries --> src_postgres
-  repo_materials --> src_neo4j
+  p_material_overview_1 --> src_neo4j
+  p_material_overview_2 --> src_neo4j
+  p_supplier_risk_1 --> src_neo4j
+  p_supplier_risk_1 --> src_postgres
 
   classDef deprecated stroke-dasharray: 4 3;
   class p_material_overview_1 deprecated;
@@ -144,7 +138,7 @@ classDiagram
 Materialstammdaten fuer die Uebersichtstabelle
 
 * **Owner:** team-material-management
-* **Quelle:** neo4j (ueber materials)
+* **Quellen:** neo4j
 * **Cache:** 60s
 * **Filter:** `limit`, `offset`, `status`, `werk`, `warengruppe`, `ohne_klassifizierung`, `suche`
 * **Modul:** `data_api/products/catalog/material_overview_v1.py`
@@ -154,7 +148,7 @@ Materialstammdaten fuer die Uebersichtstabelle
 Materialstammdaten inkl. Bestandswert
 
 * **Owner:** team-material-management
-* **Quelle:** neo4j (ueber materials)
+* **Quellen:** neo4j
 * **Cache:** 60s
 * **Filter:** `limit`, `offset`, `status`, `werk_id`, `warengruppe`, `ohne_klassifizierung`, `suche`, `min_bestandswert`
 * **Modul:** `data_api/products/catalog/material_overview_v2.py`
@@ -164,7 +158,7 @@ Materialstammdaten inkl. Bestandswert
 Lieferantenrisiko aus Stammdaten (Neo4j) und Liefertreue (Postgres)
 
 * **Owner:** team-supply-chain
-* **Quelle:** neo4j + postgres (ueber deliveries, materials)
+* **Quellen:** neo4j + postgres
 * **Cache:** 300s
 * **Filter:** `limit`, `offset`, `seit`, `toleranz_tage`, `min_lieferungen`, `risiko_klasse`
 * **Modul:** `data_api/products/catalog/supplier_risk_v1.py`

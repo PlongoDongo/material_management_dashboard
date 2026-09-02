@@ -8,7 +8,7 @@ Zwei Techniken tragen die gesamte Testsuite:
    Monkeypatching. Der Test kontrolliert die Konfiguration direkt.
 
 2. **`dependency_overrides`.** FastAPIs eingebauter Mechanismus, um eine
-   Dependency zu ersetzen. Wir tauschen `get_repositories` gegen einen Fake aus
+   Dependency zu ersetzen. Wir tauschen `get_sources` gegen einen Fake aus
    (tests/fakes.py). Damit laeuft die KOMPLETTE Kette -- Route, Validierung,
    Produkt-Loader, Transformation, Umschlag, Cache, Header -- ohne dass eine
    Datenbank existieren muss. Ersetzt wird nur die unterste Schicht.
@@ -18,11 +18,11 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from data_api.api.deps import get_repositories
+from data_api.api.deps import get_sources
 from data_api.application import create_app
 from data_api.core.config import Settings
 from data_api.products.cache import cache
-from tests.fakes import FakeRepositories
+from tests.fakes import FakeSources
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def app(settings: Settings):
     """App mit echter Verdrahtung, aber ohne Datenbank."""
     cache.invalidate()           # Testisolation: kein Cache-Uebersprung
     application = create_app(settings)
-    application.dependency_overrides[get_repositories] = FakeRepositories
+    application.dependency_overrides[get_sources] = FakeSources
     return application
 
 

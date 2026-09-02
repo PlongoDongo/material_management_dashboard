@@ -23,12 +23,9 @@ Details/Alternativen (inkl. Plotly Pages) stehen im README.md.
 """
 from __future__ import annotations
 
-import os
-
 from dash import Dash, dcc, html
 
 from config import IDS, APP_TITLE
-from data.neo4j import make_driver
 from components.header_layout import header_layout
 from components.nav_sidebar import nav_sidebar
 from components.filter_sidebar import filter_sidebar
@@ -55,14 +52,11 @@ app = Dash(__name__, title=APP_TITLE, suppress_callback_exceptions=True,
            external_stylesheets=[MATERIAL_ICONS])
 server = app.server  # für Gunicorn / Deployment
 
-# Ein Neo4j-Treiber pro Prozess, an Flasks Standardstelle. Jeder Callback
-# erreicht ihn über flask.current_app (siehe data/repository.py) -- ohne app.py
-# zu importieren (kein Zirkelimport). Beim Import angelegt, daher auch unter
-# gunicorn (app:server) verfügbar; atexit schließt ihn (data/neo4j.py).
-# Ohne NEO4J_URI bleibt der Eintrag None und die App läuft mit Mock-Daten.
-server.extensions["neo4j_driver"] = make_driver(os.getenv("NEO4J_URI"),
-                                                os.getenv("NEO4J_AUTH"))
-server.config["NEO4J_DB"] = os.getenv("NEO4J_DB", "neo4j")
+# Kein Datenbank-Treiber mehr: Das Dashboard spricht ausschließlich über HTTP
+# mit dem API-Layer (data/repository.py -> data/api_client.py). Damit liegen
+# weder Zugangsdaten noch Cypher in dieser Anwendung.
+# Konfiguration: DATA_API_URL (Standard http://localhost:8000), optional
+# DATA_API_KEY und DATA_CACHE_TTL.
 
 
 def serve_layout() -> html.Div:
@@ -111,6 +105,4 @@ register_column_callbacks(app)   # Spaltenauswahl-Popover (clientseitig)
 
 
 if __name__ == "__main__":
-    # Der Treiber ist bereits oben angelegt (server.extensions) und wird per
-    # atexit geschlossen -- daher kein with-Block mehr nötig.
     app.run(debug=True, host="0.0.0.0", port=8050)

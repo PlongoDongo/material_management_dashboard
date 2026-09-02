@@ -1,21 +1,34 @@
 """
-Client fuer die Dash-Apps -- Vorlage zum Kopieren.
+HTTP-Client fuer den API-Layer.
 
-Diese Datei wird in jedes Dashboard kopiert (z. B. nach `data/api_client.py`),
-nicht importiert: `api/` haengt an FastAPI, dem Neo4j-Treiber und SQLAlchemy --
-nichts davon soll ins Dashboard, das nur `httpx` braucht.
+Das Dashboard spricht nicht mehr selbst mit Neo4j, sondern fragt den API-Layer
+nach fertigen "Datenprodukten". Dieses Modul ist die eine Stelle, die HTTP
+kennt -- alles andere im Dashboard sieht weiterhin nur einen DataFrame.
 
-Benutzung:
+    frueher:  Dashboard --Bolt/Cypher--> Neo4j
+    jetzt:    Dashboard --HTTP/JSON----> API-Layer --> Neo4j / Postgres
+
+Benutzung (siehe data/repository.py):
 
     client = DataProductClient()                       # einmal pro Prozess
     rows, meta = client.fetch("material-overview", "v2", limit=50_000)
 
-`rows` ist eine Liste von dicts, `meta` sind die Metadaten der Antwort
-(Version, Zeitstempel, Quelle, Zeilenzahl).
+HERKUNFT
+========
+Kopie von `api/src/data_api/clients/dash_client.py`. Diese Datei ist die
+Vorlage; aendert sie sich dort, wird sie hier nachgezogen.
 
-Warum synchron und nicht async? Dash-Callbacks sind normale, synchrone
-Funktionen. Ein `asyncio.run()` darin waere ein Fehler mit Ansage. Dass der
-Server intern async arbeitet, ist seine Sache und hier unsichtbar.
+Warum kopiert und nicht importiert? Weil `api/` ein eigenes Projekt mit eigener
+virtueller Umgebung ist -- es haengt an FastAPI, dem Neo4j-Treiber und
+SQLAlchemy. Nichts davon soll ins Dashboard, das nur `httpx` braucht. Sobald das
+dritte Dashboard diesen Client benutzt, lohnt sich ein kleines gemeinsames
+Paket; bei zweien ist Kopieren billiger als die Paketverwaltung.
+
+WARUM SYNCHRON?
+===============
+Dash-Callbacks sind normale, synchrone Funktionen. Ein `asyncio.run()` darin
+waere ein Fehler mit Ansage. Der API-Server ist intern async -- das ist seine
+Sache und fuer den Client unsichtbar.
 """
 from __future__ import annotations
 
@@ -114,16 +127,3 @@ def _fehlertext(antwort: httpx.Response) -> str:
         return f"{antwort.status_code} {antwort.text[:200]}"
 
 
-# --- Umgesetztes Beispiel ---------------------------------------------------
-#
-# Das Material-Management-Dashboard benutzt diesen Client bereits:
-#
-#   frontend/material_management_dashboard/data/api_client.py   (Kopie)
-#   frontend/material_management_dashboard/data/repository.py   (Anwendung)
-#   frontend/material_management_dashboard/tests/test_repository.py
-#       -> zeigt, wie man ihn mit httpx.MockTransport ohne Server testet
-#
-# Moegliche Erweiterung: Die API schickt zu jeder Antwort ein ETag. Wer beim
-# Abholen `If-None-Match` mitschickt, bekommt bei unveraenderten Daten ein
-# leeres "304 Not Modified" zurueck und spart die Uebertragung. Bewusst nicht
-# eingebaut -- es kostet Lesbarkeit und lohnt erst bei haeufigem Polling.

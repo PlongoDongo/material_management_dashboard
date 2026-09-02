@@ -1,15 +1,24 @@
 # Material Management Dashboard (Plotly Dash)
 
-Lauffähiges Gerüst für das neue Dashboard, aufgebaut nach dem Claude-Design-Mockup.
-Enthält die vollständige Filter- und Tab-Mechanik mit synthetischen Polars-Mock-Daten.
-Der Neo4j-Anschluss ist auf **eine** Datei isoliert (`data/repository.py`).
+Dashboard für Materialstammdaten, aufgebaut nach dem Design-Mockup.
+Vollständige Filter- und Tab-Mechanik auf Polars-DataFrames.
+
+Die Daten kommen über den **API-Layer** (`api/` im Repo-Wurzelverzeichnis), nicht
+aus einer Datenbank -- siehe [Datenanbindung](#datenanbindung-der-api-layer).
+Der Anschluss ist auf **eine** Datei isoliert: `data/repository.py`.
 
 ## Schnellstart
 
+Der API-Layer muss laufen (siehe [`../../api/README.md`](../../api/README.md)):
+
 ```bash
 pip install -r requirements.txt
+export DATA_API_URL=http://localhost:8000
 python app.py            # -> http://127.0.0.1:8050
-pytest -q                # Filter- und KPI-Logik
+```
+
+```bash
+pytest -q                # Filter-, KPI- und API-Anbindungstests (ohne Server)
 ```
 
 ## Projektstruktur
@@ -32,7 +41,9 @@ material_management_dashboard/
 │   └── apply_mappings.py      #   Tab 3: Platzhalter
 │
 ├── data/
-│   ├── repository.py          # Datenzugriff: Mock-Polars-DF  <-- NEO4J-EINSTIEGSPUNKT
+│   ├── api_client.py          # HTTP-Client für den API-Layer (Kopie der Vorlage)
+│   ├── repository.py          # Datenzugriff  <-- DIE GRENZE ZUR API
+│   ├── schema.py              # Spalten der Tabelle (eine Wahrheit)
 │   └── filtering.py           # apply_filters(df, filter_dict) -> df  (rein, testbar)
 │
 ├── kpi/
@@ -161,33 +172,80 @@ Store → Steuerelement und damit **keinen Callback-Zyklus**.
    fliegen erst zur Laufzeit auf. → **Gegenmittel:** Alle IDs zentral in
    `config.py::IDS` – Layout und Callbacks nutzen dieselben Konstanten.
 
-6. **Performance bei großen Neo4j-Ergebnissen.** Der `DataTable` mit
-   `page_size` rendert clientseitig paginiert. Bei sehr großen Datenmengen:
-   `page_action="custom"` + serverseitiges Paging, oder Aggregation bereits in
-   Cypher. Die Filterung liegt in Polars (schnell); der Datenabruf ist gecacht
-   (`get_materials()`), damit nicht jeder Callback Neo4j erneut anfragt.
+6. **Performance bei großen Datenmengen.** Aktuell holt das Dashboard die volle
+   Tabelle und filtert lokal in Polars (schnell), der Abruf ist gecacht
+   (`get_materials()`), damit nicht jeder Callback die API anfragt.
+   Wächst der Datenbestand, gibt es zwei Hebel -- in dieser Reihenfolge:
+   (a) **Filter serverseitig** mitschicken, das Datenprodukt kennt die Parameter
+   bereits (`?status=Gesperrt&werk_id=W-KOE`); (b) `page_action="custom"` plus
+   `limit`/`offset` der API für echtes serverseitiges Paging (`meta.total_count`
+   liefert die Gesamtzahl).
 
 7. **Overlay blockiert Klicks bei offener Sidebar** – das ist gewollt (Modal-
    Verhalten). Klick aufs Overlay oder das ×-Icon schließt die Sidebar.
 
 ---
 
-## Neo4j einstecken
+## Datenanbindung: der API-Layer
 
-Der Treiber wird in `app.py` einmal pro Prozess erzeugt und an Flasks
-Standardstelle abgelegt (`server.extensions["neo4j_driver"]`, via
-`data/neo4j.py::make_driver`). `data/repository.py` holt ihn über
-`flask.current_app`, öffnet pro Abfrage eine Session und ruft den reinen Kern
-`_materials_from_session(session)` -- letzterer ist per Dependency Injection
-ohne echten Server testbar. Ohne `NEO4J_URI` bleibt der Eintrag `None` und die
-App läuft mit Mock-Daten (auch außerhalb eines Flask-Kontexts, z. B. in Tests).
+Das Dashboard hat **keinen** Datenbankzugriff mehr. Es fragt den API-Layer nach
+dem Datenprodukt `material-overview` in Version `v2`:
 
-Nötige Umgebungsvariablen: `NEO4J_URI`, `NEO4J_AUTH` (`user/passwort`,
-`user:passwort` oder Tupel), optional `NEO4J_DB` (Default `neo4j`).
+```
+Dashboard --HTTP/JSON--> API-Layer --Cypher--> Neo4j
+```
 
-**Spalten** ändern? Ausschließlich in `data/schema.py` (`MATERIAL_COLUMNS`) --
-`COLUMNS`, `COLUMN_LABELS`, Breiten, fixierte/numerische Spalten werden daraus
-abgeleitet.
+Damit liegen weder Zugangsdaten noch Cypher noch die Definition von
+"Bestandswert" in dieser Anwendung.
+
+### Die drei beteiligten Dateien
+
+| Datei | Aufgabe |
+|---|---|
+| `data/api_client.py` | Kennt HTTP. Kopie von `api/src/data_api/clients/dash_client.py` -- bei Änderungen dort nachziehen. |
+| `data/repository.py` | **Die Grenze.** Ruft den Client, bildet API-Felder auf Tabellenspalten ab, cached, fängt Ausfälle ab. Der Rest der App ruft nur `get_materials()`. |
+| `data/schema.py` | Was die Tabelle zeigt (Spalten, Labels, Breiten). |
+
+Der Rest des Dashboards -- Filter, KPIs, Tabelle, Callbacks -- wurde beim
+Umstieg **nicht angefasst**, weil er ohnehin nur `get_materials()` kennt. Genau
+dafür war die Datenschicht von Anfang an isoliert.
+
+### Zwei Namensräume
+
+Die API liefert `werk_id` und `werk_name`; die Tabelle hat historisch eine
+Spalte `werk`. Übersetzt wird an genau einer sichtbaren Stelle:
+`data/repository.py::_API_TO_UI`. Felder der API, die das Dashboard nicht
+braucht (`werk_id`, `preis`), stehen dort nicht -- **ein neues Feld in der API
+kann das Dashboard deshalb nie brechen.**
+
+### Version fest verdrahtet
+
+`PRODUCT` und `VERSION` stehen als Konstanten in `data/repository.py`. Bewusst
+nicht `latest`: Ein Versionswechsel soll im Git-Diff auftauchen und getestet
+werden, nicht still passieren, weil die API ein neues Major ausgerollt hat.
+
+Wechselt ihr auf `v3`, ändert ihr diese eine Konstante, prüft `_API_TO_UI` gegen
+den neuen Vertrag (`GET /api/v1/catalog/material-overview` listet die Felder)
+und lasst die Tests laufen.
+
+### Konfiguration
+
+```bash
+cp .env.example .env
+export DATA_API_URL=http://localhost:8000
+python app.py
+```
+
+Ohne laufende API wirft das Dashboard beim ersten Laden einen
+`DataProductError`. Fällt die API später aus, wird der letzte bekannte Stand
+weitergeliefert und eine Warnung geloggt -- ein Dashboard mit kurz veralteten
+Zahlen ist besser als ein leeres.
+
+### Tests ohne API
+
+`tests/test_repository.py` prüft die komplette Kette mit `httpx.MockTransport`:
+kein Server, kein Netzwerk, keine Datenbank. Derselbe Gedanke wie im
+API-Projekt -- nur die äußerste Schicht wird ersetzt, alles darüber läuft echt.
 
 ## Header wiederverwenden
 

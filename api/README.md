@@ -72,8 +72,7 @@ Sessions genau einen Request (Depends). Nie umgekehrt.
 |---|---|
 | `src/data_api/products/catalog/` | **Hier kommen neue Datenprodukte rein** — eine Datei pro Produkt und Major-Version |
 | `src/data_api/products/` | Das Framework: Registry, Routen-Generator, Cache, Basismodelle |
-| `src/data_api/repositories/` | Datenzugriff je Fachlichkeit: Port (Protocol) + Neo4j-/SQL-Adapter |
-| `src/data_api/db/` | Treiber-/Engine-Lebenszyklus, `Repositories`-Container pro Request |
+| `src/data_api/db/` | Treiber-/Engine-Lebenszyklus und `Sources` (`sources.neo4j(...)`) pro Request |
 | `src/data_api/api/v1/` | Handgeschriebene Router (Health, Katalog, Schreibseite) |
 | `src/data_api/core/` | Settings, Logging, Fehlerformat, Auth |
 | `src/data_api/clients/` | Client-Vorlage für die Dash-Apps |
@@ -115,15 +114,17 @@ Antwortformat aller Datenprodukte:
 Eine Datei in `src/data_api/products/catalog/`, sonst nichts:
 
 ```python
-@data_product(
+CYPHER = """MATCH (m:Material)-[:LOCATED_IN]->(w:Werk) RETURN ..."""
+
+async def load(sources: Sources, params: WerkParams):
+    return transform(await sources.neo4j(CYPHER), params)
+
+registry.add(DataProduct(
     name="werk-auslastung", version="1.0",
     summary="Materialien und Bestand je Werk",
-    item_model=WerkRow, params_model=WerkParams,
+    item_model=WerkRow, params_model=WerkParams, loader=load,
     owner="team-material-management", cache_ttl=120,
-)
-async def load(repos: Repositories, params: WerkParams):
-    repo = await repos.materials()
-    return transform(await repo.fetch_materials(), params)
+))
 ```
 
 Nach dem Neustart existieren automatisch: Route, `/latest`-Alias,
@@ -132,13 +133,16 @@ Fehlerformat und Auth-Prüfung. Kein Router wird angefasst.
 
 Konvention pro Datei — immer in dieser Reihenfolge:
 
-1. **Row-Modell** → der Vertrag
-2. **Params-Modell** → die erlaubten Filter
-3. **`transform()`** → reine Funktion, ohne I/O — hier liegt die Fachlichkeit
-4. **`load()`** → holt Rohdaten aus den Repositories, ruft `transform()`
+1. **`CYPHER` / `SQL`** → die Abfrage
+2. **Row-Modell** → der Vertrag
+3. **Params-Modell** → die erlaubten Filter
+4. **`transform()`** → reine Funktion, ohne I/O — hier liegt die Fachlichkeit
+5. **`load()`** → holt die Rohzeilen, ruft `transform()`
+6. **`registry.add(...)`** → veröffentlicht das Produkt
 
-Die Trennung von 3 und 4 ist der Grund, warum die Fachlogik ohne Datenbank
-testbar ist (`tests/test_transformations.py`).
+Die Trennung von 4 und 5 ist der Grund, warum die Fachlogik ohne Datenbank
+testbar ist (`tests/test_transformations.py`). Eine Datei = ein Datenprodukt =
+alles darüber; es gibt bewusst keine eigene Repository-Schicht.
 
 ---
 
@@ -153,7 +157,7 @@ gepflegt:
 ```
 
 Ergebnis: [`../docs/architecture.md`](../docs/architecture.md) mit drei
-Mermaid-Diagrammen (Datenfluss Route → Produkt → Repository → Quelle,
+Mermaid-Diagrammen (Datenfluss Route → Produkt → Quelle,
 Versionsstände, Vertragsschemata), Routeninventar und Steckbrief je Produkt.
 
 Die Verbindungen werden abgeleitet, nicht gepflegt:
@@ -162,8 +166,7 @@ Die Verbindungen werden abgeleitet, nicht gepflegt:
 |---|---|
 | Routen, Methoden, Deprecation | `app.openapi()` |
 | Version, Owner, Cache, Vertragsfelder | die Registry |
-| Produkt → Repository | AST des Loaders (`repos.X()`-Aufrufe) |
-| Repository → Datenquelle | AST des `Repositories`-Containers + `source`-Attribut der Adapter |
+| Produkt → Datenquelle | AST des Loaders (`sources.X()`-Aufrufe) |
 
 `tests/test_architecture.py::test_dokumentation_ist_aktuell` sorgt dafür, dass
 niemand ein Produkt anlegt und das Diagramm veralten lässt.
@@ -224,7 +227,7 @@ tests/fakes.py                  Test-Doubles (kein Test, sondern Werkzeug)
 ```
 
 Alle laufen ohne Datenbank und ohne Docker: `conftest.py` hängt über
-`app.dependency_overrides[get_repositories]` einen Fake ein. Ersetzt wird nur
+`app.dependency_overrides[get_sources]` einen Fake ein. Ersetzt wird nur
 die unterste Schicht — alles darüber läuft unverändert.
 
 ## Mock-Daten für fehlende Quellen

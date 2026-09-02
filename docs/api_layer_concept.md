@@ -82,7 +82,7 @@ Konsequenzen dieser Definition:
 * **Das Schema ist der Vertrag, nicht die Query.** Wenn sich das Graphmodell
   ändert, aber die gelieferten Felder gleich bleiben, merkt kein Dashboard etwas.
 * **Jedes Produkt hat einen Owner.** Bei „warum ist die Zahl so?" gibt es eine
-  zuständige Person, nicht eine Suche durch fünf Repositories.
+  zuständige Person, nicht eine Suche durch fünf Code-Repositories.
 * **Ein Produkt ist auffindbar.** Der Katalog (`/api/v1/catalog`) wird aus
   derselben Registry erzeugt wie die Routen und kann deshalb nicht veralten.
 
@@ -103,15 +103,17 @@ Konsequenzen dieser Definition:
           │  geparste, validierte Parameter
     ┌─────▼──────────────────────────────────────────────┐
     │ Produkt-Schicht     products/catalog/*.py           │  Fachlichkeit:
-    │   loader()   ── orchestriert                        │  welche Quellen,
-    │   transform() ── REIN, ohne I/O  ← hier liegt der   │  welche Formel
+    │   CYPHER / SQL ── die Abfrage                       │  welche Frage,
+    │   transform()  ── REIN, ohne I/O ← hier liegt der   │  welche Formel
     │                                    Wert und die     │
     │                                    Testabdeckung    │
+    │   load()       ── verdrahtet beides                 │
     └─────┬──────────────────────────────────────────────┘
-          │  „gib mir die Rohzeilen"
+          │  await sources.neo4j(CYPHER)
     ┌─────▼──────────────────────────────────────────────┐
-    │ Repository-Schicht  repositories/*.py               │  Datenzugriff:
-    │   Port (Protocol) + Adapter (Neo4j / SQL)            │  Cypher, SQL
+    │ Sources             db/sources.py                   │  Verbindungen:
+    │   sources.neo4j(...) / sources.postgres(...)        │  öffnen, teilen,
+    │                                                     │  schließen
     └─────┬──────────────────────────────────────────────┘
           │  Session
     ┌─────▼──────────────────────────────────────────────┐
@@ -121,9 +123,13 @@ Konsequenzen dieser Definition:
 ```
 
 **Die eine Regel, die alles zusammenhält:** Abhängigkeiten zeigen nur nach unten.
-Ein Repository weiß nichts von FastAPI. Eine `transform()`-Funktion weiß nichts
-von Datenbanken. Deshalb ist die Fachlichkeit in Millisekunden testbar — ohne
-Server, ohne Datenbank, ohne Docker.
+`db/sources.py` weiß nichts von Datenprodukten. Eine `transform()`-Funktion weiß
+nichts von Datenbanken. Deshalb ist die Fachlichkeit in Millisekunden testbar —
+ohne Server, ohne Datenbank, ohne Docker.
+
+Bewusst gibt es **keine** eigene Repository-Schicht. Die Abfrage steht in
+derselben Datei wie das Datenprodukt, zu dem sie gehört — Begründung in
+Abschnitt 6.
 
 ### Verzeichnisstruktur
 
@@ -148,15 +154,11 @@ api/
 │       ├── db/                     # Infrastruktur
 │       │   ├── neo4j.py            #   Treiber erzeugen/schließen
 │       │   ├── sql.py              #   Engine + Sessionmaker
-│       │   └── repositories.py     #   Repositories-Container (Request-Scope)
-│       │
-│       ├── repositories/           # Port + Adapter je Datenquelle
-│       │   ├── materials.py        #   Protocol + Neo4j-Adapter
-│       │   └── deliveries.py       #   Protocol + SQL-Adapter
+│       │   └── sources.py          #   sources.neo4j() / .postgres() (Request-Scope)
 │       │
 │       ├── products/               # das Datenprodukt-Framework
 │       │   ├── base.py             #   DataProduct, Envelope, Meta, Params
-│       │   ├── registry.py         #   Registry + @data_product + Auto-Discovery
+│       │   ├── registry.py         #   Registry + Auto-Discovery
 │       │   ├── router.py           #   erzeugt typisierte Routen aus der Registry
 │       │   ├── cache.py            #   TTL-Cache + ETag
 │       │   └── catalog/            #   ← HIER kommen neue Produkte rein
@@ -341,11 +343,11 @@ Für ein internes Analytics-Backend mit Dash-Clients ist der Pfad die richtige W
 Die Referenzimplementierung setzt das um:
 
 ```python
-@data_product(
+registry.add(DataProduct(
     name="material-overview", version="1.2", ...,
     deprecated=True,
     sunset=date(2026, 12, 31),
-)
+))
 ```
 
 Das erzeugt automatisch die Antwortheader nach RFC 8594:
@@ -409,9 +411,9 @@ async def lifespan(app: FastAPI):
 
 ```python
 # api/deps.py — Dependency: läuft einmal pro Request
-async def get_repositories(request, settings) -> AsyncIterator[Repositories]:
+async def get_sources(request, settings) -> AsyncIterator[Sources]:
     async with AsyncExitStack() as stack:
-        yield Repositories(stack=stack, ...)               # ← alles hierin wird
+        yield Sources(stack=stack, ...)                    # ← alles hierin wird
                                                            #   automatisch geschlossen
 ```
 
@@ -426,24 +428,41 @@ deprecated und kennt keinen gemeinsamen Zustand zwischen Hoch- und Abbauteil.
 Warum `app.state` und nicht Modul-Globals: Damit zwei Apps (etwa in Tests) nicht
 denselben Treiber teilen.
 
-### Der `Repositories`-Container
+### `Sources` — der Zugang zu den Datenquellen
 
-Ein Datenprodukt sieht nicht die Sessions, sondern einen Container
-([`db/repositories.py`](../api/src/data_api/db/repositories.py)):
+Ein Datenprodukt sieht nicht die Sessions, sondern ein Objekt mit zwei Methoden
+([`db/sources.py`](../api/src/data_api/db/sources.py)):
 
 ```python
-async def load(repos: Repositories, params):
-    materials = await repos.materials()      # Neo4j-Session öffnet sich hier, lazy
-    deliveries = await repos.deliveries()    # SQL-Session öffnet sich hier, lazy
+async def load(sources: Sources, params):
+    lieferanten = await sources.neo4j(CYPHER)             # Session öffnet sich hier
+    lieferungen = await sources.postgres(SQL, seit=...)   # und hier
     ...
 ```
 
-Er leistet vier Dinge:
+Es leistet drei Dinge:
 
 * **Lazy**: Ein Produkt, das nur Neo4j braucht, öffnet keine Postgres-Verbindung.
-* **Pro Request gecacht**: Zwei Repositories teilen sich eine Session.
+* **Pro Request geteilt**: Zwei Abfragen nutzen dieselbe Session.
 * **Automatisch geschlossen**: Der `AsyncExitStack` räumt auf — auch wenn der
   Endpunkt eine Exception wirft. Niemand schreibt jemals `session.close()`.
+
+### Warum es keine Repository-Schicht gibt
+
+Ein früherer Entwurf hatte ein Verzeichnis `repositories/`, nach Geschäftsdomänen
+unterteilt, mit `Protocol`-Klassen und Adaptern. Es ist wieder entfernt worden,
+weil zwei Annahmen dahinter für dieses Projekt nicht zutreffen:
+
+| Annahme | Realität |
+|---|---|
+| Mehrere Produkte teilen sich eine Abfrage | Fast nie — jedes Produkt beantwortet eine eigene Frage |
+| Abfragen lassen sich nach Domänen ordnen | Der Graph existiert gerade, um Domänen zu **vereinen**; Datenprodukte sind übergreifend. Eine Domänenaufteilung arbeitet gegen das Datenmodell |
+| Mehrere Umsetzungen je Port | Es gab nur eine — das `Protocol` beschrieb einen Adapter, den es nicht gab |
+
+Stattdessen steht die Abfrage in derselben Datei wie das Datenprodukt:
+**eine Datei = ein Datenprodukt = alles darüber.** Sollten sich später doch zwei
+Produkte eine Abfrage teilen, wandert sie in ein gemeinsames Modul — das ist eine
+Viertelstunde Arbeit, wenn es so weit ist.
 
 ### async oder sync?
 
@@ -505,9 +524,8 @@ umformen. Das Muster dafür ist in jedem Produkt gleich:
 def transform(rows, params) -> list[dict]:      # REIN: kein I/O, kein FastAPI
     ...                                          # ← hier liegt die Fachlichkeit
 
-async def load(repos, params):                   # orchestriert nur
-    repo = await repos.materials()
-    return transform(await repo.fetch_materials(), params)
+async def load(sources, params):                 # orchestriert nur
+    return transform(await sources.neo4j(CYPHER), params)
 ```
 
 Die Trennung ist nicht Kosmetik. Die Fachlogik ist der Teil, der Fehler enthält,
@@ -745,7 +763,7 @@ zeigen" ist der Haken schon gesetzt: ein Datenprodukt darf `required_groups`
 deklarieren, der generierte Endpunkt prüft sie:
 
 ```python
-@data_product(name="supplier-risk", ..., required_groups={"supply-chain"})
+DataProduct(name="supplier-risk", ..., required_groups=("supply-chain",))
 ```
 
 Der nächste Ausbauschritt (wenn ihr so weit seid) ist **zeilenweise Filterung**:
@@ -777,7 +795,7 @@ Umgebungsvariablen im Test.
 Dependency zu ersetzen:
 
 ```python
-app.dependency_overrides[get_repositories] = lambda: FakeRepositories()
+app.dependency_overrides[get_sources] = FakeSources
 ```
 
 > Beim Bauen ist genau hier ein echter Bug aufgefallen: `/readyz` las die
@@ -828,45 +846,64 @@ uvicorn data_api.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 ## 16. Anbindung der Dashboards
 
-Das Ziel: Im Dashboard verschwinden Cypher, Neo4j-Treiber und Zugangsdaten.
-`data/repository.py` behält seine Funktion `get_materials()` — der Rest des
-Dashboards (Filter, KPIs, Tabelle) bleibt unverändert, weil er ohnehin nur diese
-Funktion kennt. Das ist der Verdienst der bestehenden Isolation.
+**Umgesetzt** für das Material-Management-Dashboard. Im Dashboard sind Cypher,
+Neo4j-Treiber und Zugangsdaten verschwunden:
 
-```python
-# material_management_dashboard/data/repository.py  — nachher
-from data_api.clients.dash_client import DataProductClient
-import polars as pl
-
-_client = DataProductClient()          # einmal pro Prozess (hält den Pool)
-
-def load_materials() -> pl.DataFrame:
-    rows, meta = _client.fetch("material-overview", "v2", limit=50_000)
-    log.info("Datenstand %s (%s)", meta["generated_at"], meta["source"])
-    return pl.DataFrame(rows)
+```
+vorher:   Dashboard ──Bolt/Cypher──► Neo4j
+nachher:  Dashboard ──HTTP/JSON────► API-Layer ──► Neo4j
 ```
 
-`data/neo4j.py` und der Cypher entfallen ersatzlos.
+| Datei | Vorher | Nachher |
+|---|---|---|
+| `data/neo4j.py` | Treiber, Zugangsdaten | gelöscht |
+| `data/repository.py` | Cypher + Mock-Daten | ruft den API-Client |
+| `data/api_client.py` | — | neu, kennt HTTP |
+| `app.py` | legt den Treiber an | nichts mehr davon |
+| `requirements.txt` | `neo4j` | `httpx` |
 
-Der mitgelieferte Client ([`clients/dash_client.py`](../api/src/data_api/clients/dash_client.py))
-ist bewusst **synchron** (`httpx.Client`) — Dash-Callbacks sind synchron, ein
-`asyncio.run()` im Callback wäre ein Fehler mit Ansage. Er hält den
-Connection-Pool offen, verwaltet ETags für konditionale Requests und warnt, wenn
-ein bezogenes Produkt deprecated ist.
+**Filter, KPIs, Tabelle und Callbacks wurden nicht angefasst** — sie kannten
+schon vorher nur `get_materials()`. Das war der Verdienst der bestehenden
+Isolation der Datenschicht und die eigentliche Probe darauf, ob der Vertrag trägt.
 
-**Eine Entscheidung, die ihr treffen solltet:** Wohin wandert die Filterlogik?
+### Die Grenze zwischen API-Vertrag und Tabellenspalten
 
-* **Kurzfristig:** alles lassen wie es ist — das Dashboard holt die volle Tabelle
-  und filtert weiter in `data/filtering.py` mit Polars. Minimaler Umbau.
-* **Mittelfristig:** die Filter als Query-Parameter mitschicken
-  (`?status=Gesperrt&werk_id=W-KOE`). Der Server filtert, weniger Daten gehen
-  übers Netz, Caching wird treffsicherer. Die Parametermodelle dafür existieren
-  bereits (`MaterialParamsV2`).
+Beides ist nicht dasselbe. Die API liefert `werk_id` und `werk_name`, die Tabelle
+hat historisch eine Spalte `werk`. Übersetzt wird an einer sichtbaren Stelle:
 
-Ich würde mit dem ersten Schritt anfangen und den zweiten machen, sobald die
-echten Datenmengen bekannt sind.
+```python
+# data/repository.py
+_API_TO_UI = {
+    "werk_name": "werk",      # die einzige echte Umbenennung
+    ...                       # werk_id und preis fehlen: nicht gebraucht
+}
+```
 
----
+Zwei Effekte: Beim Umbau musste keine Filter- oder Callback-Datei angefasst
+werden. Und **ein neues Feld in der API kann das Dashboard nie brechen**, weil
+nur übernommen wird, was in dieser Abbildung steht — der Grund, warum ein
+hinzugefügtes Feld nur MINOR ist.
+
+### Der Client ist eine Kopiervorlage
+
+[`clients/dash_client.py`](../api/src/data_api/clients/dash_client.py) wird in
+jedes Dashboard kopiert, nicht importiert: `api/` hängt an FastAPI, dem
+Neo4j-Treiber und SQLAlchemy — nichts davon soll ins Dashboard, das nur `httpx`
+braucht. Sobald das dritte Dashboard ihn nutzt, lohnt sich ein kleines
+gemeinsames Paket. Der Client ist generisch (er kennt kein Feld eines
+Datenprodukts), die Kopien driften also nicht fachlich auseinander.
+
+Er ist bewusst **synchron** (`httpx.Client`) — Dash-Callbacks sind synchron, ein
+`asyncio.run()` darin wäre ein Fehler mit Ansage.
+
+### Was bewusst noch offen ist
+
+Das Dashboard holt weiterhin die volle Tabelle und filtert lokal in Polars. Das
+war der kleinstmögliche Umbau. Sobald die echten Datenmengen bekannt sind, lohnt
+der zweite Schritt: die Filter als Query-Parameter mitschicken
+(`?status=Gesperrt&werk_id=W-KOE`). Die Parametermodelle dafür existieren bereits
+(`MaterialParamsV2`), und `meta.total_count` liefert die Gesamtzahl für echtes
+serverseitiges Paging.
 
 ## 17. Ein neues Datenprodukt anlegen
 
@@ -876,23 +913,29 @@ Der Test, ob das Konzept „leicht erweiterbar" hält. Eine Datei in
 ```python
 # products/catalog/werk_auslastung_v1.py
 from pydantic import BaseModel
-from data_api.db.repositories import Repositories
-from data_api.products.base import ProductParams
-from data_api.products.registry import data_product
+from data_api.db.sources import Sources
+from data_api.products.base import DataProduct, ProductParams
+from data_api.products.registry import registry
+
+# 1. die Abfrage
+CYPHER = """
+MATCH (m:Material)-[:LOCATED_IN]->(w:Werk)
+RETURN w.id AS werk_id, w.name AS werk_name, m.bestand AS bestand
+"""
 
 
-class WerkRow(BaseModel):              # 1. der Vertrag
+class WerkRow(BaseModel):              # 2. der Vertrag
     werk_id: str
     werk_name: str | None = None
     materialien: int
     bestand_gesamt: int
 
 
-class WerkParams(ProductParams):       # 2. die erlaubten Filter
+class WerkParams(ProductParams):       # 3. die erlaubten Filter
     min_materialien: int = 0
 
 
-def transform(rows, params):           # 3. die Fachlichkeit — rein, testbar
+def transform(rows, params):           # 4. die Fachlichkeit — rein, testbar
     nach_werk: dict[str, dict] = {}
     for row in rows:
         eintrag = nach_werk.setdefault(row["werk_id"], {
@@ -904,16 +947,17 @@ def transform(rows, params):           # 3. die Fachlichkeit — rein, testbar
     return [w for w in nach_werk.values() if w["materialien"] >= params.min_materialien]
 
 
-@data_product(                          # 4. anmelden
+async def load(sources: Sources, params: WerkParams):    # 5. die Verdrahtung
+    """Aggregierte Kennzahlen je Werk."""
+    return transform(await sources.neo4j(CYPHER), params)
+
+
+registry.add(DataProduct(              # 6. veröffentlichen
     name="werk-auslastung", version="1.0",
     summary="Materialien und Bestand je Werk",
-    item_model=WerkRow, params_model=WerkParams,
+    item_model=WerkRow, params_model=WerkParams, loader=load,
     owner="team-material-management", cache_ttl=120,
-)
-async def load(repos: Repositories, params: WerkParams):
-    """Aggregierte Kennzahlen je Werk."""
-    repo = await repos.materials()
-    return transform(await repo.fetch_materials(), params)
+))
 ```
 
 Nach dem Neustart existiert automatisch:
@@ -949,7 +993,7 @@ Es gibt brauchbare Werkzeuge, aber keines passt auf diese Architektur:
 
 | Werkzeug | Was es tut | Warum es hier zu kurz greift |
 |---|---|---|
-| [`fastapi-router-viz`](https://pypi.org/project/fastapi-router-viz/) | Lädt die App, zeichnet Routen → Pydantic-Schemata → Module (DOT/PNG/Webansicht) | Kommt den Routen nahe, endet aber beim Schema. Repositories, Datenquellen, Versionen, Owner, Cache kennt es nicht. Braucht Graphviz, kein Mermaid. |
+| [`fastapi-router-viz`](https://pypi.org/project/fastapi-router-viz/) | Lädt die App, zeichnet Routen → Pydantic-Schemata → Module (DOT/PNG/Webansicht) | Kommt den Routen nahe, endet aber beim Schema. Datenquellen, Versionen, Owner, Cache kennt es nicht. Braucht Graphviz, kein Mermaid. |
 | [`fastapi-di-viz`](https://pypi.org/project/fastapi-di-viz/) | Läuft den Dependency-Baum ab, gibt DOT **und Mermaid** aus | Bei uns hängt *jede* Route an derselben Dependency (`get_repositories`). Der Graph sähe für alle Routen gleich aus. |
 | [`pyreverse`](https://pylint.readthedocs.io/en/stable/additional_tools/pyreverse/index.html) (in pylint) | UML-Klassendiagramme, u. a. als `.mmd` | Gut für Klassenbeziehungen, kennt aber keine Routen und keinen Datenfluss. |
 | `pydeps`, `code2flow` | Modul- bzw. Aufrufgraphen | Zeigen Dateien, nicht Fachlichkeit. Bei ~35 Modulen entsteht ein unlesbarer Teller Spaghetti. |
@@ -973,12 +1017,11 @@ Drei Quellen, alle abgeleitet — nichts wird von Hand gepflegt:
 |---|---|
 | Routen, Methoden, Tags, Deprecation | `app.openapi()` — der öffentliche, stabile Vertrag der App |
 | Produkt, Version, Owner, Cache, Vertragsfelder | die Registry |
-| **Produkt → Repository** | AST des Loaders: welche `repos.X()` ruft er auf |
-| **Repository → Datenquelle** | AST des `Repositories`-Containers: welche Adapter gibt er zurück, plus deren `source`-Attribut |
+| **Produkt → Datenquelle** | AST des Loaders: welche `sources.X()` ruft er auf |
 
-Die letzten beiden sind der Trick. `repositories_used_by()` parst den Loader und
-sammelt alle Attributaufrufe auf dessen erstem Parameter — per AST und nicht per
-Regex, damit ein `repos.materials` im Kommentar nicht mitzählt.
+Die letzte ist der Trick. `sources_used_by()` parst den Loader und sammelt alle
+Aufrufe auf dessen erstem Parameter — per AST und nicht per Regex, damit ein
+`sources.neo4j` im Kommentar nicht mitzählt.
 
 > **Nebenbefund beim Bauen:** Der erste Entwurf las die Routen aus `app.routes`.
 > In der installierten FastAPI-Version liegen eingebundene Router aber als
@@ -1037,7 +1080,7 @@ Syntaxfehler erst auf, wenn jemand die Datei öffnet — und dort steht dann nur
 
 - ✅ Datenprodukt-Registry mit typisierten, generierten Routen
 - ✅ Zweiachsige Versionierung inkl. Deprecation-/Sunset-Mechanik
-- ✅ Neo4j- und Postgres-Lebenszyklus, Session-Management pro Request
+- ✅ Neo4j- und Postgres-Lebenszyklus, Session-Management pro Request (`Sources`)
 - ✅ Test-Doubles + Seed-Skripte — Tests ohne Datenbank, Mock-Daten in der DB
 - ✅ Cross-Source-Produkt mit Polars-Transformation als Referenz
 - ✅ Cache, ETag, Paginierung, Problem Details, Request-IDs, Health/Readiness
@@ -1048,7 +1091,7 @@ Syntaxfehler erst auf, wenn jemand die Datei öffnet — und dort steht dann nur
 ### Nächste Schritte, in dieser Reihenfolge
 
 1. **Erste echte Quelle anbinden.** Sobald Neo4j steht: `NEO4J_URI` setzen,
-   Cypher in `repositories/materials.py` an das echte Graphmodell anpassen. Alles
+   die `CYPHER`-Konstanten in `products/catalog/` an das echte Graphmodell anpassen. Alles
    andere bleibt. Danach `meta.source` prüfen — steht dort `neo4j`, ist die
    Umstellung durch.
 2. **Ein Dashboard umstellen.** Material Management auf den Client umbauen; das

@@ -1,8 +1,8 @@
 """
-supplier-risk v1 -- der interessante Fall: zwei Quellen, echte Berechnung.
+supplier-risk v1 -- zwei Quellen, echte Berechnung.
 
-Dieses Produkt zeigt, wofuer ein API-Layer eigentlich da ist. Es verbindet
-    Stammdaten aus Neo4j   (welcher Lieferant liefert wie viele Materialien)
+Dieses Produkt zeigt, wofuer der API-Layer da ist. Es verbindet
+    Stammdaten aus Neo4j     (welcher Lieferant liefert wie viele Materialien)
 mit Bewegungsdaten aus Postgres (Liefertreue, Reklamationen)
 und berechnet daraus einen Risiko-Score.
 
@@ -12,8 +12,7 @@ Formelwechsel zeigen dann zwei Dashboards zwei verschiedene Zahlen -- und
 niemand weiss, welche stimmt.
 
 Die Berechnung laeuft in Polars: dieselbe Bibliothek, die die Dashboards schon
-benutzen, spaltenorientiert und deutlich schneller als Schleifen ueber dicts,
-sobald es um mehr als ein paar Tausend Zeilen geht.
+benutzen, spaltenorientiert und deutlich schneller als Schleifen ueber dicts.
 """
 from __future__ import annotations
 
@@ -23,11 +22,31 @@ from typing import Any
 import polars as pl
 from pydantic import BaseModel, Field
 
-from data_api.db.repositories import Repositories
-from data_api.products.base import ProductParams
-from data_api.products.registry import data_product
+from data_api.db.sources import Sources
+from data_api.products.base import DataProduct, ProductParams
+from data_api.products.registry import registry
+
+# 1a. Stammdaten aus dem Graphen.
+CYPHER = """
+MATCH (s:Lieferant)-[:SUPPLIES]->(m:Material)
+RETURN s.id     AS lieferant_id,
+       s.name   AS lieferant_name,
+       s.land   AS land,
+       count(m) AS anzahl_materialien
+ORDER BY s.id
+"""
+
+# 1b. Bewegungsdaten aus Postgres. `:seit` wird als Parameter uebergeben,
+#     nicht in den Text eingesetzt (SQL-Injection).
+SQL = """
+SELECT lieferant_id, material_nr, geliefert_am, zugesagt_am, menge, reklamationen
+FROM   lieferungen
+WHERE  geliefert_am >= :seit
+ORDER  BY lieferant_id, geliefert_am
+"""
 
 
+# 2. Der Vertrag.
 class SupplierRiskRow(BaseModel):
     lieferant_id: str
     lieferant_name: str | None = None
@@ -41,10 +60,9 @@ class SupplierRiskRow(BaseModel):
     risiko_klasse: str = Field("niedrig", description="niedrig | mittel | hoch")
 
 
+# 3. Die erlaubten Filter.
 class SupplierRiskParams(ProductParams):
-    seit: dt.date = Field(
-        dt.date(2026, 1, 1), description="Beginn des Auswertungszeitraums."
-    )
+    seit: dt.date = Field(dt.date(2026, 1, 1), description="Beginn des Auswertungszeitraums.")
     toleranz_tage: int = Field(
         0, ge=0, le=30, description="Verzug bis einschliesslich X Tagen gilt als puenktlich."
     )
@@ -54,11 +72,13 @@ class SupplierRiskParams(ProductParams):
     risiko_klasse: list[str] | None = None
 
 
-# Gewichte der Score-Formel. Bewusst hier als Konstanten und nicht im Code
+# Gewichte der Score-Formel. Bewusst als benannte Konstanten und nicht im Code
 # verstreut: das ist die fachliche Stellschraube, ueber die diskutiert wird.
-_W_VERZUG = 0.5
-_W_TREUE = 0.3
-_W_REKLAMATION = 0.2
+# Aendert sich eine davon, aendert sich die BEDEUTUNG von risiko_score -> das
+# ist eine brechende Aenderung und braucht eine neue Hauptversion.
+GEWICHT_VERZUG = 0.5
+GEWICHT_TREUE = 0.3
+GEWICHT_REKLAMATION = 0.2
 
 
 def _risiko_klasse(score: float) -> str:
@@ -69,31 +89,26 @@ def _risiko_klasse(score: float) -> str:
     return "niedrig"
 
 
+# 4. Die Fachlichkeit -- rein, ohne Datenbank, ohne HTTP.
 def transform(
-    suppliers: list[dict[str, Any]],
-    deliveries: list[dict[str, Any]],
+    lieferanten: list[dict[str, Any]],
+    lieferungen: list[dict[str, Any]],
     params: SupplierRiskParams,
 ) -> list[dict[str, Any]]:
-    """Reine Funktion -- der gesamte fachliche Kern, ohne DB und ohne HTTP.
-
-    Genau hier liegen die Tests (tests/test_transformations.py). Die Formel zu
-    aendern heisst: diese Funktion und ihre Tests anfassen, sonst nichts.
-    """
-    if not suppliers:
+    if not lieferanten:
         return []
 
     stamm = pl.DataFrame(
-        suppliers,
+        lieferanten,
         schema={"lieferant_id": pl.Utf8, "lieferant_name": pl.Utf8,
                 "land": pl.Utf8, "anzahl_materialien": pl.Int64},
     )
 
-    if deliveries:
-        lief = pl.DataFrame(deliveries).with_columns(
-            verzug_tage=(pl.col("geliefert_am") - pl.col("zugesagt_am")).dt.total_days(),
-        )
+    if lieferungen:
         kennzahlen = (
-            lief.group_by("lieferant_id")
+            pl.DataFrame(lieferungen)
+            .with_columns(verzug_tage=(pl.col("geliefert_am") - pl.col("zugesagt_am")).dt.total_days())
+            .group_by("lieferant_id")
             .agg(
                 lieferungen=pl.len(),
                 mittlerer_verzug_tage=pl.col("verzug_tage").mean(),
@@ -117,12 +132,12 @@ def transform(
             reklamationsquote=pl.col("reklamationsquote").fill_null(0.0),
         )
         .with_columns(
-            # Score aus drei normierten Anteilen. Verzug wird bei 14 Tagen
-            # gekappt -- darueber ist "sehr schlecht" nicht mehr differenziert.
+            # Drei normierte Anteile. Verzug wird bei 14 Tagen gekappt --
+            # darueber ist "sehr schlecht" nicht mehr sinnvoll differenzierbar.
             risiko_score=(
-                _W_VERZUG * (pl.col("mittlerer_verzug_tage").clip(0, 14) / 14 * 100)
-                + _W_TREUE * ((1 - pl.col("puenktlich")) * 100)
-                + _W_REKLAMATION * (pl.col("reklamationsquote") * 100)
+                GEWICHT_VERZUG * (pl.col("mittlerer_verzug_tage").clip(0, 14) / 14 * 100)
+                + GEWICHT_TREUE * ((1 - pl.col("puenktlich")) * 100)
+                + GEWICHT_REKLAMATION * (pl.col("reklamationsquote") * 100)
             ).round(1)
         )
         .with_columns(
@@ -134,32 +149,34 @@ def transform(
         .sort("risiko_score", descending=True)
     )
 
-    rows = df.to_dicts()
-    for row in rows:
-        row.pop("puenktlich", None)
-        row.pop("reklamationsquote", None)
-        row["risiko_klasse"] = _risiko_klasse(row["risiko_score"])
+    zeilen = df.to_dicts()
+    for zeile in zeilen:
+        zeile.pop("puenktlich", None)
+        zeile.pop("reklamationsquote", None)
+        zeile["risiko_klasse"] = _risiko_klasse(zeile["risiko_score"])
 
     if params.risiko_klasse:
-        rows = [r for r in rows if r["risiko_klasse"] in params.risiko_klasse]
-    return rows
+        zeilen = [z for z in zeilen if z["risiko_klasse"] in params.risiko_klasse]
+    return zeilen
 
 
-@data_product(
+# 5. Die Verdrahtung -- hier sieht man, dass beide Quellen benutzt werden.
+async def load(sources: Sources, params: SupplierRiskParams) -> list[dict[str, Any]]:
+    """Verknuepft Lieferantenstammdaten mit der Lieferhistorie und bewertet das Risiko."""
+    lieferanten = await sources.neo4j(CYPHER)
+    lieferungen = await sources.postgres(SQL, seit=params.seit)
+    return transform(lieferanten, lieferungen, params)
+
+
+# 6. Veroeffentlichen.
+registry.add(DataProduct(
     name="supplier-risk",
     version="1.0",
     summary="Lieferantenrisiko aus Stammdaten (Neo4j) und Liefertreue (Postgres)",
     item_model=SupplierRiskRow,
     params_model=SupplierRiskParams,
+    loader=load,
     owner="team-supply-chain",
     tags=("lieferant", "risiko", "cross-source"),
-    cache_ttl=300,   # teure Berechnung, Daten aendern sich taeglich -> 5 Minuten
-)
-async def load(repos: Repositories, params: SupplierRiskParams) -> list[dict[str, Any]]:
-    """Verknuepft Lieferantenstammdaten mit der Lieferhistorie und bewertet das Risiko."""
-    materials_repo = await repos.materials()
-    deliveries_repo = await repos.deliveries()
-
-    suppliers = await materials_repo.fetch_suppliers()
-    deliveries = await deliveries_repo.fetch_deliveries(params.seit)
-    return transform(suppliers, deliveries, params)
+    cache_ttl=300,   # teure Berechnung, Daten aendern sich taeglich
+))

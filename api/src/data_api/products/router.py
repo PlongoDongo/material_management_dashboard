@@ -27,9 +27,9 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 
-from data_api.api.deps import ReposDep
+from data_api.api.deps import SourcesDep
 from data_api.core.security import CurrentPrincipal
-from data_api.db.repositories import Repositories
+from data_api.db.sources import Sources
 from data_api.products.base import DataProduct, ProductEnvelope, ProductMeta
 from data_api.products.cache import cache, etag_for
 from data_api.products.registry import registry
@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 
 
 async def run_product(
-    product: DataProduct, repos: Repositories, params: Any
+    product: DataProduct, sources: Sources, params: Any
 ) -> tuple[list[Any], str]:
     """Fuehrt ein Datenprodukt aus -- mit Cache. Ohne HTTP, damit testbar.
 
@@ -52,7 +52,7 @@ async def run_product(
     if cached is not None:
         return cached, "hit"
 
-    rows = await product.loader(repos, params)
+    rows = await product.loader(sources, params)
     cache.set(key, rows, product.cache_ttl)
     return rows, "miss" if product.cache_ttl else "bypass"
 
@@ -66,7 +66,7 @@ def _make_endpoint(product: DataProduct):
         request: Request,
         response: Response,
         params: Annotated[ParamsModel, Query()],
-        repos: ReposDep,
+        sources: SourcesDep,
         principal: CurrentPrincipal,
     ) -> Any:
         if not principal.has_any(product.required_groups):
@@ -75,7 +75,7 @@ def _make_endpoint(product: DataProduct):
             raise HTTPException(status.HTTP_403_FORBIDDEN,
                                 detail=f"Zugriff auf '{product.name}' nicht erlaubt.")
 
-        rows, cache_state = await run_product(product, repos, params)
+        rows, cache_state = await run_product(product, sources, params)
 
         total = len(rows)
         page = rows[params.offset: params.offset + params.limit]
@@ -87,7 +87,7 @@ def _make_endpoint(product: DataProduct):
                 generated_at=dt.datetime.now(dt.UTC),
                 row_count=len(page),
                 total_count=total,
-                source=repos.source_label,
+                source=sources.label,
                 cache=cache_state,
                 deprecated=product.deprecated,
                 sunset=product.sunset,
