@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from data_api import __version__
 from data_api.api.v1 import build_v1_router
 from data_api.core.config import Settings, get_settings
-from data_api.core.errors import register_exception_handlers
+from data_api.core.errors import ConfigurationError, register_exception_handlers
 from data_api.core.logging import configure_logging
 from data_api.core.middleware import RequestContextMiddleware
 from data_api.db.neo4j import close_driver, create_driver
@@ -55,6 +55,14 @@ renamed = MAJOR, new route, the old one stays available until its `Sunset` date.
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
+
+    # Auth is derived from OIDC_ISSUER being set (core/config.py). The cost of
+    # that convenience is that a FORGOTTEN issuer leaves the API wide open, and
+    # nothing would say so. In production that must be a failure to start, not
+    # a quiet default -- a server that does not come up gets noticed within
+    # minutes; an open one might not get noticed at all.
+    if settings.api_env == "prod" and not settings.auth_enabled:
+        raise ConfigurationError("API_ENV=prod requires OIDC_ISSUER to be set.")
 
     # The assignments live INSIDE the try: if `create_engine` fails (a bad
     # DSN), the already-connected Neo4j driver would otherwise stay open --

@@ -1,8 +1,11 @@
 """End-to-end over HTTP -- route, parameters, envelope, cache, versioning."""
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
+from tests.fakes import FakeSources
 
-def test_v2_returns_an_envelope_with_metadata(client):
+
+def test_v2_returns_an_envelope_with_metadata(client: TestClient) -> None:
     response = client.get("/api/v1/data-products/material-overview/v2")
     assert response.status_code == 200
     body = response.json()
@@ -15,7 +18,7 @@ def test_v2_returns_an_envelope_with_metadata(client):
     assert body["data"][0]["material_number"].startswith("MAT-")
 
 
-def test_v2_and_v3_have_different_contracts(client):
+def test_v2_and_v3_have_different_contracts(client: TestClient) -> None:
     v2 = client.get("/api/v1/data-products/material-overview/v2").json()["data"][0]
     v3 = client.get("/api/v1/data-products/material-overview/v3").json()["data"][0]
 
@@ -24,7 +27,7 @@ def test_v2_and_v3_have_different_contracts(client):
     assert {"plant_id", "plant_name", "stock_value"} <= set(v3)
 
 
-def test_a_deprecated_version_sets_the_right_headers(client):
+def test_a_deprecated_version_sets_the_right_headers(client: TestClient) -> None:
     response = client.get("/api/v1/data-products/material-overview/v2")
     assert response.headers["Deprecation"] == "true"
     assert "2026" in response.headers["Sunset"]
@@ -32,12 +35,12 @@ def test_a_deprecated_version_sets_the_right_headers(client):
     assert response.json()["meta"]["deprecated"] is True
 
 
-def test_the_latest_alias_points_at_v3(client):
+def test_the_latest_alias_points_at_v3(client: TestClient) -> None:
     latest = client.get("/api/v1/data-products/material-overview/latest").json()
     assert latest["meta"]["version"] == "3.0"
 
 
-def test_filters_are_applied_server_side(client):
+def test_filters_are_applied_server_side(client: TestClient) -> None:
     response = client.get(
         "/api/v1/data-products/material-overview/v3",
         params={"status": ["Gesperrt"]},
@@ -47,7 +50,7 @@ def test_filters_are_applied_server_side(client):
     assert {row["status"] for row in rows} == {"Gesperrt"}
 
 
-def test_multi_select_via_repeated_query_parameters(client):
+def test_multi_select_via_repeated_query_parameters(client: TestClient) -> None:
     response = client.get(
         "/api/v1/data-products/material-overview/v3",
         params={"status": ["Gesperrt", "Obsolet"]},
@@ -55,7 +58,7 @@ def test_multi_select_via_repeated_query_parameters(client):
     assert {row["status"] for row in response.json()["data"]} == {"Gesperrt", "Obsolet"}
 
 
-def test_pagination_reports_the_total(client):
+def test_pagination_reports_the_total(client: TestClient) -> None:
     response = client.get(
         "/api/v1/data-products/material-overview/v3", params={"limit": 10, "offset": 5}
     )
@@ -64,7 +67,7 @@ def test_pagination_reports_the_total(client):
     assert meta["total_count"] == 64
 
 
-def test_an_unknown_parameter_returns_422_instead_of_being_ignored(client):
+def test_an_unknown_parameter_returns_422_instead_of_being_ignored(client: TestClient) -> None:
     """The typo test: ?stauts=Aktiv must NOT return every row."""
     response = client.get(
         "/api/v1/data-products/material-overview/v3", params={"stauts": "Aktiv"}
@@ -73,20 +76,35 @@ def test_an_unknown_parameter_returns_422_instead_of_being_ignored(client):
     assert response.json()["code"] == "validation_error"
 
 
-def test_an_out_of_range_value_is_rejected(client):
+def test_the_422_body_matches_its_content_length(client: TestClient) -> None:
+    """The 422 carries an extra `errors` member -- its Content-Length must
+    cover it. When the handler built the body twice and copied the headers of
+    the first, shorter response, uvicorn refused to send the body at all
+    ("Response content longer than Content-Length") and the dashboard got an
+    empty 422. The TestClient does not do HTTP framing, so only this explicit
+    comparison catches it.
+    """
+    response = client.get(
+        "/api/v1/data-products/material-overview/v3", params={"stauts": "Aktiv"}
+    )
+    assert int(response.headers["content-length"]) == len(response.content)
+    assert response.json()["errors"]
+
+
+def test_an_out_of_range_value_is_rejected(client: TestClient) -> None:
     response = client.get(
         "/api/v1/data-products/material-overview/v3", params={"limit": 0}
     )
     assert response.status_code == 422
 
 
-def test_the_cache_hits_on_the_second_call(client):
+def test_the_cache_hits_on_the_second_call(client: TestClient) -> None:
     path = "/api/v1/data-products/supplier-risk/v2"
     assert client.get(path).json()["meta"]["cache"] == "miss"
     assert client.get(path).json()["meta"]["cache"] == "hit"
 
 
-def test_different_parameters_are_different_cache_entries(client):
+def test_different_parameters_are_different_cache_entries(client: TestClient) -> None:
     path = "/api/v1/data-products/material-overview/v3"
     client.get(path, params={"status": ["Aktiv"]})
     second = client.get(path, params={"status": ["Gesperrt"]})
@@ -94,7 +112,7 @@ def test_different_parameters_are_different_cache_entries(client):
     assert {r["status"] for r in second.json()["data"]} == {"Gesperrt"}
 
 
-def test_an_etag_yields_304_without_a_body(client):
+def test_an_etag_yields_304_without_a_body(client: TestClient) -> None:
     path = "/api/v1/data-products/material-overview/v3"
     first = client.get(path)
     second = client.get(path, headers={"If-None-Match": first.headers["ETag"]})
@@ -102,7 +120,7 @@ def test_an_etag_yields_304_without_a_body(client):
     assert not second.content
 
 
-def test_the_cross_source_product_joins_both_sources(client):
+def test_the_cross_source_product_joins_both_sources(client: TestClient) -> None:
     body = client.get("/api/v1/data-products/supplier-risk/v2").json()
     # meta.source shows which sources actually fed the response
     assert body["meta"]["source"] == "neo4j+postgres"
@@ -116,7 +134,7 @@ def test_the_cross_source_product_joins_both_sources(client):
     assert rows[0]["deliveries"] > 0
 
 
-def test_openapi_contains_each_product_with_its_own_schema(client):
+def test_openapi_contains_each_product_with_its_own_schema(client: TestClient) -> None:
     """The proof that the generated routes are typed."""
     spec = client.get("/openapi.json").json()
     assert "/api/v1/data-products/material-overview/v3" in spec["paths"]
@@ -125,7 +143,7 @@ def test_openapi_contains_each_product_with_its_own_schema(client):
     assert "SupplierRiskRow" in spec["components"]["schemas"]
 
 
-def test_a_write_endpoint_invalidates_the_cache(client):
+def test_a_write_endpoint_invalidates_the_cache(client: TestClient) -> None:
     path = "/api/v1/data-products/material-overview/v3"
     client.get(path)
     assert client.get(path).json()["meta"]["cache"] == "hit"
@@ -139,7 +157,7 @@ def test_a_write_endpoint_invalidates_the_cache(client):
     assert client.get(path).json()["meta"]["cache"] == "miss"
 
 
-def test_a_filter_is_passed_to_the_query_as_a_parameter(client, fake_sources):
+def test_a_filter_is_passed_to_the_query_as_a_parameter(client: TestClient, fake_sources: FakeSources) -> None:
     """Filters that live in the query are passed through as parameters.
 
     The fake deliberately does NOT apply the filter -- it would otherwise
@@ -159,14 +177,14 @@ def test_a_filter_is_passed_to_the_query_as_a_parameter(client, fake_sources):
     assert parameters["country"] == ["DE", "AT"]
 
 
-def test_without_a_filter_none_is_passed(client, fake_sources):
+def test_without_a_filter_none_is_passed(client: TestClient, fake_sources: FakeSources) -> None:
     """`$country IS NULL OR ...` -- with no filter the condition drops out."""
     response = client.get("/api/v1/data-products/supplier-risk/v2")
     assert response.status_code == 200
     assert fake_sources.calls[0][1]["country"] is None
 
 
-def test_an_empty_list_counts_as_no_filter(client, fake_sources):
+def test_an_empty_list_counts_as_no_filter(client: TestClient, fake_sources: FakeSources) -> None:
     """An empty multi-select must not filter everything away.
 
     `[] IS NULL` is false in Cypher and so is `x IN []` -- without
@@ -177,7 +195,7 @@ def test_an_empty_list_counts_as_no_filter(client, fake_sources):
     assert fake_sources.calls[0][1]["country"] is None
 
 
-def test_the_filter_reaches_the_second_source_too(client, fake_sources):
+def test_the_filter_reaches_the_second_source_too(client: TestClient, fake_sources: FakeSources) -> None:
     """The filter must not shrink only the cheap source.
 
     The delivery history is the table that grows over time -- it is narrowed to
@@ -185,7 +203,7 @@ def test_the_filter_reaches_the_second_source_too(client, fake_sources):
     """
     client.get("/api/v1/data-products/supplier-risk/v2", params={"country": ["DE"]})
 
-    cypher, cypher_parameters = fake_sources.calls[0]
+    _cypher, cypher_parameters = fake_sources.calls[0]
     sql, sql_parameters = fake_sources.calls[1]
     assert "supplier_id = ANY(:ids)" in sql
     assert sql_parameters["ids"] == ["L-001", "L-002", "L-003", "L-004"]

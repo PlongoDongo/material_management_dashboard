@@ -15,14 +15,20 @@ Two techniques carry the whole test suite:
 """
 from __future__ import annotations
 
+import time
+from collections.abc import Iterable, Iterator
+from typing import Any
+
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.fakes import FakeSources
+from tests.types import AuthHeader, KeyPair, MakeToken
 
 from data_api.api.deps import get_sources
 from data_api.application import create_app
 from data_api.core.config import Settings
 from data_api.products.cache import cache
-from tests.fakes import FakeSources
 
 
 @pytest.fixture
@@ -31,14 +37,91 @@ def settings() -> Settings:
         neo4j_uri=None,
         postgres_dsn=None,
         api_env="dev",
-        api_keys=[],
+        oidc_issuer=None,        # auth off -- the default for most tests
         api_log_level="WARNING",
         _env_file=None,          # a developer's .env must not influence tests
     )
 
 
+# --- OIDC ------------------------------------------------------------------
+# Auth is tested against REAL RS256 tokens, not by overriding current_principal:
+# signature, exp, iss and aud are exactly the checks worth having a test for,
+# and an override would skip all four. Only the JWKS lookup is replaced -- the
+# one part that would need a Keycloak on the network.
+
+ISSUER = "https://keycloak.test/realms/airbus"
+AUDIENCE = "data-api"
+
+
+@pytest.fixture(scope="session")
+def rsa_keypair() -> tuple[Any, Any]:
+    """One throwaway RSA key for the whole session (generating it is slow)."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return private, private.public_key()
+
+
 @pytest.fixture
-def app(settings: Settings):
+def oidc_settings(settings: Settings, rsa_keypair: KeyPair, monkeypatch: pytest.MonkeyPatch) -> Settings:
+    """Settings with auth ON, and the realm's public key wired in locally."""
+    from data_api.core import security
+
+    _, public = rsa_keypair
+    monkeypatch.setattr(security, "_signing_key", lambda token, settings: public)
+    return settings.model_copy(update={
+        "oidc_issuer": ISSUER,
+        "oidc_audience": AUDIENCE,
+        "oidc_client_id": AUDIENCE,
+    })
+
+
+@pytest.fixture
+def make_token(rsa_keypair: KeyPair) -> MakeToken:
+    """Mints a Keycloak-shaped access token. Every claim can be overridden."""
+    import jwt
+
+    private, _ = rsa_keypair
+
+    def _make(
+        *,
+        roles: Iterable[str] = (),
+        groups: Iterable[str] = (),
+        username: str = "m.renner",
+        expires_in: int = 300,
+        issuer: str = ISSUER,
+        audience: str = AUDIENCE,
+        # ANN401: any JWT claim may be overridden by a test.
+        **claims: Any,  # noqa: ANN401
+    ) -> str:
+        now = int(time.time())
+        payload = {
+            "sub": "0f2c1e5a-1111-2222-3333-444455556666",
+            "preferred_username": username,
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + expires_in,
+            "realm_access": {"roles": list(roles)},
+            "resource_access": {AUDIENCE: {"roles": []}},
+            "groups": list(groups),
+            **claims,
+        }
+        return jwt.encode(payload, private, algorithm="RS256")
+
+    return _make
+
+
+@pytest.fixture
+def auth_header(make_token: MakeToken) -> AuthHeader:
+    """`client.get(path, headers=auth_header(roles=["planner"]))`."""
+    def _header(**kwargs: Any) -> dict[str, str]:  # noqa: ANN401 -- forwarded to make_token
+        return {"Authorization": f"Bearer {make_token(**kwargs)}"}
+    return _header
+
+
+@pytest.fixture
+def app(settings: Settings) -> FastAPI:
     """A fully wired app, but without a database."""
     cache.invalidate()           # test isolation: no cache bleed-through
     application = create_app(settings)
@@ -47,13 +130,13 @@ def app(settings: Settings):
 
 
 @pytest.fixture
-def client(app):
+def client(app: FastAPI) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
 
 
 @pytest.fixture
-def fake_sources(app):
+def fake_sources(app: FastAPI) -> FakeSources:
     """THE one FakeSources instance the request uses.
 
     Without this fixture, `dependency_overrides[get_sources] = FakeSources`
@@ -67,7 +150,7 @@ def fake_sources(app):
 
 
 @pytest.fixture
-def client_without_sources(settings: Settings):
+def client_without_sources(settings: Settings) -> Iterator[TestClient]:
     """An app WITHOUT the override -- shows what happens with no data source."""
     cache.invalidate()
     with TestClient(create_app(settings)) as test_client:

@@ -32,6 +32,7 @@ import ast
 import inspect
 import sys
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,6 @@ from fastapi import FastAPI
 
 from data_api.products.base import DataProduct
 from data_api.products.introspect import sources_used_by
-
 
 # ---------------------------------------------------------------------------
 # Collecting (introspection)
@@ -76,7 +76,7 @@ def _first_arg_name(fn: ast.AsyncFunctionDef | ast.FunctionDef) -> str | None:
     return fn.args.args[0].arg if fn.args.args else None
 
 
-def _parse_function(obj: Any) -> ast.AsyncFunctionDef | ast.FunctionDef | None:
+def _parse_function(obj: Callable[..., Any]) -> ast.AsyncFunctionDef | ast.FunctionDef | None:
     """Parses a function into an AST. Decorators do not get in the way."""
     try:
         source = textwrap.dedent(inspect.getsource(obj))
@@ -259,8 +259,8 @@ def render_markdown(arch: Architecture) -> str:
         "> lost on the next run. The reasoning behind the design is in",
         "> [`api_layer_concept.md`](api_layer_concept.md).",
         "",
-        f"{len(arch.products)} data products · "
-        f"{len([r for r in arch.routes if not r.is_alias])} routes",
+        (f"{len(arch.products)} data products · "
+         f"{len([r for r in arch.routes if not r.is_alias])} routes"),
         "",
         "## Data flow",
         "",

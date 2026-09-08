@@ -5,7 +5,7 @@
 > lost on the next run. The reasoning behind the design is in
 > [`api_layer_concept.md`](api_layer_concept.md).
 
-3 data products · 9 routes
+4 data products · 10 routes
 
 ## Data flow
 
@@ -23,6 +23,7 @@ flowchart LR
     r__api_v1_catalog__name_["GET /catalog/{name}"]
     r__api_v1_data_products_material_overview_v2["GET /data-products/material-overview/v2 ⚠"]
     r__api_v1_data_products_material_overview_v3["GET /data-products/material-overview/v3"]
+    r__api_v1_data_products_material_search_v1["GET /data-products/material-search/v1"]
     r__api_v1_data_products_supplier_risk_v2["GET /data-products/supplier-risk/v2"]
     r__api_v1_healthz["GET /healthz"]
     r__api_v1_mappings["POST /mappings"]
@@ -33,6 +34,7 @@ flowchart LR
   subgraph products["Data products"]
     p_material_overview_2["material-overview<br/>v2 · 2.1 ⚠"]
     p_material_overview_3["material-overview<br/>v3 · 3.0"]
+    p_material_search_1["material-search<br/>v1 · 1.0"]
     p_supplier_risk_2["supplier-risk<br/>v2 · 2.0"]
   end
 
@@ -44,9 +46,11 @@ flowchart LR
   dash --> routes
   r__api_v1_data_products_material_overview_v2 --> p_material_overview_2
   r__api_v1_data_products_material_overview_v3 --> p_material_overview_3
+  r__api_v1_data_products_material_search_v1 --> p_material_search_1
   r__api_v1_data_products_supplier_risk_v2 --> p_supplier_risk_2
   p_material_overview_2 --> src_neo4j
   p_material_overview_3 --> src_neo4j
+  p_material_search_1 --> src_neo4j
   p_supplier_risk_2 --> src_neo4j
   p_supplier_risk_2 --> src_postgres
 
@@ -63,6 +67,10 @@ flowchart LR
     v_material_overview_2["v2 · 2.1<br/>retiring<br/>Sunset 2026-12-31"]
     v_material_overview_3["v3 · 3.0<br/>active"]
     v_material_overview_2 -.->|superseded by| v_material_overview_3
+  end
+  subgraph f_material_search["material-search"]
+    direction LR
+    v_material_search_1["v1 · 1.0<br/>active"]
   end
   subgraph f_supplier_risk["supplier-risk"]
     direction LR
@@ -100,6 +108,17 @@ classDiagram
     +str? changed_on
   }
   note for MaterialRowV3 "material-overview v3"
+  class MaterialSearchRow {
+    +str material_number
+    +str? description
+    +str? material_group
+    +str? plant_id
+    +str? plant_name
+    +str? status
+    +int? stock
+    +str? changed_on
+  }
+  note for MaterialSearchRow "material-search v1"
   class SupplierRiskRow {
     +str supplier_id
     +str? supplier_name
@@ -124,6 +143,8 @@ classDiagram
 | `/api/v1/data-products/material-overview/latest` | GET | material-overview | 3.0 | team-material-management | 60s | alias |
 | `/api/v1/data-products/material-overview/v2` | GET | material-overview | 2.1 | team-material-management | 60s | retiring |
 | `/api/v1/data-products/material-overview/v3` | GET | material-overview | 3.0 | team-material-management | 60s | active |
+| `/api/v1/data-products/material-search/latest` | GET | material-search | 1.0 | team-material-management | 30s | alias |
+| `/api/v1/data-products/material-search/v1` | GET | material-search | 1.0 | team-material-management | 30s | active |
 | `/api/v1/data-products/supplier-risk/latest` | GET | supplier-risk | 2.0 | team-supply-chain | 300s | alias |
 | `/api/v1/data-products/supplier-risk/v2` | GET | supplier-risk | 2.0 | team-supply-chain | 300s | active |
 | `/api/v1/healthz` | GET | – | – | – | – | active |
@@ -152,6 +173,16 @@ Material master data including stock value
 * **Cache:** 60s
 * **Filters:** `limit`, `offset`, `status`, `plant_id`, `material_group`, `unclassified_only`, `search`, `min_stock_value`
 * **Module:** `data_api/products/catalog/material_overview_v3.py`
+
+### `material-search` v1 (1.0)
+
+Paged material search -- filtered, sorted and windowed in the graph
+
+* **Owner:** team-material-management
+* **Sources:** neo4j
+* **Cache:** 30s
+* **Filters:** `limit`, `offset`, `status`, `plant_id`, `material_group`, `unclassified_only`, `min_stock`, `search`, `sort`
+* **Module:** `data_api/products/catalog/material_search_v1.py`
 
 ### `supplier-risk` v2 (2.0)
 

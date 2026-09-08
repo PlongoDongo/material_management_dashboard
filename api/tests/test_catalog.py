@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
 
-def test_catalog_lists_every_product(client):
+
+def test_catalog_lists_every_product(client: TestClient) -> None:
     response = client.get("/api/v1/catalog")
     assert response.status_code == 200
     names = {entry["name"] for entry in response.json()}
     assert {"material-overview", "supplier-risk"} <= names
 
 
-def test_catalog_shows_both_versions_and_the_sunset_date(client):
+def test_catalog_shows_both_versions_and_the_sunset_date(client: TestClient) -> None:
     entry = client.get("/api/v1/catalog/material-overview").json()
     versions = {v["version"]: v for v in entry["versions"]}
     assert set(versions) == {"2.1", "3.0"}
@@ -19,14 +21,14 @@ def test_catalog_shows_both_versions_and_the_sunset_date(client):
     assert entry["latest"] == "3.0"
 
 
-def test_catalog_reports_the_contract_fields(client):
+def test_catalog_reports_the_contract_fields(client: TestClient) -> None:
     entry = client.get("/api/v1/catalog/material-overview").json()
     v3 = next(v for v in entry["versions"] if v["version"] == "3.0")
     assert "stock_value" in v3["fields"]
     assert "plant_id" in v3["fields"]
 
 
-def test_an_unknown_product_returns_problem_details(client):
+def test_an_unknown_product_returns_problem_details(client: TestClient) -> None:
     response = client.get("/api/v1/catalog/does-not-exist")
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/problem+json")

@@ -34,7 +34,13 @@ import time
 
 import polars as pl
 
-from data.api_client import DataProductClient, DataProductError
+from auth import access_token, user_roles
+from data.api_client import (
+    DataProductClient,
+    DataProductError,
+    NotAuthenticatedError,
+    NotAuthorisedError,
+)
 from data.schema import COLUMN_LABELS, COLUMNS  # noqa: F401  (Re-Export)
 
 log = logging.getLogger(__name__)
@@ -77,7 +83,20 @@ _client = DataProductClient()
 
 # Cache-Container statt eines nackten Modul-Globals, damit die Funktion unten
 # den Namen nicht per `global` neu binden muss.
-_CACHE: dict[str, object] = {}
+#
+# WICHTIG: Der Cache ist PROZESSWEIT, das Dashboard bedient aber viele Nutzer.
+# Deshalb liegt er unter einem Schluessel aus den Rollen des Nutzers. Ohne den
+# bekaeme ein Nutzer ohne Berechtigung den Stand serviert, den ein berechtigter
+# Kollege kurz zuvor geholt hat -- die 403 der API wuerde nie gestellt, weil
+# gar keine Anfrage mehr liefe. Rollen und nicht Nutzername als Schluessel:
+# alle mit denselben Rechten sehen dieselben Daten, die Trefferquote bleibt
+# also hoch, und getrennt ist nur, was getrennt sein muss.
+_CACHE: dict[tuple[str, ...], dict[str, object]] = {}
+
+
+def _cache_slot() -> dict[str, object]:
+    """Der Cache-Eimer fuer die Rechte des aktuellen Nutzers."""
+    return _CACHE.setdefault(tuple(sorted(user_roles())), {})
 
 
 def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
@@ -115,7 +134,7 @@ def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
 
 def load_materials() -> pl.DataFrame:
     """Holt das Datenprodukt beim API-Layer und formt es fuer die Tabelle."""
-    rows, meta = _client.fetch(PRODUCT, VERSION, limit=MAX_ZEILEN)
+    rows, meta = _client.fetch(PRODUCT, VERSION, token=access_token(), limit=MAX_ZEILEN)
     log.info("Datenstand %s | Quelle %s | %s Zeilen | Cache %s",
              meta.get("generated_at"), meta.get("source"),
              meta.get("total_count"), meta.get("cache"))
@@ -128,9 +147,9 @@ def load_materials() -> pl.DataFrame:
         log.error("Datenprodukt gekuerzt: %s von %s Zeilen geladen (limit=%s). "
                   "KPI-Kacheln und Zaehler sind unvollstaendig.",
                   len(rows), gesamt, MAX_ZEILEN)
-        _CACHE["gekuerzt"] = (len(rows), gesamt)
+        _cache_slot()["gekuerzt"] = (len(rows), gesamt)
     else:
-        _CACHE.pop("gekuerzt", None)
+        _cache_slot().pop("gekuerzt", None)
 
     if meta.get("deprecated"):
         log.warning("Datenprodukt %s/%s ist abgekuendigt (Sunset %s) -- bitte migrieren.",
@@ -147,21 +166,27 @@ def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
     keinen, wird der Fehler durchgereicht, statt stillschweigend eine leere
     Tabelle zu zeigen.
     """
-    frisch_bis = float(_CACHE.get("expires_at", 0))  # type: ignore[arg-type]
-    if not force_reload and _CACHE.get("frame") is not None and time.monotonic() < frisch_bis:
-        return _CACHE["frame"]  # type: ignore[return-value]
+    slot = _cache_slot()
+    frisch_bis = float(slot.get("expires_at", 0))  # type: ignore[arg-type]
+    if not force_reload and slot.get("frame") is not None and time.monotonic() < frisch_bis:
+        return slot["frame"]  # type: ignore[return-value]
 
     try:
         frame = load_materials()
+    except (NotAuthenticatedError, NotAuthorisedError):
+        # Rechtefehler NICHT aus dem Cache beantworten: Der alte Stand stammt
+        # von einer Sitzung, die die Daten sehen durfte. Ihn weiterzureichen
+        # waere genau die Luecke, die der Rollen-Schluessel oben verhindert.
+        raise
     except DataProductError as exc:
-        if _CACHE.get("frame") is not None:
+        if slot.get("frame") is not None:
             log.warning("API nicht erreichbar (%s) -- liefere den letzten Stand weiter.", exc)
-            return _CACHE["frame"]  # type: ignore[return-value]
+            return slot["frame"]  # type: ignore[return-value]
         log.error("API nicht erreichbar und kein Stand im Cache: %s", exc)
         raise
 
-    _CACHE["frame"] = frame
-    _CACHE["expires_at"] = time.monotonic() + CACHE_TTL_SECONDS
+    slot["frame"] = frame
+    slot["expires_at"] = time.monotonic() + CACHE_TTL_SECONDS
     return frame
 
 
@@ -171,7 +196,7 @@ def kuerzung() -> tuple[int, int] | None:
     Die UI liest das, um den Zeilenzaehler zu kennzeichnen. Eine Tabelle, die
     vollstaendig aussieht und es nicht ist, ist die teuerste Fehlerklasse.
     """
-    return _CACHE.get("gekuerzt")  # type: ignore[return-value]
+    return _cache_slot().get("gekuerzt")  # type: ignore[return-value]
 
 
 def distinct_values(column: str) -> list[str]:

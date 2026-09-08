@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
 
-def test_healthz_reports_the_product_count(client):
+
+def test_healthz_reports_the_product_count(client: TestClient) -> None:
     """Liveness checks ONLY the process -- never external systems.
 
     Otherwise a short Neo4j outage would restart every pod instead of merely
@@ -14,7 +16,7 @@ def test_healthz_reports_the_product_count(client):
     assert body["data_products"] >= 3
 
 
-def test_readyz_without_sources_reports_503(client_without_sources):
+def test_readyz_without_sources_reports_503(client_without_sources: TestClient) -> None:
     """With no source configured the pod must NOT report itself ready.
 
     An API that accepts requests and then fails every one of them is worse than
@@ -27,7 +29,7 @@ def test_readyz_without_sources_reports_503(client_without_sources):
     assert body["checks"] == {"neo4j": "not-configured", "postgres": "not-configured"}
 
 
-def test_a_product_without_its_source_reports_a_configuration_error(client_without_sources):
+def test_a_product_without_its_source_reports_a_configuration_error(client_without_sources: TestClient) -> None:
     """No silent fallback dataset: if the source is missing, there is an error.
 
     That is why there is no sample data under src/.
@@ -39,7 +41,7 @@ def test_a_product_without_its_source_reports_a_configuration_error(client_witho
     assert "NEO4J_URI" in body["detail"]
 
 
-def test_the_request_id_header_is_set(client):
+def test_the_request_id_header_is_set(client: TestClient) -> None:
     response = client.get("/api/v1/healthz")
     assert response.headers["X-Request-ID"]
     assert "X-Response-Time-ms" in response.headers

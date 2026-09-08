@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dash import Dash, dcc, html
 
+from auth import register_auth
 from config import IDS, APP_TITLE
 from components.header_layout import header_layout
 from components.nav_sidebar import nav_sidebar
@@ -51,6 +52,12 @@ MATERIAL_ICONS = (
 app = Dash(__name__, title=APP_TITLE, suppress_callback_exceptions=True,
            external_stylesheets=[MATERIAL_ICONS])
 server = app.server  # für Gunicorn / Deployment
+
+# Anmeldung gegen Keycloak. Haengt am Flask-Server, nicht an Dash: Dash IST
+# eine Flask-Anwendung, und ein `before_request`-Wachposten greift damit auch
+# vor jedem Callback -- nicht nur beim ersten Seitenaufruf.
+# Ohne KEYCLOAK_ISSUER bleibt die Anmeldung aus (Entwicklung).
+register_auth(server)
 
 # Kein Datenbank-Treiber mehr: Das Dashboard spricht ausschließlich über HTTP
 # mit dem API-Layer (data/repository.py -> data/api_client.py). Damit liegen

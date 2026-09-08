@@ -18,10 +18,11 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from collections.abc import Callable
 from typing import Any
 
 
-def sources_used_by(loader: Any) -> list[str]:
+def sources_used_by(loader: Callable[..., Any]) -> list[str]:
     """The method names the loader calls on its first parameter.
 
         async def load(sources, params):

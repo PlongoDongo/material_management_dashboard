@@ -17,6 +17,7 @@ testable without a web server. The translation to HTTP happens right here.
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import FastAPI, Request, status
@@ -55,6 +56,19 @@ class ForbiddenError(AppError):
     title = "Access denied"
 
 
+class UnauthorizedError(AppError):
+    """No token, or not a valid one -- 401.
+
+    401 means "authenticate (again)", 403 means "authenticated, but not for
+    this". The dashboard branches on exactly that difference: 401 sends the
+    user back through the Keycloak login, 403 shows "you lack the role".
+    """
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "unauthorized"
+    title = "Authentication required"
+
+
 class UpstreamUnavailableError(AppError):
     """A data source (Neo4j/Postgres) is unreachable -> 503, not 500.
 
@@ -74,8 +88,20 @@ class ConfigurationError(AppError):
 
 
 def _problem(
-    request: Request, status_code: int, title: str, detail: str, code: str
+    request: Request,
+    status_code: int,
+    title: str,
+    detail: str,
+    code: str,
+    **extra: object,
 ) -> JSONResponse:
+    """Builds the one and only error response shape of this API.
+
+    `extra` becomes additional top-level members of the problem document --
+    RFC 9457 calls those "extension members" and explicitly allows them. Used
+    by the validation handler for its `errors` list. Values must be
+    JSON-serialisable; the caller is responsible for that.
+    """
     # Request object first, ContextVar second: on a 500 this handler runs
     # outside RequestContextMiddleware, whose `finally` has already reset the
     # ContextVar.
@@ -90,6 +116,7 @@ def _problem(
             "detail": detail,
             "code": code,
             "request_id": request_id,
+            **extra,
         },
         # Also as a header: on a 500 the response no longer passes through the
         # middleware that would otherwise set it.
@@ -110,20 +137,18 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-        response = _problem(
+        return _problem(
             request,
             422,
             "Invalid request",
             "The request parameters are invalid.",
             "validation_error",
+            # The field-level errors -- helps when debugging Dash callbacks.
+            # Round-tripped through `default=str` because `ctx` can carry
+            # exception objects that json.dumps refuses: an error handler that
+            # raises on its own is the worst possible failure mode here.
+            errors=json.loads(json.dumps(exc.errors(), default=str)),
         )
-        # Attach the field-level errors -- helps when debugging Dash callbacks.
-        import json
-
-        body = json.loads(response.body)
-        body["errors"] = json.loads(json.dumps(exc.errors(), default=str))
-        return JSONResponse(status_code=422, media_type="application/problem+json",
-                            content=body, headers=dict(response.headers))
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
