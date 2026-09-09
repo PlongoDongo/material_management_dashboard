@@ -17,7 +17,7 @@ import polars as pl
 import pytest
 
 from data import repository as repo
-from data.api_client import DataProductClient, DataProductError
+from data.api_client import DataProductClient, DataProductError, NotAuthorisedError
 from data.schema import COLUMNS
 
 # Zeilen genau so, wie sie das Datenprodukt material-overview/v2 liefert.
@@ -259,3 +259,70 @@ def test_client_ist_mit_der_vorlage_deckungsgleich() -> None:
         "data/api_client.py und api/src/data_api/clients/dash_client.py sind "
         "auseinandergelaufen. Vorlage kopieren und nur den Kopf anpassen."
     )
+
+
+# --- Anmeldung: Cache darf nicht ueber Nutzer hinweg lecken ------------------
+
+def test_cache_ist_pro_rollen_satz_getrennt(monkeypatch) -> None:
+    """Der Prozess-Cache darf keine Daten an Unberechtigte durchreichen.
+
+    Ohne den Rollen-Schluessel wuerde der zweite Nutzer den Stand des ersten
+    aus dem Cache bekommen -- die API waere nie gefragt worden und ihre 403
+    damit nie gestellt. Das ist die Sorte Luecke, die kein Test der API selbst
+    finden kann, weil sie im Dashboard sitzt.
+    """
+    aufrufe: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        aufrufe.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json=_envelope(API_ROWS))
+
+    monkeypatch.setattr(repo, "_client", _client(handler))
+    monkeypatch.setattr(repo, "access_token", lambda: "token-planer")
+    monkeypatch.setattr(repo, "user_roles", lambda: frozenset({"planner"}))
+    repo.get_materials()
+    repo.get_materials()                       # gecacht -> kein zweiter Aufruf
+    assert len(aufrufe) == 1
+
+    # Anderer Nutzer, andere Rollen -> eigener Eimer, also erneut zur API
+    monkeypatch.setattr(repo, "access_token", lambda: "token-gast")
+    monkeypatch.setattr(repo, "user_roles", lambda: frozenset({"guest"}))
+    repo.get_materials()
+    assert len(aufrufe) == 2
+
+
+def test_das_token_wird_als_bearer_mitgeschickt(monkeypatch) -> None:
+    """Ohne diesen Header antwortet die API mit 401 -- und zwar zu Recht."""
+    gesehen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        gesehen.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json=_envelope(API_ROWS))
+
+    monkeypatch.setattr(repo, "_client", _client(handler))
+    monkeypatch.setattr(repo, "access_token", lambda: "abc.def.ghi")
+    monkeypatch.setattr(repo, "user_roles", lambda: frozenset())
+    repo.get_materials()
+    assert gesehen == ["Bearer abc.def.ghi"]
+
+
+def test_ein_403_wird_nicht_aus_dem_cache_beantwortet(monkeypatch) -> None:
+    """Bei fehlender Berechtigung darf kein alter Stand ausgeliefert werden.
+
+    Der Ausfall-Fallback ("lieber veraltete Zahlen als eine leere Tabelle")
+    gilt fuer eine unerreichbare API -- nicht fuer eine, die bewusst Nein sagt.
+    """
+    antworten = [httpx.Response(200, json=_envelope(API_ROWS)),
+                 httpx.Response(403, json={"title": "Access denied", "detail": "nope",
+                                           "code": "forbidden"})]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return antworten.pop(0)
+
+    monkeypatch.setattr(repo, "_client", _client(handler))
+    monkeypatch.setattr(repo, "access_token", lambda: "t")
+    monkeypatch.setattr(repo, "user_roles", lambda: frozenset({"planner"}))
+
+    repo.get_materials()                                   # fuellt den Cache
+    with pytest.raises(NotAuthorisedError):
+        repo.get_materials(force_reload=True)

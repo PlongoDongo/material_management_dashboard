@@ -71,12 +71,29 @@ def _entry(name: str, versions: list[DataProduct]) -> CatalogEntry:
 # had not been made.
 @router.get("", summary="All available data products")
 async def list_products(principal: CurrentPrincipal) -> list[CatalogEntry]:
-    return [_entry(name, registry.versions_of(name)) for name in registry.names()]
+    """Only the products this caller may actually fetch.
+
+    The catalog is what the dashboard reads to decide which pages to offer, so
+    listing a product the caller would get a 403 on is worse than useless -- it
+    produces a menu entry that breaks when clicked. Filtering here also stops
+    the catalog from leaking the existence of restricted products.
+    """
+    visible = [
+        (name, allowed)
+        for name in registry.names()
+        if (allowed := [p for p in registry.versions_of(name)
+                        if principal.may_access(p.required_groups)])
+    ]
+    return [_entry(name, versions) for name, versions in visible]
 
 
 @router.get("/{name}", summary="One data product with all its versions")
 async def get_product(name: str, principal: CurrentPrincipal) -> CatalogEntry:
-    versions = registry.versions_of(name)
+    versions = [p for p in registry.versions_of(name)
+                if principal.may_access(p.required_groups)]
     if not versions:
+        # 404 rather than 403, and deliberately the same answer as for a name
+        # that does not exist: otherwise the error code itself would tell an
+        # unauthorised caller which products exist.
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Unknown: {name}")
     return _entry(name, versions)

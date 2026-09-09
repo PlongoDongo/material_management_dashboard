@@ -20,6 +20,7 @@ from typing import Any
 
 from data_api.products.catalog import material_overview_v2 as mo2
 from data_api.products.catalog import material_overview_v3 as mo3
+from data_api.products.catalog import material_search_v1 as ms1
 from data_api.products.catalog import supplier_risk_v2 as sr2
 
 # Fixed seed -> reproducible data, so tests can assert exact values.
@@ -68,6 +69,63 @@ def material_rows_v2() -> list[dict[str, Any]]:
 def material_rows_v3() -> list[dict[str, Any]]:
     """Matches mo3.CYPHER: has plant_id/plant_name and price, no unit."""
     return [{k: v for k, v in row.items() if k != "unit"} for row in _material_base()]
+
+
+# --- material-search: the fake has to behave like a database ----------------
+#
+# Every other product here answers with a fixed row list, because the product
+# does its filtering in Python and the test can check the outcome. material-search
+# pushes filtering, ordering and the window INTO the query, so a fixed answer
+# would test nothing -- the whole point is what the database does with the
+# parameters. So this emulates it: filter, sort, slice.
+#
+# That makes these two functions a second implementation of the same rules, and
+# a second implementation can drift from the first. The backstop is
+# test_integration_neo4j.py, which runs the real query against a real Neo4j when
+# one is available (NEO4J_TEST_URI). Believe that one over this one.
+
+def _search_filtered(parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """The WHERE clause of ms1._MATCH_AND_FILTER, in Python."""
+    rows = _material_base()
+    if parameters.get("status"):
+        rows = [r for r in rows if r["status"] in parameters["status"]]
+    if parameters.get("plant_id"):
+        rows = [r for r in rows if r["plant_id"] in parameters["plant_id"]]
+    if parameters.get("material_group"):
+        rows = [r for r in rows if r["material_group"] in parameters["material_group"]]
+    if parameters.get("unclassified_only"):
+        rows = [r for r in rows if not r["material_group"]]
+    if parameters.get("min_stock") is not None:
+        rows = [r for r in rows if r["stock"] >= parameters["min_stock"]]
+    if parameters.get("search"):
+        needle = parameters["search"]
+        rows = [r for r in rows
+                if needle in f"{r['material_number']} {r['description']}".lower()]
+    return rows
+
+
+def search_page(cypher: str, parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """ORDER BY + SKIP/LIMIT of ms1.CYPHER_PAGE, in Python.
+
+    The sort column is read back out of the query text because that is where the
+    product put it -- Cypher cannot parameterise a property name, so the fake
+    cannot receive it as a parameter either.
+    """
+    rows = _search_filtered(parameters)
+    if "m.bestand DESC" in cypher:
+        rows.sort(key=lambda r: (-r["stock"], r["material_number"]))
+    elif "m.geaendert DESC" in cypher:
+        rows.sort(key=lambda r: (r["changed_on"], r["material_number"]), reverse=True)
+    else:
+        rows.sort(key=lambda r: r["material_number"])
+
+    skip = parameters.get("skip", 0)
+    return rows[skip: skip + parameters.get("limit", len(rows))]
+
+
+def search_total(parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """ms1.CYPHER_COUNT: the number of matches BEFORE the window."""
+    return [{"total": len(_search_filtered(parameters))}]
 
 
 def supplier_rows() -> list[dict[str, Any]]:
@@ -136,7 +194,11 @@ class FakeSources:
         """
         return {name: value for _, p in self.calls for name, value in p.items()}
 
-    async def neo4j(self, cypher: str, **parameters: Any) -> list[dict[str, Any]]:
+    # ANN401 on both methods: these signatures MIRROR db/sources.py on purpose.
+    # A narrower type here would let a test pass that the real Sources rejects.
+    # ANN401 on both methods: these signatures MIRROR db/sources.py on purpose.
+    # A narrower type here would let a test pass that the real Sources rejects.
+    async def neo4j(self, cypher: str, **parameters: Any) -> list[dict[str, Any]]:  # noqa: ANN401
         self.used.add("neo4j")
         self.calls.append((cypher, parameters))
         if cypher is mo2.CYPHER:
@@ -145,12 +207,19 @@ class FakeSources:
             return material_rows_v3()
         if cypher is sr2.CYPHER:
             return supplier_rows()
+        # material-search builds its page query with .format(order_by=...), so
+        # there is no object to compare by identity. The COUNT query is checked
+        # first because both start with the same shared fragment.
+        if cypher is ms1.CYPHER_COUNT:
+            return search_total(parameters)
+        if cypher.startswith(ms1._MATCH_AND_FILTER):
+            return search_page(cypher, parameters)
         raise AssertionError(
             "FakeSources does not know this Cypher query. New data product? "
             "Then add a matching answer in tests/fakes.py.\n\n" + cypher
         )
 
-    async def postgres(self, sql: str, **parameters: Any) -> list[dict[str, Any]]:
+    async def postgres(self, sql: str, **parameters: Any) -> list[dict[str, Any]]:  # noqa: ANN401
         self.used.add("postgres")
         self.calls.append((sql, parameters))
         if sql is sr2.SQL:

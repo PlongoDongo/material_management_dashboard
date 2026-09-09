@@ -9,27 +9,28 @@ had simply not been held to the same standard yet.
 """
 from __future__ import annotations
 
-import datetime as dt
 import locale
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.fakes import FakeSources
+from tests.types import AuthHeader
 
 from data_api.application import create_app
 from data_api.core.config import Settings
 from data_api.core.security import ANONYMOUS, Principal
 
-
 # --- .env.example is a shipped interface ------------------------------------
 
-def test_env_example_loads_and_leaves_auth_off(tmp_path):
+def test_env_example_loads_and_leaves_auth_off(tmp_path: Path) -> None:
     """`cp .env.example .env` must produce an app that starts.
 
     Two traps at once: pydantic-settings parses complex fields (list[str]) as
     JSON inside the source -- without NoDecode the app fails to start on
     `API_CORS_ORIGINS=a,b`. And python-dotenv only strips a trailing comment
-    when a value precedes it: `API_KEYS=  # empty = off` would have read the
-    comment text as a key and switched auth ON.
+    when a value precedes it: `OIDC_ISSUER=  # empty = off` would have read the
+    comment text as an issuer and switched auth ON.
     """
     from pathlib import Path
 
@@ -39,13 +40,13 @@ def test_env_example_loads_and_leaves_auth_off(tmp_path):
 
     settings = Settings(_env_file=str(target))
     assert settings.api_cors_origins == ["http://localhost:8050", "http://localhost:8051"]
-    assert settings.api_keys == []
+    assert not settings.oidc_issuer
     assert settings.auth_enabled is False
 
 
 # --- Request-ID -------------------------------------------------------------
 
-def test_request_id_appears_in_the_access_log_line(client, caplog):
+def test_request_id_appears_in_the_access_log_line(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
     """The one line tying path, status and duration together needs the id.
 
     Previously the ContextVar was reset in `finally` -- that is, BEFORE the log
@@ -59,7 +60,7 @@ def test_request_id_appears_in_the_access_log_line(client, caplog):
     assert lines[-1].request_id == "abc123"
 
 
-def test_the_request_id_survives_a_server_error(settings):
+def test_the_request_id_survives_a_server_error(settings: Settings) -> None:
     """On a 500 the response no longer passes through the middleware.
 
     That is exactly where correlation is worth the most -- so the id has to be
@@ -68,7 +69,9 @@ def test_the_request_id_survives_a_server_error(settings):
     app = create_app(settings)
 
     @app.get("/boom")
-    async def boom():
+    # `-> None`, not the `Never` a type checker would infer: FastAPI builds a
+    # response model from the return annotation and cannot make one from Never.
+    async def boom() -> None:
         raise RuntimeError("deliberate")
 
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -81,7 +84,7 @@ def test_the_request_id_survives_a_server_error(settings):
 
 # --- Envelope metadata ------------------------------------------------------
 
-def test_meta_source_stays_correct_on_cache_hits(client):
+def test_meta_source_stays_correct_on_cache_hits(client: TestClient) -> None:
     """On a cache hit no query runs -- the source must still be right.
 
     Previously every cached response reported `source="none"`. With
@@ -95,7 +98,7 @@ def test_meta_source_stays_correct_on_cache_hits(client):
     assert second["source"] == first["source"] == "neo4j+postgres"
 
 
-def test_generated_at_means_the_time_of_the_query(client):
+def test_generated_at_means_the_time_of_the_query(client: TestClient) -> None:
     """Not "now" -- otherwise the age field would look fresh on every hit."""
     path = "/api/v1/data-products/supplier-risk/v2"
     first = client.get(path).json()["meta"]["generated_at"]
@@ -103,7 +106,7 @@ def test_generated_at_means_the_time_of_the_query(client):
     assert first == second
 
 
-def test_paging_does_not_trigger_another_database_run(client, fake_sources):
+def test_paging_does_not_trigger_another_database_run(client: TestClient, fake_sources: FakeSources) -> None:
     """limit/offset select a window, they do not define the dataset.
 
     Previously they were part of the cache key: every page was a full re-run of
@@ -123,7 +126,7 @@ def test_paging_does_not_trigger_another_database_run(client, fake_sources):
 
 # --- Sunset header ----------------------------------------------------------
 
-def test_the_sunset_header_is_locale_independent(client):
+def test_the_sunset_header_is_locale_independent(client: TestClient) -> None:
     """RFC 9110 requires a fixed, English date format.
 
     `strftime("%a, %d %b ...")` follows the container locale and produced
@@ -142,21 +145,19 @@ def test_the_sunset_header_is_locale_independent(client):
 
 # --- Authentication ---------------------------------------------------------
 
-def test_the_catalog_is_as_protected_as_the_data_products(settings):
+def test_the_catalog_is_as_protected_as_the_data_products(oidc_settings: Settings, auth_header: AuthHeader) -> None:
     """The catalog lists owners, cache times and every contract field.
 
     Leaving it open without a key would be a decision -- previously it was just
     an omitted line.
     """
-    protected = settings.model_copy(update={"api_keys": ["secret"]})
-    with TestClient(create_app(protected)) as client:
+    with TestClient(create_app(oidc_settings)) as client:
         assert client.get("/api/v1/catalog").status_code == 401
         assert client.get("/api/v1/catalog/material-overview").status_code == 401
-        assert client.get("/api/v1/catalog",
-                          headers={"X-API-Key": "secret"}).status_code == 200
+        assert client.get("/api/v1/catalog", headers=auth_header()).status_code == 200
 
 
-def test_disabled_auth_does_not_lock_anyone_out():
+def test_disabled_auth_does_not_lock_anyone_out() -> None:
     """"Auth off" has to mean EVERYTHING is open, not "only the public group".
 
     Previously development was stricter than production: a product with
@@ -170,39 +171,40 @@ def test_disabled_auth_does_not_lock_anyone_out():
     assert authenticated.may_access(("public",)) is True
 
 
-def test_the_api_key_does_not_appear_in_the_response(settings):
-    """`changed_by` should hold an identity, not credentials.
+def test_the_audit_field_holds_an_identity_not_a_credential(oidc_settings: Settings, auth_header: AuthHeader) -> None:
+    """`changed_by` should say WHO, in a form a human recognises.
 
-    Previously the first four characters of the key ended up in the response and
-    in every log line.
+    Two failure modes this guards against at once: leaking part of the
+    credential into the response (the API key era did exactly that), and
+    writing the raw `sub` UUID, which is correct but unreadable in an audit
+    column.
     """
-    protected = settings.model_copy(update={"api_keys": ["very-long-secret"]})
-    with TestClient(create_app(protected)) as client:
+    with TestClient(create_app(oidc_settings)) as client:
         response = client.post(
             "/api/v1/mappings",
-            headers={"X-API-Key": "very-long-secret"},
+            headers=auth_header(username="m.renner", roles=["material-planner"]),
             json={"material_number": "MAT-1", "target_material_group": "Rohstoffe"},
         )
     assert response.status_code == 201
-    subject = response.json()["changed_by"]
-    assert subject.startswith("apikey:")
-    assert "very" not in subject           # no characters of the key itself
+    changed_by = response.json()["changed_by"]
+    assert changed_by == "m.renner"
+    assert "eyJ" not in changed_by         # no part of the token itself
 
 
 # --- Readiness --------------------------------------------------------------
 
-def test_readyz_only_checks_required_sources(client_without_sources):
+def test_readyz_only_checks_required_sources(client_without_sources: TestClient) -> None:
     """Both sources are needed here -> both are missing -> 503."""
     response = client_without_sources.get("/api/v1/readyz")
     assert response.status_code == 503
     assert set(response.json()["required"]) == {"neo4j", "postgres"}
 
 
-def test_required_sources_are_read_from_the_loaders():
+def test_required_sources_are_read_from_the_loaders() -> None:
     """Derived, not declared -- that way it cannot drift."""
-    from data_api.products.introspect import required_sources, sources_used_by
     from data_api.products.catalog.material_overview_v3 import load as load_material
     from data_api.products.catalog.supplier_risk_v2 import load as load_risk
+    from data_api.products.introspect import required_sources, sources_used_by
 
     assert sources_used_by(load_material) == ["neo4j"]
     assert sources_used_by(load_risk) == ["neo4j", "postgres"]

@@ -32,8 +32,45 @@ class ProductParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # limit/offset paginate the FINISHED product response and are applied by the
-    # router -- NOT in the query. If SKIP/LIMIT also appear in the Cypher, the
-    # result is sliced twice and every page after the first comes back empty.
+    # router -- NOT in the query. Two things go wrong if SKIP/LIMIT also appear
+    # in the Cypher, and only the first one is obvious:
+    #
+    #   1. Double slicing. `SKIP 100 LIMIT 100` returns rows 101-200, and the
+    #      router then takes rows[100:200] OF THOSE -- empty. Page 1 looks
+    #      correct, every later page is silently empty.
+    #   2. Short pages. Any filter still applied AFTER the query (see
+    #      catalog/material_overview_v3.transform) runs on the already-truncated
+    #      result. `LIMIT 20` fetches 20 rows, Python discards 17 of them, the
+    #      client gets 3 and concludes there is no more data. Wrong numbers,
+    #      status 200.
+    #
+    # PUSHING FILTERS DOWN IS STILL THE RIGHT DIRECTION -- it is simply
+    # all-or-nothing per product. Fetching 100k rows to return 20 wastes the
+    # transfer, the driver's deserialisation and the memory, and no index ever
+    # gets used. Doing it means, for ONE product, all of:
+    #
+    #   * every filter of its params model expressed in the query,
+    #   * ORDER BY in the query (a window without a stable order is arbitrary),
+    #   * SKIP/OFFSET and LIMIT in the query,
+    #   * a second COUNT query for meta.total_count -- the dashboard reads that
+    #     field to notice truncation (frontend .../data/repository.py), so
+    #     dropping it trades a slow table for a quietly incomplete one,
+    #   * limit/offset added to the cache key (see cache_key below), which costs
+    #     one cache entry and one database round trip PER PAGE instead of one
+    #     per filter combination.
+    #
+    # WHICH PRODUCTS DO IT: catalog/material_search_v1.py is the worked example
+    # -- read that one before writing a paged product. It opts in with
+    # `paginated_by_source=True` on its DataProduct, and the router then leaves
+    # the slicing alone and puts the window into the cache key.
+    #
+    # material-overview deliberately does NOT, and the reason is its consumer
+    # rather than the principle: the dashboard fetches limit=50_000 once and
+    # filters client-side, so it never pages. Pushdown would cost it a COUNT
+    # query and one cache entry per page for no measurable gain at 64 rows.
+    # supplier-risk CANNOT: it joins Neo4j and Postgres and only knows its
+    # result after aggregating in Polars, so there is no single query to push a
+    # LIMIT into. That is why the flag sits on the product and not in here.
     limit: int = Field(1000, ge=1, le=50_000, description="Maximum number of rows.")
     offset: int = Field(0, ge=0, description="Rows to skip.")
 
@@ -62,7 +99,7 @@ class ProductParams(BaseModel):
             return None
         return value
 
-    def cache_key(self) -> str:
+    def cache_key(self, *, include_window: bool = False) -> str:
         """The parameters as text -- part of the cache key.
 
         `limit`/`offset` are deliberately EXCLUDED: the cache holds the loader's
@@ -71,8 +108,20 @@ class ProductParams(BaseModel):
         database queries plus the Polars aggregation) and the same dataset would
         sit in the cache N times. They select a window; they do not define the
         dataset.
+
+        That last sentence stops being true the moment a product pushes
+        SKIP/LIMIT into its query (see the note on the fields above). Then the
+        window IS part of what was fetched, and leaving it out of the key means
+        page 2 gets served page 1's rows -- a data bug, not a performance one.
+        So the two decisions are one decision: pushdown and a window-aware cache
+        key move together, per product, or neither moves.
+
+        `include_window=True` is that second half. The router passes
+        `product.paginated_by_source` here so a caller can never get the pairing
+        wrong -- there is no way to switch one on without the other.
         """
-        return self.model_dump_json(exclude={"limit", "offset"})
+        window = set() if include_window else {"limit", "offset"}
+        return self.model_dump_json(exclude=window)
 
 
 class ProductMeta(BaseModel):
@@ -120,6 +169,25 @@ class ProductEnvelope(BaseModel, Generic[ItemT]):
 
 
 @dataclass(frozen=True)
+class Page:
+    """What a `paginated_by_source` loader returns instead of a plain list.
+
+    `total` cannot be derived from `rows` any more: the query already applied
+    SKIP/LIMIT, so `len(rows)` is the size of the window, not of the result. The
+    loader has to state the total explicitly -- normally from a second COUNT
+    query over the SAME filter.
+
+    That "same filter" is the part that rots. If the two queries ever disagree,
+    `meta.total_count` starts lying, and the dashboard's truncation warning goes
+    with it. See catalog/material_search_v1.py for the way to keep them in sync:
+    one shared MATCH/WHERE fragment, two RETURN clauses.
+    """
+
+    rows: list[dict[str, Any]]
+    total: int
+
+
+@dataclass(frozen=True)
 class DataProduct:
     """The description of a data product.
 
@@ -145,6 +213,14 @@ class DataProduct:
     deprecated: bool = False
     sunset: dt.date | None = None   # when this version will be switched off
     required_groups: tuple[str, ...] = ()
+    # Opt-in for query-side pagination. False (the default) means: the loader
+    # returns every matching row and the router cuts the window out of it.
+    # True means the loader takes limit/offset into its own query and returns a
+    # `Page`; the router then does NOT slice again, and limit/offset become part
+    # of the cache key. Per product rather than global, because it is not always
+    # possible -- supplier-risk only knows its result after joining two sources
+    # in Polars, so there is no single query to push a LIMIT into.
+    paginated_by_source: bool = False
 
     def __post_init__(self) -> None:
         parts = self.version.split(".")

@@ -34,7 +34,10 @@ class TTLCache:
         digest = hashlib.sha256(params.encode()).hexdigest()[:16]
         return f"{product}:v{major}:{digest}"
 
-    def get(self, key: str) -> Any | None:
+    # ANN401: a cache is heterogeneous by definition -- it hands back whatever
+    # was put in. `object` would be more precise but would force every caller
+    # to cast before unpacking, which buys nothing here.
+    def get(self, key: str) -> Any | None:  # noqa: ANN401
         entry = self._store.get(key)
         if entry is None:
             return None
@@ -44,7 +47,7 @@ class TTLCache:
             return None
         return value
 
-    def set(self, key: str, value: Any, ttl: int) -> None:
+    def set(self, key: str, value: object, ttl: int) -> None:
         if ttl <= 0:
             return
         if len(self._store) >= self._max:
@@ -68,7 +71,7 @@ class TTLCache:
 cache = TTLCache()
 
 
-def etag_for(payload: Any) -> str:
+def etag_for(payload: object) -> str:
     """Weak ETag over the serialised payload.
 
     Benefit: a polling client can send `If-None-Match` and get a 304 with no

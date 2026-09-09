@@ -26,14 +26,19 @@ import datetime as dt
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Body, status
+from fastapi import APIRouter, Body, Depends, status
 from pydantic import BaseModel, Field
 
 from data_api.api.deps import SourcesDep
-from data_api.core.security import CurrentPrincipal
+from data_api.core.security import CurrentPrincipal, requires
 from data_api.products.cache import cache
 
 log = logging.getLogger(__name__)
+
+# The Keycloak role a caller needs in order to CHANGE anything here. Reading a
+# data product and rewriting the master data are different privileges, so they
+# get different checks -- adjust the name to match your realm.
+WRITE_ROLE = "material-planner"
 
 router = APIRouter(prefix="/mappings", tags=["Mappings (write)"])
 
@@ -61,7 +66,11 @@ class MappingOut(MappingIn):
     "",
     status_code=status.HTTP_201_CREATED,
     summary="Create a new mapping",
-    responses={409: {"description": "The mapping already exists."}},
+    dependencies=[Depends(requires(WRITE_ROLE))],
+    responses={
+        403: {"description": f"The caller lacks the '{WRITE_ROLE}' role."},
+        409: {"description": "The mapping already exists."},
+    },
 )
 async def create_mapping(
     payload: Annotated[MappingIn, Body()],
@@ -80,7 +89,7 @@ async def create_mapping(
     # The commit happens automatically in the request scope (api/deps.py) -- but
     # only on the success path. Raise here and nothing is written.
     log.info("Mapping created by %s: %s -> %s",
-             principal.subject, payload.material_number, payload.target_material_group)
+             principal.label, payload.material_number, payload.target_material_group)
 
     invalidated = cache.invalidate("material-overview")
     log.info("Cache invalidated: %d entries.", invalidated)
@@ -89,11 +98,16 @@ async def create_mapping(
         **payload.model_dump(),
         id=f"map-{payload.material_number}",
         changed_at=dt.datetime.now(dt.UTC),
-        changed_by=principal.subject,
+        changed_by=principal.label,
     )
 
 
-@router.patch("/{mapping_id}", summary="Partially change a mapping")
+@router.patch(
+    "/{mapping_id}",
+    summary="Partially change a mapping",
+    dependencies=[Depends(requires(WRITE_ROLE))],
+    responses={403: {"description": f"The caller lacks the '{WRITE_ROLE}' role."}},
+)
 async def patch_mapping(
     mapping_id: str,
     payload: Annotated[MappingIn, Body()],
@@ -106,5 +120,5 @@ async def patch_mapping(
         **payload.model_dump(),
         id=mapping_id,
         changed_at=dt.datetime.now(dt.UTC),
-        changed_by=principal.subject,
+        changed_by=principal.label,
     )

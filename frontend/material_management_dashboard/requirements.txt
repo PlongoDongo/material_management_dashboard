@@ -5,3 +5,8 @@ pytest>=8.0
 # HTTP-Client fuer den API-Layer. Ersetzt den frueheren neo4j-Treiber:
 # das Dashboard kennt die Datenbank nicht mehr.
 httpx>=0.27
+
+# OIDC-Anmeldung gegen Keycloak (auth/keycloak.py). Bringt den
+# Authorization-Code-Flow und die Token-Erneuerung mit.
+authlib>=1.3
+requests>=2.31

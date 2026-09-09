@@ -43,7 +43,9 @@ log = logging.getLogger(__name__)
 Row = dict[str, Any]
 
 
-def _to_python_value(value: Any) -> Any:
+# ANN401 twice: the driver hands back arbitrary values (nodes, temporals,
+# spatials, primitives) and this function's whole job is to accept all of them.
+def _to_python_value(value: Any) -> Any:  # noqa: ANN401
     """Translates Neo4j-specific types into ones Pydantic and JSON understand.
 
     The driver returns its own classes for several property types. Without this
@@ -126,7 +128,9 @@ class Sources:
         # Which sources this request actually used -> ends up in meta.source.
         self.used: set[str] = set()
 
-    async def neo4j(self, cypher: str, **parameters: Any) -> list[Row]:
+    # ANN401: Cypher parameters are whatever the query declares -- strings,
+    # numbers, lists, dates. Narrowing this would be a lie.
+    async def neo4j(self, cypher: str, **parameters: Any) -> list[Row]:  # noqa: ANN401
         """Runs a Cypher query and returns its rows.
 
             rows = await sources.neo4j("MATCH (m:Material) RETURN m.nr AS number")
@@ -167,7 +171,8 @@ class Sources:
             # between "try again later" and "please report this as a bug".
             raise UpstreamUnavailableError(f"Neo4j unreachable: {error}") from error
 
-    async def postgres(self, sql: str, **parameters: Any) -> list[Row]:
+    # ANN401: same reasoning as `neo4j` above.
+    async def postgres(self, sql: str, **parameters: Any) -> list[Row]:  # noqa: ANN401
         """Runs a SQL query and returns its rows.
 
             rows = await sources.postgres("SELECT * FROM x WHERE d >= :since", since=...)

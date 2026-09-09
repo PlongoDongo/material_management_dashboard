@@ -17,10 +17,14 @@ from neo4j.graph import Graph, Node
 from data_api.db.sources import _to_python_value
 from data_api.products.catalog.material_overview_v3 import (
     MaterialParamsV3,
+)
+from data_api.products.catalog.material_overview_v3 import (
     transform as transform_material,
 )
 from data_api.products.catalog.supplier_risk_v2 import (
     SupplierRiskParams,
+)
+from data_api.products.catalog.supplier_risk_v2 import (
     transform as transform_risk,
 )
 
@@ -34,34 +38,34 @@ RAW_ROWS = [
 ]
 
 
-def test_stock_value_is_computed():
+def test_stock_value_is_computed() -> None:
     rows = transform_material(RAW_ROWS, MaterialParamsV3())
     assert rows[0]["stock_value"] == 25.0
 
 
-def test_missing_stock_stays_unknown_instead_of_zero():
+def test_missing_stock_stays_unknown_instead_of_zero() -> None:
     """Important: None != 0. A missing stock level is unknown, not empty."""
     rows = transform_material(RAW_ROWS, MaterialParamsV3())
     assert rows[1]["stock"] is None
     assert rows[1]["stock_value"] is None
 
 
-def test_empty_material_group_is_normalised_to_none():
+def test_empty_material_group_is_normalised_to_none() -> None:
     rows = transform_material(RAW_ROWS, MaterialParamsV3())
     assert rows[1]["material_group"] is None
 
 
-def test_unclassified_only_finds_empty_and_missing_groups():
+def test_unclassified_only_finds_empty_and_missing_groups() -> None:
     rows = transform_material(RAW_ROWS, MaterialParamsV3(unclassified_only=True))
     assert [r["material_number"] for r in rows] == ["MAT-2"]
 
 
-def test_search_is_case_insensitive_over_number_and_description():
+def test_search_is_case_insensitive_over_number_and_description() -> None:
     assert len(transform_material(RAW_ROWS, MaterialParamsV3(search="schraube"))) == 1
     assert len(transform_material(RAW_ROWS, MaterialParamsV3(search="mat-"))) == 2
 
 
-def test_min_stock_value_drops_rows_without_a_value():
+def test_min_stock_value_drops_rows_without_a_value() -> None:
     rows = transform_material(RAW_ROWS, MaterialParamsV3(min_stock_value=10))
     assert [r["material_number"] for r in rows] == ["MAT-1"]
 
@@ -81,14 +85,14 @@ def _delivery(supplier_id: str, delay: int, complaints: int = 0) -> dict:
             "quantity": 100, "complaints": complaints}
 
 
-def test_punctual_supplier_scores_zero():
+def test_punctual_supplier_scores_zero() -> None:
     rows = transform_risk(MASTER[:1], [_delivery("S-1", 0)], SupplierRiskParams())
     assert rows[0]["risk_score"] == 0.0
     assert rows[0]["on_time_rate_pct"] == 100.0
     assert rows[0]["risk_class"] == "low"
 
 
-def test_delay_and_complaints_raise_the_score():
+def test_delay_and_complaints_raise_the_score() -> None:
     deliveries = [_delivery("S-1", 0), _delivery("S-2", 14, complaints=1)]
     rows = transform_risk(MASTER, deliveries, SupplierRiskParams())
     by_id = {r["supplier_id"]: r for r in rows}
@@ -98,7 +102,7 @@ def test_delay_and_complaints_raise_the_score():
     assert by_id["S-2"]["risk_class"] == "high"
 
 
-def test_tolerance_days_shift_the_on_time_boundary():
+def test_tolerance_days_shift_the_on_time_boundary() -> None:
     deliveries = [_delivery("S-1", 2)]
     without = transform_risk(MASTER[:1], deliveries, SupplierRiskParams(tolerance_days=0))
     with_tol = transform_risk(MASTER[:1], deliveries, SupplierRiskParams(tolerance_days=3))
@@ -107,17 +111,17 @@ def test_tolerance_days_shift_the_on_time_boundary():
     assert with_tol[0]["risk_score"] < without[0]["risk_score"]
 
 
-def test_supplier_without_deliveries_is_hidden_by_default():
+def test_supplier_without_deliveries_is_hidden_by_default() -> None:
     rows = transform_risk(MASTER, [_delivery("S-1", 0)], SupplierRiskParams(min_deliveries=1))
     assert [r["supplier_id"] for r in rows] == ["S-1"]
 
 
-def test_empty_input_yields_empty_output_instead_of_crashing():
+def test_empty_input_yields_empty_output_instead_of_crashing() -> None:
     assert transform_risk([], [], SupplierRiskParams()) == []
     assert transform_risk(MASTER, [], SupplierRiskParams(min_deliveries=0)) != []
 
 
-def test_supplier_without_deliveries_is_unknown_not_low_risk():
+def test_supplier_without_deliveries_is_unknown_not_low_risk() -> None:
     """No data must not become a top grade.
 
     Before: fill_null(1.0) on "on_time" -> score 0.0 -> class "low". A supplier
@@ -137,7 +141,7 @@ def test_supplier_without_deliveries_is_unknown_not_low_risk():
     assert unknown["on_time_rate_pct"] is None
 
 
-def test_rows_without_data_sort_last():
+def test_rows_without_data_sort_last() -> None:
     rows = transform_risk(MASTER, [_delivery("S-1", 14, complaints=1)],
                           SupplierRiskParams(min_deliveries=0))
     assert [r["risk_class"] for r in rows] == ["high", "unknown"]
@@ -147,18 +151,23 @@ def test_rows_without_data_sort_last():
 # These tests cover a bug that would have hit on the first real date coming out
 # of the graph: the driver returns its own classes, which Pydantic rejects.
 
-def test_neo4j_date_becomes_a_python_date():
+def test_neo4j_date_becomes_a_python_date() -> None:
     assert _to_python_value(nt.Date(2026, 8, 20)) == dt.date(2026, 8, 20)
-    assert _to_python_value(nt.DateTime(2026, 8, 20, 10, 30)) == dt.datetime(2026, 8, 20, 10, 30)
+    # DTZ001 off on purpose: `DateTime.to_native()` returns a NAIVE datetime for a
+    # Neo4j DateTime without a zone, so the expected value has to be naive too.
+    # Adding a tzinfo here would make the test fail on correct behaviour.
+    assert _to_python_value(nt.DateTime(2026, 8, 20, 10, 30)) == dt.datetime(  # noqa: DTZ001
+        2026, 8, 20, 10, 30
+    )
     assert _to_python_value(nt.Time(10, 30)) == dt.time(10, 30)
 
 
-def test_duration_becomes_readable_text_not_a_bare_array():
+def test_duration_becomes_readable_text_not_a_bare_array() -> None:
     """Duration subclasses tuple and would silently have become [3,2,0,90]."""
     assert _to_python_value(nt.Duration(months=3, days=2, seconds=90)) == "P3M2DT1M30S"
 
 
-def test_point_keeps_its_meaning_and_shape():
+def test_point_keeps_its_meaning_and_shape() -> None:
     """Point subclasses tuple too -- without srid it is unclear what 7.1 means.
 
     `z` is always present so the row shape does not change between a 2D and a 3D
@@ -170,12 +179,12 @@ def test_point_keeps_its_meaning_and_shape():
         "srid": 7203, "x": 1.0, "y": 2.0, "z": None}
 
 
-def test_node_becomes_its_properties():
+def test_node_becomes_its_properties() -> None:
     node = Node(Graph(), "n1", "4:a:1", ["Material"], {"nr": "MAT-1", "bestand": 10})
     assert _to_python_value(node) == {"nr": "MAT-1", "bestand": 10}
 
 
-def test_nested_values_are_converted_too():
+def test_nested_values_are_converted_too() -> None:
     """collect() and map projections produce lists and dicts."""
     raw = {"plant": "Koeln", "dates": [nt.Date(2026, 1, 1), nt.Date(2026, 2, 1)],
            "detail": {"as_of": nt.Date(2026, 3, 1)}}
@@ -186,7 +195,7 @@ def test_nested_values_are_converted_too():
     }
 
 
-def test_unknown_driver_types_fail_loudly():
+def test_unknown_driver_types_fail_loudly() -> None:
     """A driver type this function does not know must not pass through silently.
 
     The check has to run BEFORE the container handling: several Neo4j types
@@ -196,6 +205,6 @@ def test_unknown_driver_types_fail_loudly():
         _to_python_value(nt.ClockTime(1, 2))
 
 
-def test_plain_values_are_unchanged():
+def test_plain_values_are_unchanged() -> None:
     for value in ("text", 42, 3.14, True, None):
         assert _to_python_value(value) == value
