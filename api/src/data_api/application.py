@@ -71,8 +71,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sql_engine = None
     app.state.sql_sessionmaker = None
     try:
-        app.state.neo4j_driver = await create_driver(settings.neo4j_uri, settings.neo4j_auth)
-        app.state.sql_engine = create_engine(settings.postgres_dsn)
+        app.state.neo4j_driver = await create_driver(
+            settings.neo4j_uri,
+            settings.neo4j_auth,
+            max_connection_pool_size=settings.neo4j_max_connection_pool_size,
+            connection_acquisition_timeout=settings.neo4j_connection_acquisition_timeout,
+        )
+        app.state.sql_engine = create_engine(settings.sql_url, ssl=settings.sql_ssl)
         app.state.sql_sessionmaker = create_sessionmaker(app.state.sql_engine)
 
         log.info("Ready: %d data products, env=%s", len(registry), settings.api_env)
@@ -84,7 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    configure_logging(settings.api_log_level)
+    configure_logging(settings.server_loglevel)
 
     # Load the catalog BEFORE building the routes -- the registry must be
     # complete when the data product router is created.
@@ -108,15 +113,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.dependency_overrides[get_settings] = lambda: settings
 
     app.add_middleware(RequestContextMiddleware)
-    if settings.api_cors_origins:
+    if settings.cors_origins:
         # Needed because the Dash apps run on a different port than the API.
         # In production always list explicit origins -- never ["*"] with auth.
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=settings.api_cors_origins,
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-            allow_headers=["*"],
+            allow_origins=settings.cors_origins,
+            allow_credentials=settings.cors_allow_credentials,
+            allow_methods=settings.cors_allow_methods,
+            allow_headers=settings.cors_allow_headers,
             expose_headers=["X-Request-ID", "X-Data-Product-Version", "ETag"],
         )
 

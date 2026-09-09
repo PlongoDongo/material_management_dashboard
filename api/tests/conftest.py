@@ -31,14 +31,26 @@ from data_api.core.config import Settings
 from data_api.products.cache import cache
 
 
+@pytest.fixture(autouse=True)
+def _no_mounted_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> None:  # noqa: ANN001
+    """Points CREDENTIALS_DIR at an empty directory for EVERY test.
+
+    Without this the suite would read whatever the developer's machine has
+    mounted at /etc/credentials -- passing locally and failing in CI, or worse,
+    quietly talking to a real database. `_env_file=None` already does the same
+    job for the .env file; this is the same isolation for the other source.
+    """
+    monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path_factory.mktemp("no-credentials")))
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        neo4j_uri=None,
-        postgres_dsn=None,
+        neo4j_host=None,         # no graph -> FakeSources stands in
+        sql_host=None,
         api_env="dev",
         oidc_issuer=None,        # auth off -- the default for most tests
-        api_log_level="WARNING",
+        server_loglevel="warning",
         _env_file=None,          # a developer's .env must not influence tests
     )
 

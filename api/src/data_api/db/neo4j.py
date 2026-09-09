@@ -50,25 +50,41 @@ def _coerce_auth(auth: Auth) -> tuple[str, str] | None:
                 user, _, password = auth.partition(separator)
                 return (user, password)
         raise ConfigurationError(
-            "NEO4J_AUTH must be 'user/password' or 'user:password'."
+            "Neo4j auth as a string must be 'user/password' or 'user:password'."
         )
     return None
 
 
-async def create_driver(uri: str | None, auth: Auth) -> AsyncDriver | None:
+async def create_driver(
+    uri: str | None,
+    auth: Auth,
+    *,
+    max_connection_pool_size: int = 50,
+    connection_acquisition_timeout: float = 2.0,
+) -> AsyncDriver | None:
     """Creates the one driver. Without a URI: None.
 
     In that case every data product that needs the graph reports a configuration
     error and /readyz answers 503.
 
+    The two pool settings are passed in rather than left at the driver's
+    defaults so they are visible in core/config.py -- the acquisition timeout in
+    particular decides whether a saturated pool fails fast or piles requests up
+    until the client gives up.
+
     `verify_connectivity()` runs at startup on purpose: better for the container
     to fall over immediately than to report "healthy" and fail every request.
     """
     if not uri:
-        log.warning("NEO4J_URI is not set -- Neo4j inactive.")
+        log.warning("Neo4j host is not configured -- Neo4j inactive.")
         return None
 
-    driver = AsyncGraphDatabase.driver(uri, auth=_coerce_auth(auth))
+    driver = AsyncGraphDatabase.driver(
+        uri,
+        auth=_coerce_auth(auth),
+        max_connection_pool_size=max_connection_pool_size,
+        connection_acquisition_timeout=connection_acquisition_timeout,
+    )
     await driver.verify_connectivity()
     log.info("Connected to Neo4j: %s", uri)
     return driver
