@@ -403,7 +403,7 @@ Daher die Regel, die in unserem Code an mehreren Stellen als Kommentar steht:
 
 > Treiber langlebig und geteilt. Session kurzlebig und exklusiv.
 
-In unserem Code: Treiber in `application.py` (Lifespan), Session in
+In unserem Code: Treiber in `app.py` (Lifespan), Session in
 `api/deps.py` (Dependency). Und weil das Zurückgeben leicht vergessen wird,
 übernimmt es ein `AsyncExitStack` automatisch — auch wenn zwischendurch ein
 Fehler auftritt.
@@ -809,7 +809,7 @@ nur „gibt irgendein JSON zurück".
 Die Reihenfolge ist die einzige echte Bedingung: `discover()` **vor**
 `build_products_router()`. Wäre es umgekehrt, wäre das Verzeichnis beim
 Routenbauen noch leer und die API hätte null Datenprodukte. Beides steht direkt
-untereinander in `application.py::create_app()`.
+untereinander in `app.py::create_app()`.
 
 Und eine Stolperfalle, die uns beim Bauen erwischt hat: In `products/router.py`
 darf **kein** `from __future__ import annotations` stehen. Die Typangaben der

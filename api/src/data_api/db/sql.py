@@ -40,7 +40,7 @@ def create_engine(dsn: str | None, *, ssl: str | None = None) -> AsyncEngine | N
         log.warning("Postgres host is not configured -- SQL inactive.")
         return None
     if "+asyncpg" not in dsn and "+psycopg" not in dsn:
-        log.warning("POSTGRES_DSN without an async driver (%s) -- expected 'postgresql+asyncpg://'.",
+        log.warning("DSN without an async driver (%s) -- expected 'postgresql+asyncpg://'.",
                     dsn.split("://")[0])
     engine = create_async_engine(
         dsn,

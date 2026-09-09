@@ -1,5 +1,5 @@
 """
-Configuration: the credentials file as a settings SOURCE.
+Configuration: the credentials file as a fallback for unset fields.
 
 The failure modes this guards against are all quiet ones. A credentials loader
 that reads at the wrong time passes on the pod and breaks in CI; one that leaks
@@ -54,7 +54,7 @@ def test_the_file_fills_the_fields(mounted: Path) -> None:
     settings = _settings()
 
     assert settings.neo4j_host == "neo4j.intern"
-    assert settings.neo4j_user == "neo4j"
+    assert settings.neo4j_username == "neo4j"
     assert settings.sql_database == "warehouse"
     assert settings.sql_ssl == "require"
 
@@ -122,7 +122,7 @@ def test_an_environment_variable_beats_the_file(
     settings = _settings()
 
     assert settings.neo4j_host == "localhost"
-    assert settings.neo4j_user == "neo4j"          # still from the file
+    assert settings.neo4j_username == "neo4j"          # still from the file
 
 
 def test_an_explicit_argument_beats_everything(

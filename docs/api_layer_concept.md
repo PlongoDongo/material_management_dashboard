@@ -142,7 +142,7 @@ api/
 ├── src/
 │   └── data_api/                   # ← echtes, installierbares Paket
 │       ├── main.py                 # uvicorn data_api.main:app
-│       ├── application.py          # create_app() + Lifespan
+│       ├── app.py          # create_app() + Lifespan
 │       │
 │       ├── core/                   # querschnittlich, kennt keine Fachlichkeit
 │       │   ├── config.py           #   Settings (pydantic-settings)
@@ -398,7 +398,7 @@ SQLAlchemy identisch, nur die Begriffe unterscheiden sich:
 ### Wo was lebt
 
 ```python
-# application.py — Lifespan: läuft einmal beim Start und einmal beim Stoppen
+# app.py — Lifespan: läuft einmal beim Start und einmal beim Stoppen
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.neo4j_driver = await create_driver(...)      # ← prozessweit

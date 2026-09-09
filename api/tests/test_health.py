@@ -38,7 +38,7 @@ def test_a_product_without_its_source_reports_a_configuration_error(client_witho
     assert response.status_code == 500
     body = response.json()
     assert body["code"] == "configuration_error"
-    assert "NEO4J_URI" in body["detail"]
+    assert "NEO4J_HOST" in body["detail"]
 
 
 def test_the_request_id_header_is_set(client: TestClient) -> None:

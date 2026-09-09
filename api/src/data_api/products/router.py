@@ -109,7 +109,12 @@ def _make_endpoint(
     async def endpoint(
         request: Request,
         response: Response,
-        params: Annotated[ParamsModel, Query()],
+        # `ParamsModel` is a VARIABLE holding a model class, and a type checker
+        # cannot follow that -- it wants a type here, not a value. At runtime it
+        # is exactly right, which is the whole trick of this module. There is no
+        # way to express "the model this product happens to declare" statically,
+        # so the check is silenced for this one line rather than worked around.
+        params: Annotated[ParamsModel, Query()],  # pyright: ignore[reportInvalidTypeForm]
         sources: SourcesDep,
         principal: CurrentPrincipal,
     ) -> Any:  # noqa: ANN401 -- either the envelope dict or a bare 304 Response
@@ -124,7 +129,10 @@ def _make_endpoint(
         # already applied SKIP/LIMIT, so slicing here would cut a window out of
         # a window: page 1 would look right and every later page would come back
         # empty. See ProductParams.limit for the full write-up.
-        page = rows if product.paginated_by_source else rows[params.offset: params.offset + params.limit]
+        if product.paginated_by_source:
+            page = rows
+        else:
+            page = rows[params.offset: params.offset + params.limit]
 
         payload = {
             "meta": ProductMeta(

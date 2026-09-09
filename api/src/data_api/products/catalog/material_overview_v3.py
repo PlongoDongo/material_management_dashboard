@@ -93,8 +93,10 @@ def transform(rows: list[dict[str, Any]], params: MaterialParamsV3) -> list[dict
             continue
         if params.min_stock_value is not None and (stock_value or 0) < params.min_stock_value:
             continue
-        if needle and needle not in f"{row.get('material_number', '')} {row.get('description', '')}".lower():
-            continue
+        if needle:
+            haystack = f"{row.get('material_number', '')} {row.get('description', '')}"
+            if needle not in haystack.lower():
+                continue
 
         result.append({
             "material_number": row["material_number"],

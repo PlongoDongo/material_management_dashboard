@@ -73,8 +73,10 @@ def transform(rows: list[dict[str, Any]], params: MaterialParamsV2) -> list[dict
             continue
         if params.unclassified_only and material_group is not None:
             continue
-        if needle and needle not in f"{row.get('material_number', '')} {row.get('description', '')}".lower():
-            continue
+        if needle:
+            haystack = f"{row.get('material_number', '')} {row.get('description', '')}"
+            if needle not in haystack.lower():
+                continue
 
         result.append({
             "material_number": row["material_number"],

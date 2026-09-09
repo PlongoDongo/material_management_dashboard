@@ -7,7 +7,7 @@ regenerating gets a red build instead of a quietly wrong diagram.
 """
 from __future__ import annotations
 
-from data_api.application import create_app
+from data_api.app import create_app
 from data_api.architecture import (
     DEFAULT_OUT,
     build,

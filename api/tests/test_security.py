@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.types import AuthHeader, MakeToken
 
-from data_api.application import create_app
+from data_api.app import create_app
 from data_api.core.config import Settings
 from data_api.core.security import ANONYMOUS, Principal, _groups_from
 from data_api.products.registry import registry
