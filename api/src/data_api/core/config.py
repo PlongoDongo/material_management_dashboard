@@ -228,6 +228,14 @@ class Settings(BaseSettings):
     # Extra seconds of tolerance for clock skew between Keycloak and this host.
     oidc_leeway_seconds: int = 10
 
+    # Running without authentication is a legitimate choice -- a closed network,
+    # every caller inside it. But it has to be a CHOICE: without this flag, a
+    # deliberate decision and a forgotten OIDC_ISSUER look exactly the same from
+    # the outside, and only one of the two is fine. Setting it to true in a
+    # deployment is a sentence somebody can be asked about in a review; an
+    # unset variable is not.
+    allow_anonymous: bool = False
+
     @model_validator(mode="before")
     @classmethod
     def _fill_in_credentials(cls, values: Any) -> Any:  # noqa: ANN401
