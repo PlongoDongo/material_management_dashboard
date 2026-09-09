@@ -61,8 +61,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # nothing would say so. In production that must be a failure to start, not
     # a quiet default -- a server that does not come up gets noticed within
     # minutes; an open one might not get noticed at all.
+    #
+    # ALLOW_ANONYMOUS is the way out for a deployment that genuinely does not
+    # want authentication (a closed network). It does not weaken the check, it
+    # only turns "forgot to configure it" into "wrote down that we do not want
+    # it" -- and the warning below makes sure the state is visible in the log
+    # of every single start.
     if settings.api_env == "prod" and not settings.auth_enabled:
-        raise ConfigurationError("API_ENV=prod requires OIDC_ISSUER to be set.")
+        if not settings.allow_anonymous:
+            raise ConfigurationError(
+                "API_ENV=prod requires OIDC_ISSUER to be set. If this deployment is "
+                "deliberately unauthenticated (closed network), set ALLOW_ANONYMOUS=true."
+            )
+        log.warning("Authentication is OFF and ALLOW_ANONYMOUS=true -- every caller "
+                    "that reaches this API is treated as anonymous with full access.")
 
     # The assignments live INSIDE the try: if `create_engine` fails (a bad
     # DSN), the already-connected Neo4j driver would otherwise stay open --
