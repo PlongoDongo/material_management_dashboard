@@ -26,7 +26,7 @@ from tests.fakes import FakeSources
 from tests.types import AuthHeader, KeyPair, MakeToken
 
 from data_api.api.deps import get_sources
-from data_api.application import create_app
+from data_api.app import create_app
 from data_api.core.config import Settings
 from data_api.products.cache import cache
 

@@ -144,7 +144,7 @@ class Sources:
         """
         if self._driver is None:
             raise ConfigurationError(
-                "Neo4j is not configured (NEO4J_URI is missing) but is required here."
+                "Neo4j is not configured (NEO4J_HOST is missing) but is required here."
             )
         if "neo4j" not in self._sessions:
             self._sessions["neo4j"] = await self._stack.enter_async_context(
@@ -182,7 +182,7 @@ class Sources:
         """
         if self._sessionmaker is None:
             raise ConfigurationError(
-                "Postgres is not configured (POSTGRES_DSN is missing) but is required here."
+                "Postgres is not configured (SQL_HOST is missing) but is required here."
             )
         if "sql" not in self._sessions:
             self._sessions["sql"] = await self._stack.enter_async_context(

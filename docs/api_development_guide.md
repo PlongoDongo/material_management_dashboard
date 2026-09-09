@@ -107,7 +107,7 @@ in the same file. See [section 17](#17-why-there-is-no-repository-layer).
 api/
 ├── src/data_api/
 │   ├── main.py                 uvicorn entry point
-│   ├── application.py          create_app() + lifespan
+│   ├── app.py          create_app() + lifespan
 │   ├── architecture.py         generates docs/architecture.md
 │   │
 │   ├── core/                   cross-cutting, no business logic
@@ -472,7 +472,7 @@ only one dashboard uses it" is the standard way versioning fails.
 
 Say we add a REST service for quality data.
 
-**Step 1 — lifecycle** in `application.py`. Long-lived objects belong in the
+**Step 1 — lifecycle** in `app.py`. Long-lived objects belong in the
 lifespan, never in a module global:
 
 ```python

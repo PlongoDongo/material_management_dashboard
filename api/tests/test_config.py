@@ -1,5 +1,5 @@
 """
-Configuration: the credentials file as a settings SOURCE.
+Configuration: the mounted credential files as a fallback for unset fields.
 
 The failure modes this guards against are all quiet ones. A credentials loader
 that reads at the wrong time passes on the pod and breaks in CI; one that leaks
@@ -37,8 +37,8 @@ POSTGRES_FILE = {
 @pytest.fixture
 def mounted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A directory that looks like the platform's mount."""
-    (tmp_path / "neo4j.yaml").write_text(yaml.safe_dump(NEO4J_FILE), encoding="utf-8")
-    (tmp_path / "postgres.yaml").write_text(yaml.safe_dump(POSTGRES_FILE), encoding="utf-8")
+    (tmp_path / "neo4j.dev").write_text(yaml.safe_dump(NEO4J_FILE), encoding="utf-8")
+    (tmp_path / "postgres.project").write_text(yaml.safe_dump(POSTGRES_FILE), encoding="utf-8")
     monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))
     return tmp_path
 
@@ -54,7 +54,7 @@ def test_the_file_fills_the_fields(mounted: Path) -> None:
     settings = _settings()
 
     assert settings.neo4j_host == "neo4j.intern"
-    assert settings.neo4j_user == "neo4j"
+    assert settings.neo4j_username == "neo4j"
     assert settings.sql_database == "warehouse"
     assert settings.sql_ssl == "require"
 
@@ -98,17 +98,59 @@ def test_a_rotated_file_is_picked_up_by_a_fresh_settings(mounted: Path) -> None:
     assert _settings().neo4j_password.get_secret_value() == "s3hr-geheim"
 
     rotated = dict(NEO4J_FILE, password="rotiert")
-    (mounted / "neo4j.yaml").write_text(yaml.safe_dump(rotated), encoding="utf-8")
+    (mounted / "neo4j.dev").write_text(yaml.safe_dump(rotated), encoding="utf-8")
 
     assert _settings().neo4j_password.get_secret_value() == "rotiert"
 
 
-def test_a_yml_suffix_works_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The platform's naming convention is not ours to dictate."""
-    (tmp_path / "neo4j.yml").write_text(yaml.safe_dump(NEO4J_FILE), encoding="utf-8")
+def test_the_file_extension_is_irrelevant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`neo4j.dev` is read exactly like `neo4j.yaml` would be.
+
+    The platform picks the names; `.dev` and `.project` are not something this
+    code could derive, so they are spelled out in _CREDENTIAL_FILES and the
+    parser never looks at the suffix.
+    """
+    from data_api.core.config import _CREDENTIAL_FILES
+
+    assert set(_CREDENTIAL_FILES) == {"neo4j.dev", "postgres.project"}
+    (tmp_path / "neo4j.dev").write_text(yaml.safe_dump(NEO4J_FILE), encoding="utf-8")
     monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))
 
     assert _settings().neo4j_host == "neo4j.intern"
+
+
+def test_a_json_file_is_read_just_as_well(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """We do not actually know which of the two the platform writes.
+
+    JSON is a subset of YAML, so `yaml.safe_load` covers both -- which means the
+    format question does not have to be answered before this works.
+    """
+    import json
+
+    (tmp_path / "neo4j.dev").write_text(json.dumps(NEO4J_FILE), encoding="utf-8")
+    monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))
+
+    assert _settings().neo4j_host == "neo4j.intern"
+    assert _settings().neo4j_port == 7687
+
+
+def test_a_key_value_file_says_what_is_wrong(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`host=x` (dotenv style) parses as a plain string, not a mapping.
+
+    The most likely way the format assumption turns out wrong, so the error
+    names the expected shape instead of just failing.
+    """
+    (tmp_path / "neo4j.dev").write_text("host=neo4j.intern\nport=7687\n", encoding="utf-8")
+    monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))
+
+    with pytest.raises(ConfigurationError, match="key/value pairs"):
+        _settings()
 
 
 # --- Precedence -------------------------------------------------------------
@@ -122,7 +164,7 @@ def test_an_environment_variable_beats_the_file(
     settings = _settings()
 
     assert settings.neo4j_host == "localhost"
-    assert settings.neo4j_user == "neo4j"          # still from the file
+    assert settings.neo4j_username == "neo4j"          # still from the file
 
 
 def test_an_explicit_argument_beats_everything(
@@ -170,7 +212,7 @@ def test_unparseable_yaml_is_an_error_not_an_empty_dict(
 ) -> None:
     """Somebody put something there and it is broken. Swallowing that would
     start the pod with no database and no clue why."""
-    (tmp_path / "neo4j.yaml").write_text("host: [unclosed\n", encoding="utf-8")
+    (tmp_path / "neo4j.dev").write_text("host: [unclosed\n", encoding="utf-8")
     monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))
 
     with pytest.raises(ConfigurationError, match="unreadable"):
@@ -180,10 +222,10 @@ def test_unparseable_yaml_is_an_error_not_an_empty_dict(
 def test_a_yaml_that_is_not_a_mapping_is_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "postgres.yaml").write_text("- just\n- a list\n", encoding="utf-8")
+    (tmp_path / "postgres.project").write_text("- just\n- a list\n", encoding="utf-8")
     monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))
 
-    with pytest.raises(ConfigurationError, match="must contain a mapping"):
+    with pytest.raises(ConfigurationError, match="key/value pairs"):
         _settings()
 
 
@@ -192,7 +234,7 @@ def test_a_wrongly_typed_value_names_the_field(
 ) -> None:
     """The gain over `int(creds["port"])`: the error says WHICH field, at
     startup, instead of a ValueError from inside an import."""
-    (tmp_path / "neo4j.yaml").write_text(
+    (tmp_path / "neo4j.dev").write_text(
         yaml.safe_dump(dict(NEO4J_FILE, port="not-a-number")), encoding="utf-8"
     )
     monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))

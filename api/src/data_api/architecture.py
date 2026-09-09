@@ -328,7 +328,7 @@ DEFAULT_OUT = Path(__file__).resolve().parents[3] / "docs" / "architecture.md"
 
 
 def build() -> str:
-    from data_api.application import create_app
+    from data_api.app import create_app
 
     return render_markdown(collect(create_app()))
 

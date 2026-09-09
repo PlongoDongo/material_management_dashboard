@@ -134,7 +134,11 @@ def transform(
     if deliveries:
         metrics = (
             pl.DataFrame(deliveries)
-            .with_columns(delay_days=(pl.col("delivered_on") - pl.col("promised_on")).dt.total_days())
+            .with_columns(
+                delay_days=(
+                    pl.col("delivered_on") - pl.col("promised_on")
+                ).dt.total_days()
+            )
             .group_by("supplier_id")
             .agg(
                 deliveries=pl.len(),

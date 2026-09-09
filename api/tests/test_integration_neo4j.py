@@ -7,10 +7,11 @@ correctly. A fake would have to reimplement Cypher in Python -- and then the
 test checks the fake, not the query.
 
     Without a database:  every test here is SKIPPED.
-    With a database:     set NEO4J_URI + NEO4J_AUTH, run seed/seed_neo4j.py first.
+    With a database:     set NEO4J_HOST (+ user/password), run seed/seed_neo4j.py first.
 
-        export NEO4J_URI=bolt://localhost:7687
-        export NEO4J_AUTH=neo4j/password
+        export NEO4J_HOST=localhost
+        export NEO4J_USER=neo4j
+        export NEO4J_PASSWORD=password
         python seed/seed_neo4j.py
         pytest tests/test_integration_neo4j.py -v
 
@@ -34,8 +35,8 @@ from data_api.products.catalog import material_search_v1 as ms1
 from data_api.products.catalog import supplier_risk_v2 as sr2
 
 pytestmark = pytest.mark.skipif(
-    not os.getenv("NEO4J_URI"),
-    reason="NEO4J_URI is not set -- integration tests skipped.",
+    not os.getenv("NEO4J_HOST"),
+    reason="NEO4J_HOST is not set -- integration tests skipped.",
 )
 
 

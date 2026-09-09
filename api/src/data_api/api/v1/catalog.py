@@ -78,13 +78,13 @@ async def list_products(principal: CurrentPrincipal) -> list[CatalogEntry]:
     produces a menu entry that breaks when clicked. Filtering here also stops
     the catalog from leaking the existence of restricted products.
     """
-    visible = [
-        (name, allowed)
-        for name in registry.names()
-        if (allowed := [p for p in registry.versions_of(name)
-                        if principal.may_access(p.required_groups)])
-    ]
-    return [_entry(name, versions) for name, versions in visible]
+    entries = []
+    for name in registry.names():
+        allowed = [product for product in registry.versions_of(name)
+                   if principal.may_access(product.required_groups)]
+        if allowed:
+            entries.append(_entry(name, allowed))
+    return entries
 
 
 @router.get("/{name}", summary="One data product with all its versions")

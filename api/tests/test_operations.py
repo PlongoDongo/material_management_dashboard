@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
 from tests.types import AuthHeader
 
-from data_api.application import create_app
+from data_api.app import create_app
 from data_api.core.config import Settings
 from data_api.core.security import ANONYMOUS, Principal
 

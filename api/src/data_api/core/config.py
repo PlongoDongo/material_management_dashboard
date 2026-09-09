@@ -14,15 +14,18 @@ Four sources, and the FIRST one that has a value wins:
 
     1. init      Settings(sql_host="x")        tests, create_app(settings)
     2. env       SQL_HOST=x                    the deployment, and local overrides
-    3. .env       SQL_HOST=x                   developer convenience
-    4. credentials file  /<dir>/postgres.yaml  the pod
+    3. .env      SQL_HOST=x                    developer convenience
+    4. file      <dir>/postgres.yaml           the pod
+
+The first three are pydantic-settings' own sources and arrive as one merged
+dict; the fourth is `_fill_in_credentials` filling in what the others left out.
 
 That order is deliberate. The credentials file is the base and normally the only
 source in production, but a developer can override a single value with an
 environment variable without editing (or faking) the file.
 
-WHY THE FILE IS A SOURCE AND NOT AN IMPORT-TIME DEFAULT
-=======================================================
+WHY THE FILE IS READ IN A VALIDATOR AND NOT AS AN IMPORT-TIME DEFAULT
+=====================================================================
 The tempting shape is
 
     class Config(BaseModel):
@@ -39,9 +42,11 @@ and it has three problems that all show up somewhere other than the pod:
   * `creds` is a plain dict, so the password appears in `repr()`, in
     `model_dump()` and in any log line that prints the object.
 
-As a source, the file is read when Settings is INSTANTIATED, a missing file
-degrades to "no values from here" instead of an exception, and the passwords are
-`SecretStr` -- see the `__main__` block at the bottom for what that buys.
+`_fill_in_credentials` below moves the same work into a `model_validator`: the
+file is read when Settings is INSTANTIATED, a missing file degrades to "no
+values from here" instead of an exception, and the passwords are `SecretStr` --
+see the `__main__` block at the bottom for what that buys. It is ten lines of
+ordinary Python and one dict merge; there is no framework machinery to learn.
 
 FAIL-SAFE, NOT FAIL-SILENT
 ==========================
@@ -59,13 +64,8 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import (
-    BaseSettings,
-    NoDecode,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-)
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from data_api.core.errors import ConfigurationError
 
@@ -85,76 +85,71 @@ def credentials_dir() -> Path:
     """
     return Path(os.getenv("CREDENTIALS_DIR", DEFAULT_CREDENTIALS_DIR))
 
-# credential id -> the file's keys -> our field names.
+# The platform mounts ONE file per data source. Its keys become Settings fields,
+# prefixed with the name below -- so `host` in postgres.project fills `sql_host`:
 #
-# This table IS the documentation of the file format, and it is the only place
-# that knows it. A renamed key in the platform's YAML is a one-line change here;
-# nothing else in the code sees those names.
-_CREDENTIAL_FIELDS: dict[str, dict[str, str]] = {
-    "neo4j": {
-        "protocol": "neo4j_protocol",
-        "host": "neo4j_host",
-        "port": "neo4j_port",
-        "username": "neo4j_user",
-        "password": "neo4j_password",
-    },
-    "postgres": {
-        "host": "sql_host",
-        "port": "sql_port",
-        "username": "sql_username",
-        "database": "sql_database",
-        "password": "sql_password",
-        "ssl": "sql_ssl",
-    },
+#     neo4j.dev         protocol, host, port, username, password
+#                       -> neo4j_protocol, neo4j_host, neo4j_port, ...
+#     postgres.project  host, port, username, password, database, ssl
+#                       -> sql_host, sql_port, sql_username, ...
+#
+# The file names are spelled out rather than guessed from a suffix: the platform
+# picks them, and `.dev` / `.project` are not something this code can derive. If
+# another environment mounts them under different names, this dict is the one
+# place to change.
+#
+# A key the Settings class below does not declare is ignored (extra="ignore"),
+# so an extra entry in the platform's file cannot break the start.
+_CREDENTIAL_FILES = {
+    "neo4j.dev": "neo4j",
+    "postgres.project": "sql",
 }
 
 
-class CredentialsFileSource(PydanticBaseSettingsSource):
-    """Reads <CREDENTIALS_DIR>/<id>.yaml and maps it onto the Settings fields.
+def load_credentials() -> dict[str, Any]:
+    """Reads the mounted credential files into Settings field values.
 
-    One file per credential id, matching how the platform mounts them. Both
-    `.yaml` and `.yml` are accepted so a different convention does not need a
-    code change.
+    Called during validation, NOT at import -- see the module docstring for why
+    that distinction is the whole point of this file.
     """
-
-    def get_field_value(self, field: Any, field_name: str) -> Any:  # noqa: ANN401
-        # Part of the abstract interface but only used by sources that resolve
-        # field by field. This one produces the whole mapping in __call__.
-        raise NotImplementedError
-
-    def __call__(self) -> dict[str, Any]:
-        values: dict[str, Any] = {}
-        for credential_id, key_map in _CREDENTIAL_FIELDS.items():
-            content = self._read(credential_id)
-            for file_key, field_name in key_map.items():
-                if file_key in content:
-                    values[field_name] = content[file_key]
-        return values
-
-    def _read(self, credential_id: str) -> dict[str, Any]:
-        directory = credentials_dir()
-        path = next(
-            (p for suffix in (".yaml", ".yml")
-             if (p := directory / f"{credential_id}{suffix}").is_file()),
-            None,
-        )
-        if path is None:
+    values: dict[str, Any] = {}
+    directory = credentials_dir()
+    for file_name, prefix in _CREDENTIAL_FILES.items():
+        path = directory / file_name
+        if not path.is_file():
             # Not an error: development and CI have no mounted credentials, and
-            # the app is expected to start and report the data source as
-            # inactive. Debug level because on a developer machine this is the
-            # normal case and a warning per start would just be noise.
-            log.debug("No credentials file for '%s' in %s.", credential_id, directory)
-            return {}
-        try:
-            with path.open(encoding="utf-8") as handle:
-                content = yaml.safe_load(handle) or {}
-        except (OSError, yaml.YAMLError) as error:
-            # A file that exists but cannot be read is a real misconfiguration.
-            # Swallowing it would start the pod with no database and no clue.
-            raise ConfigurationError(f"Credentials file {path} is unreadable: {error}") from error
-        if not isinstance(content, dict):
-            raise ConfigurationError(f"Credentials file {path} must contain a mapping.")
-        return content
+            # the app is expected to start and report the source as inactive.
+            log.debug("No credentials file %s.", path)
+            continue
+        for key, value in _read_file(path).items():
+            values[f"{prefix}_{key}"] = value
+    return values
+
+
+def _read_file(path: Path) -> dict[str, Any]:
+    """Parses one credentials file into a plain dict.
+
+    The file extension is irrelevant -- `neo4j.dev` is read exactly like
+    `neo4j.yaml`. `yaml.safe_load` covers both YAML and JSON (JSON is a subset
+    of YAML), which between them are what such a file realistically contains.
+
+    A file that EXISTS but cannot be parsed is an error, unlike a missing one:
+    swallowing it would start the pod with no database and no explanation. The
+    message names the path but NEVER the content -- that would put the password
+    in the log, which is the thing this module is built to prevent.
+    """
+    try:
+        with path.open(encoding="utf-8") as handle:
+            content = yaml.safe_load(handle) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+        raise ConfigurationError(f"Credentials file {path} is unreadable: {error}") from error
+    if not isinstance(content, dict):
+        raise ConfigurationError(
+            f"Credentials file {path} does not parse into key/value pairs "
+            f"(got {type(content).__name__}). Expected YAML or JSON, e.g. "
+            f"'host: db.intern'. A 'KEY=value' file would land here."
+        )
+    return content
 
 
 class Settings(BaseSettings):
@@ -172,6 +167,10 @@ class Settings(BaseSettings):
     # --- Server ------------------------------------------------------------
     api_env: Literal["dev", "staging", "prod"] = "dev"
     api_title: str = "Data Products API"
+    # 127.0.0.1 by default: reachable only from this machine. A container
+    # sets SERVER_HOST=0.0.0.0 to listen on every interface -- opening that
+    # up should be a deliberate act, not the default.
+    server_host: str = "127.0.0.1"
     server_port: int = Field(8000, ge=1, le=65535)
     server_loglevel: Literal["critical", "error", "warning", "info", "debug"] = "info"
 
@@ -196,7 +195,7 @@ class Settings(BaseSettings):
     neo4j_protocol: str = "bolt"
     neo4j_host: str | None = None
     neo4j_port: int = 7687
-    neo4j_user: str | None = None
+    neo4j_username: str | None = None
     neo4j_password: SecretStr | None = None
     neo4j_db: str = "neo4j"
     neo4j_max_connection_pool_size: int = Field(50, ge=1, le=1000)
@@ -229,28 +228,19 @@ class Settings(BaseSettings):
     # Extra seconds of tolerance for clock skew between Keycloak and this host.
     oidc_leeway_seconds: int = 10
 
+    @model_validator(mode="before")
     @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Adds the credentials file as the LAST source -- see the module docstring.
+    def _fill_in_credentials(cls, values: Any) -> Any:  # noqa: ANN401
+        """Fills every field the environment did not already provide.
 
-        Last means lowest precedence, which is what makes
-        `SQL_HOST=localhost python -m data_api.main` work on a machine that also
-        has the file mounted.
+        `values` is what init, the environment and .env produced together.
+        Spreading it LAST means those three win and the file only fills gaps --
+        which is what lets `NEO4J_HOST=localhost` override a mounted file
+        without editing it.
         """
-        return (
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            CredentialsFileSource(settings_cls),
-            file_secret_settings,
-        )
+        if not isinstance(values, dict):
+            return values
+        return {**load_credentials(), **values}
 
     @field_validator("cors_origins", "cors_allow_methods", "cors_allow_headers",
                      mode="before")
@@ -281,9 +271,9 @@ class Settings(BaseSettings):
         password stays wrapped so it cannot reach a log by accident; here it is
         being handed to the thing that needs it.
         """
-        if not self.neo4j_user or self.neo4j_password is None:
+        if not self.neo4j_username or self.neo4j_password is None:
             return None
-        return (self.neo4j_user, self.neo4j_password.get_secret_value())
+        return (self.neo4j_username, self.neo4j_password.get_secret_value())
 
     @property
     def sql_url(self) -> str | None:
