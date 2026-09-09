@@ -39,7 +39,7 @@ def test_env_example_loads_and_leaves_auth_off(tmp_path: Path) -> None:
     target.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
 
     settings = Settings(_env_file=str(target))
-    assert settings.api_cors_origins == ["http://localhost:8050", "http://localhost:8051"]
+    assert settings.cors_origins == ["http://localhost:8050", "http://localhost:8051"]
     assert not settings.oidc_issuer
     assert settings.auth_enabled is False
 

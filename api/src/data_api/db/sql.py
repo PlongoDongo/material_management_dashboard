@@ -28,9 +28,16 @@ log = logging.getLogger(__name__)
 SessionMaker = async_sessionmaker[AsyncSession]
 
 
-def create_engine(dsn: str | None) -> AsyncEngine | None:
+def create_engine(dsn: str | None, *, ssl: str | None = None) -> AsyncEngine | None:
+    """Creates the one engine. Without a DSN: None.
+
+    `ssl` goes through connect_args and NOT into the URL: SQLAlchemy's asyncpg
+    dialect does not translate an `?ssl=` query parameter, so it would be
+    silently ignored -- an unencrypted connection where an encrypted one was
+    configured. asyncpg takes the value verbatim ("require", "disable", ...).
+    """
     if not dsn:
-        log.warning("POSTGRES_DSN is not set -- SQL inactive.")
+        log.warning("Postgres host is not configured -- SQL inactive.")
         return None
     if "+asyncpg" not in dsn and "+psycopg" not in dsn:
         log.warning("POSTGRES_DSN without an async driver (%s) -- expected 'postgresql+asyncpg://'.",
@@ -40,6 +47,7 @@ def create_engine(dsn: str | None) -> AsyncEngine | None:
         pool_size=5,          # concurrent connections per process
         max_overflow=5,       # short-lived spikes
         pool_pre_ping=True,   # detect dead connections (firewall timeouts)
+        connect_args={"ssl": ssl} if ssl else {},
     )
     log.info("SQL engine created.")
     return engine

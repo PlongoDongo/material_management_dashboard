@@ -17,6 +17,8 @@ dependencies = [
     # OIDC: validates the Keycloak access token locally against the
     # realm's public keys. [crypto] pulls in the RS256 backend.
     "pyjwt[crypto]>=2.9",
+    # Reads the mounted credentials files (core/config.py).
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
