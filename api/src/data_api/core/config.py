@@ -85,17 +85,25 @@ def credentials_dir() -> Path:
     """
     return Path(os.getenv("CREDENTIALS_DIR", DEFAULT_CREDENTIALS_DIR))
 
-# The platform mounts ONE YAML file per credential id. Its keys become fields,
-# prefixed with the name below -- so `host` in postgres.yaml fills `sql_host`:
+# The platform mounts ONE file per data source. Its keys become Settings fields,
+# prefixed with the name below -- so `host` in postgres.project fills `sql_host`:
 #
-#     neo4j.yaml      protocol, host, port, username, password
-#                     -> neo4j_protocol, neo4j_host, neo4j_port, ...
-#     postgres.yaml   host, port, username, password, database, ssl
-#                     -> sql_host, sql_port, sql_username, ...
+#     neo4j.dev         protocol, host, port, username, password
+#                       -> neo4j_protocol, neo4j_host, neo4j_port, ...
+#     postgres.project  host, port, username, password, database, ssl
+#                       -> sql_host, sql_port, sql_username, ...
+#
+# The file names are spelled out rather than guessed from a suffix: the platform
+# picks them, and `.dev` / `.project` are not something this code can derive. If
+# another environment mounts them under different names, this dict is the one
+# place to change.
 #
 # A key the Settings class below does not declare is ignored (extra="ignore"),
 # so an extra entry in the platform's file cannot break the start.
-_CREDENTIAL_PREFIXES = {"neo4j": "neo4j", "postgres": "sql"}
+_CREDENTIAL_FILES = {
+    "neo4j.dev": "neo4j",
+    "postgres.project": "sql",
+}
 
 
 def load_credentials() -> dict[str, Any]:
@@ -106,39 +114,41 @@ def load_credentials() -> dict[str, Any]:
     """
     values: dict[str, Any] = {}
     directory = credentials_dir()
-    for credential_id, prefix in _CREDENTIAL_PREFIXES.items():
-        path = _find_file(directory, credential_id)
-        if path is None:
+    for file_name, prefix in _CREDENTIAL_FILES.items():
+        path = directory / file_name
+        if not path.is_file():
             # Not an error: development and CI have no mounted credentials, and
             # the app is expected to start and report the source as inactive.
-            log.debug("No credentials file for '%s' in %s.", credential_id, directory)
+            log.debug("No credentials file %s.", path)
             continue
-        for key, value in _read_yaml(path).items():
+        for key, value in _read_file(path).items():
             values[f"{prefix}_{key}"] = value
     return values
 
 
-def _find_file(directory: Path, credential_id: str) -> Path | None:
-    """<dir>/<id>.yaml or .yml -- whichever exists."""
-    for suffix in (".yaml", ".yml"):
-        path = directory / f"{credential_id}{suffix}"
-        if path.is_file():
-            return path
-    return None
+def _read_file(path: Path) -> dict[str, Any]:
+    """Parses one credentials file into a plain dict.
 
+    The file extension is irrelevant -- `neo4j.dev` is read exactly like
+    `neo4j.yaml`. `yaml.safe_load` covers both YAML and JSON (JSON is a subset
+    of YAML), which between them are what such a file realistically contains.
 
-def _read_yaml(path: Path) -> dict[str, Any]:
-    """A file that EXISTS but is broken is an error, unlike a missing one.
-
-    Swallowing it would start the pod with no database and no explanation.
+    A file that EXISTS but cannot be parsed is an error, unlike a missing one:
+    swallowing it would start the pod with no database and no explanation. The
+    message names the path but NEVER the content -- that would put the password
+    in the log, which is the thing this module is built to prevent.
     """
     try:
         with path.open(encoding="utf-8") as handle:
             content = yaml.safe_load(handle) or {}
-    except (OSError, yaml.YAMLError) as error:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
         raise ConfigurationError(f"Credentials file {path} is unreadable: {error}") from error
     if not isinstance(content, dict):
-        raise ConfigurationError(f"Credentials file {path} must contain a mapping.")
+        raise ConfigurationError(
+            f"Credentials file {path} does not parse into key/value pairs "
+            f"(got {type(content).__name__}). Expected YAML or JSON, e.g. "
+            f"'host: db.intern'. A 'KEY=value' file would land here."
+        )
     return content
 
 

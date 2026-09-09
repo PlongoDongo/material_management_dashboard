@@ -247,7 +247,7 @@ Erst **ohne** Server prüfen, ob die Datei gefunden und richtig gelesen wird:
 
 ```
 credentials dir: /etc/credentials
-... neo4j_host='neo4j.intern' neo4j_port=7687 neo4j_user='neo4j'
+... neo4j_host='neo4j.intern' neo4j_port=7687 neo4j_username='neo4j'
     neo4j_password=SecretStr('**********') sql_host='pg.intern' ...
 ```
 
@@ -257,10 +257,38 @@ Falls nicht:
 
 | Symptom | Ursache |
 |---|---|
-| alles `None`, `credentials dir` stimmt | Dateiname passt nicht — erwartet werden `neo4j.yaml`/`neo4j.yml` und `postgres.yaml`/`postgres.yml` |
+| alles `None`, `credentials dir` stimmt | Dateiname passt nicht — erwartet werden genau die Namen aus `_CREDENTIAL_FILES` in `core/config.py` (aktuell `neo4j.dev` und `postgres.project`) |
 | einzelne Felder `None` | Schlüsselnamen weichen ab → `_CREDENTIAL_FIELDS` in `core/config.py` anpassen |
-| `ConfigurationError: ... is unreadable` | Datei da, aber kein gültiges YAML |
+| `ConfigurationError: ... is unreadable` | Datei da, aber weder YAML noch JSON |
+| `ConfigurationError: ... key/value pairs` | Datei ist z.B. `KEY=value` statt `key: value` |
 | `ValidationError: neo4j_port` | Wert hat den falschen Typ |
+
+### Format der Datei prüfen, ohne das Passwort zu sehen
+
+Die Dateiendung sagt nichts über den Inhalt — `neo4j.dev` wird genauso gelesen
+wie `neo4j.yaml`. Gelesen wird mit `yaml.safe_load`, das **YAML und JSON**
+versteht (JSON ist eine Teilmenge von YAML). Wenn du wissen willst, was
+tatsächlich drinsteht, ohne die Werte auf den Bildschirm zu holen:
+
+```bash
+.venv/bin/python -c "
+import yaml, sys
+inhalt = yaml.safe_load(open(sys.argv[1]))
+print(type(inhalt).__name__, sorted(inhalt) if isinstance(inhalt, dict) else repr(inhalt)[:60])
+" /etc/credentials/neo4j.dev
+```
+
+Ausgegeben werden nur **Typ und Schlüsselnamen**, keine Werte:
+
+```
+dict ['host', 'password', 'port', 'protocol', 'username']
+```
+
+| Ausgabe | Bedeutung |
+|---|---|
+| `dict [...]` | passt — vergleiche die Schlüssel mit `_CREDENTIAL_FILES` in `core/config.py` |
+| `str '...'` | vermutlich `KEY=value`-Format, kein YAML/JSON — sag Bescheid, dann bauen wir einen Parser dafür |
+| `ParserError` | etwas ganz anderes (INI, XML) |
 
 Der Pfad lässt sich zum Ausprobieren umbiegen:
 
