@@ -142,15 +142,35 @@ api/
 └── tools/validate_mermaid.mjs  optional: check generated diagrams
 ```
 
-Two files in `catalog/` are worth reading before you write your own, because
-they are opposites:
+### Start from a template
 
-| | `material_overview_v3.py` | `material_search_v1.py` |
+`catalog/` contains four numbered templates. Find the row that matches what you
+need, copy that file, change the query and the contract. They are real, running
+products — `curl` them before you copy them.
+
+| | Filters | Paging | `COUNT` | `transform()` | Copy it when |
+|---|---|---|---|---|---|
+| `example_1_plain.py` | – | router slices | – | – | small reference set, wanted whole |
+| `example_2_paged.py` | – | in the query | yes | – | too big for one response |
+| `example_3_filtered.py` | in Cypher | router slices | – | – | a filter shrinks it enough |
+| `example_4_full.py` | in Cypher | in the query | yes | yes | big, filtered, and needs computed fields |
+
+The step from 1 to 2 is where the framework needs telling
+(`paginated_by_source=True`); the step from 3 to 4 is where it gets easy to be
+subtly wrong (see the rule at the top of `example_4_full.py`). Everything else is
+just query and contract.
+
+Two shapes the templates do not cover, both in the real products:
+
+| | File | What is different |
 |---|---|---|
-| Filtering | in Python, after the query | in Cypher |
-| Pagination | the router slices | `SKIP`/`LIMIT` in the query |
-| Needs a database to test | no | the filters do |
-| Copy it when | a client wants the whole set at once | a client really pages |
+| Filtering and computing in Python | `material_overview_v3.py` | a 40-line `transform()` does the filtering; correct because the router slices a complete result |
+| Two data sources | `supplier_risk_v2.py` | joins Neo4j and Postgres and aggregates in Polars; the result only exists after the join, so it cannot page in a query |
+
+`tests/test_examples.py` asserts that the four steps differ in exactly the
+documented way, so the table above cannot drift away from the code. The
+templates can be taken out of the catalog at any time by renaming them with a
+leading underscore — discovery skips those.
 ```
 
 ---

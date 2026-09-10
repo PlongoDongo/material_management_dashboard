@@ -39,7 +39,13 @@ def test_collect_finds_the_generated_routes(settings: Settings) -> None:
     paths = {r.path for r in arch.routes}
     assert "/api/v1/data-products/material-overview/v3" in paths
     assert "/api/v1/data-products/supplier-risk/v2" in paths
-    assert len(arch.products) == 4
+
+    # Deliberately not a count: every new product in catalog/ would fail it, and
+    # a test that goes red for the right change teaches people to edit the
+    # number without reading it. What matters is that discovery found the
+    # registry and produced a route per product.
+    assert len(arch.products) == len(registry.all())
+    assert arch.products
 
 
 def test_routes_are_mapped_to_their_data_product(settings: Settings) -> None:

@@ -18,6 +18,10 @@ import datetime as dt
 import random
 from typing import Any
 
+from data_api.products.catalog import example_1_plain as ex1
+from data_api.products.catalog import example_2_paged as ex2
+from data_api.products.catalog import example_3_filtered as ex3
+from data_api.products.catalog import example_4_full as ex4
 from data_api.products.catalog import material_overview_v2 as mo2
 from data_api.products.catalog import material_overview_v3 as mo3
 from data_api.products.catalog import material_search_v1 as ms1
@@ -128,6 +132,39 @@ def search_total(parameters: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"total": len(_search_filtered(parameters))}]
 
 
+# --- The four templates in catalog/example_*.py -----------------------------
+#
+# All four query the same Material nodes with the same two optional filters, so
+# ONE handler serves them. Writing four bespoke ones would mean four chances for
+# the fake to disagree with a template it is supposed to demonstrate.
+
+def example_rows(cypher: str, parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """Filter, order and window -- whatever the query in question asks for."""
+    rows = _material_base()
+    if parameters.get("status"):
+        rows = [r for r in rows if r["status"] in parameters["status"]]
+    if parameters.get("min_stock") is not None:
+        rows = [r for r in rows if r["stock"] >= parameters["min_stock"]]
+
+    # The sort column is read back out of the query text: Cypher cannot take a
+    # property name as a parameter, so the fake cannot receive it as one either.
+    if "m.bestand DESC" in cypher:
+        rows.sort(key=lambda r: (-r["stock"], r["material_number"]))
+    else:
+        rows.sort(key=lambda r: r["material_number"])
+
+    if "SKIP $offset" in cypher:
+        offset = parameters.get("offset", 0)
+        rows = rows[offset: offset + parameters.get("limit", len(rows))]
+    return rows
+
+
+def example_total(cypher: str, parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """The COUNT queries: how many rows match BEFORE the window."""
+    counting = cypher.replace("SKIP $offset LIMIT $limit", "")
+    return [{"total": len(example_rows(counting, parameters))}]
+
+
 def supplier_rows() -> list[dict[str, Any]]:
     """Matches sr2.CYPHER."""
     rng = random.Random(7)
@@ -214,6 +251,14 @@ class FakeSources:
             return search_total(parameters)
         if cypher.startswith(ms1._MATCH_AND_FILTER):
             return search_page(cypher, parameters)
+        # The templates. COUNT queries are checked first because two of them
+        # share their opening fragment with the matching page query.
+        if cypher in (ex2.CYPHER_COUNT, ex4.CYPHER_COUNT):
+            return example_total(cypher, parameters)
+        if cypher in (ex1.CYPHER, ex2.CYPHER_PAGE, ex3.CYPHER) or cypher.startswith(
+            ex4._MATCH_AND_FILTER
+        ):
+            return example_rows(cypher, parameters)
         raise AssertionError(
             "FakeSources does not know this Cypher query. New data product? "
             "Then add a matching answer in tests/fakes.py.\n\n" + cypher
