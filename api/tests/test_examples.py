@@ -13,12 +13,12 @@ import inspect
 import pytest
 from fastapi.testclient import TestClient
 
-from data_api.products.cache import cache
-from data_api.products.catalog import example_1_plain as ex1
-from data_api.products.catalog import example_2_paged as ex2
-from data_api.products.catalog import example_3_filtered as ex3
-from data_api.products.catalog import example_4_full as ex4
-from data_api.products.registry import registry
+from products.cache import cache
+from products.catalog import example_1_plain as ex1
+from products.catalog import example_2_paged as ex2
+from products.catalog import example_3_filtered as ex3
+from products.catalog import example_4_full as ex4
+from products.registry import registry
 
 BASE = "/api/v1/data-products"
 PLAIN = f"{BASE}/example-1-plain/v1"

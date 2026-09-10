@@ -1,5 +1,14 @@
 [project]
 name = "data-api"
+# Kept in step with `__version__` in src/core/config.py by hand. To make that
+# impossible to get wrong, replace this line with
+#     dynamic = ["version"]
+# and add
+#     [tool.hatch.version]
+#     path = "src/core/config.py"
+# Then this file reads the number out of the code and there is exactly one
+# source of truth. Left as a plain string here because it is one line to keep in
+# sync and the indirection costs a reader more than the duplication does.
 version = "0.1.0"
 description = "API layer between the Dash dashboards and the data sources (Neo4j / Postgres)."
 requires-python = ">=3.11"
@@ -27,14 +36,21 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.5"]
 
 [project.scripts]
 # Generates docs/architecture.md from the running app.
-architecture-docs = "data_api.architecture:main"
+architecture-docs = "architecture:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/data_api"]
+# `sources` strips the leading src/ so the modules land at the wheel's top
+# level; `only-include` says which tree to take. The obvious alternative,
+# `packages = ["src/core", "src/db", ...]`, builds WITHOUT an error but silently
+# leaves out the loose modules next to those folders -- main.py, app.py,
+# architecture.py. An editable install hides that, because it just puts src/ on
+# the path; it surfaces on the first real build.
+sources = ["src"]
+only-include = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

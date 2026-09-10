@@ -25,7 +25,7 @@ than in the code — see [`seed/`](seed/).
 
 ```bash
 uv venv && uv pip install -e ".[dev]"
-.venv/bin/uvicorn data_api.main:app --reload --port 8000
+.venv/bin/python -m main
 ```
 
 ```bash
@@ -70,12 +70,12 @@ round.
 
 | Path | Contents |
 |---|---|
-| `src/data_api/products/catalog/` | **New data products go here** — one file per product and major version |
-| `src/data_api/products/` | The framework: registry, route generator, cache, base models |
-| `src/data_api/db/` | Driver/engine lifecycle and `Sources` (`sources.neo4j(...)`) per request |
-| `src/data_api/api/v1/` | Hand-written routers (health, catalog, write side) |
-| `src/data_api/core/` | Settings, logging, error format, auth |
-| `src/data_api/clients/` | Client template for the Dash apps |
+| `src/products/catalog/` | **New data products go here** — one file per product and major version |
+| `src/products/` | The framework: registry, route generator, cache, base models |
+| `src/db/` | Driver/engine lifecycle and `Sources` (`sources.neo4j(...)`) per request |
+| `src/api/v1/` | Hand-written routers (health, catalog, write side) |
+| `src/core/` | Settings, logging, error format, auth |
+| `src/clients/` | Client template for the Dash apps |
 | `seed/` | Mock data for Neo4j/Postgres while sources are missing |
 | `tests/fakes.py` | Test doubles — the only sample data in the repository |
 
@@ -111,7 +111,7 @@ Response format of every data product:
 
 ## Adding a data product
 
-One file in `src/data_api/products/catalog/`, nothing else:
+One file in `src/products/catalog/`, nothing else:
 
 ```python
 CYPHER = """MATCH (m:Material)-[:LOCATED_IN]->(p:Werk) RETURN ..."""
@@ -168,7 +168,7 @@ the dashboard's — the same `.env` works for both.
 
 ## Connecting a dashboard
 
-`src/data_api/clients/dash_client.py` is the template. In the dashboard only
+`src/clients/dash_client.py` is the template. In the dashboard only
 `data/repository.py` changes:
 
 ```python

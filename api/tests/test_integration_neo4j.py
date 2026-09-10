@@ -28,11 +28,11 @@ import pytest
 import pytest_asyncio
 from neo4j import AsyncDriver
 
-from data_api.core.config import Settings
-from data_api.db.neo4j import create_driver
-from data_api.db.sources import Sources
-from data_api.products.catalog import material_search_v1 as ms1
-from data_api.products.catalog import supplier_risk_v2 as sr2
+from core.config import Settings
+from db.neo4j import create_driver
+from db.sources import Sources
+from products.catalog import material_search_v1 as ms1
+from products.catalog import supplier_risk_v2 as sr2
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("NEO4J_HOST"),

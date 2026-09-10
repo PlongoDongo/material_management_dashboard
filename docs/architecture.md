@@ -1,7 +1,7 @@
 # Architecture (generated)
 
 > This file is generated from the running app by
-> `python -m data_api.architecture`. **Do not edit by hand** -- changes are
+> `python -m architecture`. **Do not edit by hand** -- changes are
 > lost on the next run. The reasoning behind the design is in
 > [`api_layer_concept.md`](api_layer_concept.md).
 
@@ -256,7 +256,7 @@ TEMPLATE 1: every row, no filters, no paging in the query
 * **Sources:** neo4j
 * **Cache:** 60s
 * **Filters:** `limit`, `offset`
-* **Module:** `data_api/products/catalog/example_1_plain.py`
+* **Module:** `products/catalog/example_1_plain.py`
 
 ### `example-2-paged` v1 (1.0)
 
@@ -266,7 +266,7 @@ TEMPLATE 2: paging in the query, no filters
 * **Sources:** neo4j
 * **Cache:** 30s
 * **Filters:** `limit`, `offset`
-* **Module:** `data_api/products/catalog/example_2_paged.py`
+* **Module:** `products/catalog/example_2_paged.py`
 
 ### `example-3-filtered` v1 (1.0)
 
@@ -276,7 +276,7 @@ TEMPLATE 3: filters in the query, router does the paging
 * **Sources:** neo4j
 * **Cache:** 60s
 * **Filters:** `limit`, `offset`, `status`, `min_stock`
-* **Module:** `data_api/products/catalog/example_3_filtered.py`
+* **Module:** `products/catalog/example_3_filtered.py`
 
 ### `example-4-full` v1 (1.0)
 
@@ -286,7 +286,7 @@ TEMPLATE 4: filters and paging in the query, plus a transform
 * **Sources:** neo4j
 * **Cache:** 30s
 * **Filters:** `limit`, `offset`, `status`, `min_stock`, `sort`
-* **Module:** `data_api/products/catalog/example_4_full.py`
+* **Module:** `products/catalog/example_4_full.py`
 
 ### `material-overview` v2 (2.1)
 
@@ -296,7 +296,7 @@ Material master data for the overview table
 * **Sources:** neo4j
 * **Cache:** 60s
 * **Filters:** `limit`, `offset`, `status`, `plant`, `material_group`, `unclassified_only`, `search`
-* **Module:** `data_api/products/catalog/material_overview_v2.py`
+* **Module:** `products/catalog/material_overview_v2.py`
 
 ### `material-overview` v3 (3.0)
 
@@ -306,7 +306,7 @@ Material master data including stock value
 * **Sources:** neo4j
 * **Cache:** 60s
 * **Filters:** `limit`, `offset`, `status`, `plant_id`, `material_group`, `unclassified_only`, `search`, `min_stock_value`
-* **Module:** `data_api/products/catalog/material_overview_v3.py`
+* **Module:** `products/catalog/material_overview_v3.py`
 
 ### `material-search` v1 (1.0)
 
@@ -316,7 +316,7 @@ Paged material search -- filtered, sorted and windowed in the graph
 * **Sources:** neo4j
 * **Cache:** 30s
 * **Filters:** `limit`, `offset`, `status`, `plant_id`, `material_group`, `unclassified_only`, `min_stock`, `search`, `sort`
-* **Module:** `data_api/products/catalog/material_search_v1.py`
+* **Module:** `products/catalog/material_search_v1.py`
 
 ### `supplier-risk` v2 (2.0)
 
@@ -326,5 +326,5 @@ Supplier risk from master data (Neo4j) and delivery reliability (Postgres)
 * **Sources:** neo4j + postgres
 * **Cache:** 300s
 * **Filters:** `limit`, `offset`, `since`, `tolerance_days`, `min_deliveries`, `risk_class`, `country`
-* **Module:** `data_api/products/catalog/supplier_risk_v2.py`
+* **Module:** `products/catalog/supplier_risk_v2.py`
 

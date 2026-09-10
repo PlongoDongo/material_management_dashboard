@@ -15,7 +15,7 @@ Usage (see data/repository.py):
 
 ORIGIN
 ======
-A copy of `api/src/data_api/clients/dash_client.py`. That file is the template;
+A copy of `api/src/clients/dash_client.py`. That file is the template;
 when it changes, this one is updated to match. `tests/test_repository.py`
 compares the two, so the copy cannot drift silently.
 

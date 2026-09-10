@@ -4,9 +4,9 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from data_api.db.sources import Sources
-from data_api.products.base import DataProduct, ProductParams
-from data_api.products.registry import ProductRegistry
+from db.sources import Sources
+from products.base import DataProduct, ProductParams
+from products.registry import ProductRegistry
 
 
 class Row(BaseModel):

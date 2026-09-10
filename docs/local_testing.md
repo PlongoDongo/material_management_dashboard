@@ -27,10 +27,10 @@ uv pip install -e ".[dev]"               # oder: .venv/bin/pip install -e ".[dev
 **Erfolg:** Der Befehl läuft ohne Fehler durch.
 
 ```bash
-.venv/bin/python -c "import data_api; print(data_api.__version__)"
+.venv/bin/python -c "from core.config import __version__; print(__version__)"
 ```
 
-Gibt `0.1.0` aus. Damit ist das Paket importierbar — das allein schließt schon
+Gibt `0.1.0` aus. Damit ist der Code importierbar — das allein schließt schon
 die häufigsten Einrichtungsprobleme aus.
 
 ---
@@ -40,7 +40,7 @@ die häufigsten Einrichtungsprobleme aus.
 Der schnellste Weg herauszufinden, **was die Anwendung tatsächlich sieht**:
 
 ```bash
-.venv/bin/python -m data_api.core.config
+.venv/bin/python -m core.config
 ```
 
 Ausgabe (gekürzt):
@@ -73,7 +73,7 @@ Genau das soll funktionieren: Die API startet auch, wenn keine Datenquelle
 erreichbar ist, und meldet die Quellen als inaktiv.
 
 ```bash
-.venv/bin/python -m data_api.main
+.venv/bin/python -m main
 ```
 
 Erwartete Ausgabe:
@@ -93,15 +93,15 @@ INFO:    Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 
 Die beiden `WARNING`-Zeilen sind hier **richtig**, nicht das Problem.
 
-> Dass „catalog loaded" zweimal erscheint, ist normal: `python -m data_api.main`
+> Dass „catalog loaded" zweimal erscheint, ist normal: `python -m main`
 > lädt das Modul einmal als `__main__`, und uvicorn importiert es danach über
-> den Namen `data_api.main` erneut. Nur die zweite Instanz wird bedient.
+> den Namen `main` erneut. Nur die zweite Instanz wird bedient.
 
 Host, Port und Log-Level kommen aus der Konfiguration, lassen sich also ohne
 Code-Änderung umstellen:
 
 ```bash
-SERVER_PORT=8080 SERVER_LOGLEVEL=debug .venv/bin/python -m data_api.main
+SERVER_PORT=8080 SERVER_LOGLEVEL=debug .venv/bin/python -m main
 ```
 
 ---
@@ -242,7 +242,7 @@ wiederfindest — sie steht auch im Fehler-Body.
 Erst **ohne** Server prüfen, ob die Datei gefunden und richtig gelesen wird:
 
 ```bash
-.venv/bin/python -m data_api.core.config
+.venv/bin/python -m core.config
 ```
 
 ```
@@ -293,20 +293,20 @@ dict ['host', 'password', 'port', 'protocol', 'username']
 Der Pfad lässt sich zum Ausprobieren umbiegen:
 
 ```bash
-CREDENTIALS_DIR=/tmp/meine-creds .venv/bin/python -m data_api.core.config
+CREDENTIALS_DIR=/tmp/meine-creds .venv/bin/python -m core.config
 ```
 
 Und einzelne Werte lassen sich per Umgebungsvariable übersteuern — die haben
 Vorrang vor der Datei:
 
 ```bash
-NEO4J_HOST=localhost .venv/bin/python -m data_api.core.config
+NEO4J_HOST=localhost .venv/bin/python -m core.config
 ```
 
 ### Dann den Server starten
 
 ```bash
-.venv/bin/python -m data_api.main
+.venv/bin/python -m main
 ```
 
 **Erfolg:**
@@ -448,12 +448,12 @@ python seed/seed_neo4j.py
 | Stufe | Befehl | Erfolg |
 |---|---|---|
 | 0 | `uv pip install -e ".[dev]"` | läuft durch |
-| 1 | `python -m data_api.core.config` | zeigt die Werte |
-| 2 | `python -m data_api.main` | `Application startup complete.` |
+| 1 | `python -m core.config` | zeigt die Werte |
+| 2 | `python -m main` | `Application startup complete.` |
 | 3 | `curl .../api/v1/healthz` | `{"status": "ok"}` |
 | 4 | `curl .../api/v1/readyz` | 503 `not-configured` bzw. 200 `ok` |
 | 5 | `curl .../api/v1/catalog` | drei Produkte |
 | 6 | `curl ".../material-overview/v3?limit=2"` | 500 ohne DB, 200 mit |
-| 7 | `python -m data_api.core.config` | Felder gefüllt statt `None` |
+| 7 | `python -m core.config` | Felder gefüllt statt `None` |
 | 8 | `curl ".../material-overview/v3?limit=3"` | `meta` + `data` |
 | 9 | `architecture-docs` | `architecture.md written.` |

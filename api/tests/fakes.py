@@ -18,14 +18,14 @@ import datetime as dt
 import random
 from typing import Any
 
-from data_api.products.catalog import example_1_plain as ex1
-from data_api.products.catalog import example_2_paged as ex2
-from data_api.products.catalog import example_3_filtered as ex3
-from data_api.products.catalog import example_4_full as ex4
-from data_api.products.catalog import material_overview_v2 as mo2
-from data_api.products.catalog import material_overview_v3 as mo3
-from data_api.products.catalog import material_search_v1 as ms1
-from data_api.products.catalog import supplier_risk_v2 as sr2
+from products.catalog import example_1_plain as ex1
+from products.catalog import example_2_paged as ex2
+from products.catalog import example_3_filtered as ex3
+from products.catalog import example_4_full as ex4
+from products.catalog import material_overview_v2 as mo2
+from products.catalog import material_overview_v3 as mo3
+from products.catalog import material_search_v1 as ms1
+from products.catalog import supplier_risk_v2 as sr2
 
 # Fixed seed -> reproducible data, so tests can assert exact values.
 _MATERIAL_GROUPS = ["Betriebsstoffe", "Rohstoffe", "Fertigerzeugnisse", "Verpackung",

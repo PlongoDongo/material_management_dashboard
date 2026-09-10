@@ -41,7 +41,7 @@ cd api
 uv venv && uv pip install -e ".[dev]"
 cp .env.example .env          # Neo4j-/Postgres-Koordinaten eintragen
 .venv/bin/python -m pytest -q # laeuft ohne Datenbank
-.venv/bin/uvicorn data_api.main:app --reload --port 8000
+.venv/bin/python -m main
 ```
 
 Interaktive Doku: <http://localhost:8000/docs>
@@ -103,14 +103,14 @@ Route, alte bleibt bis zum Sunset-Datum. Details im
 
 **Ein neues Dashboard** bekommt einen Ordner unter `frontend/` und spricht
 ausschließlich über die API. Als Client-Vorlage dient
-[`api/src/data_api/clients/dash_client.py`](api/src/data_api/clients/dash_client.py).
+[`api/src/clients/dash_client.py`](api/src/clients/dash_client.py).
 
 ---
 
 ## Nächste Schritte
 
 1. Erste echte Quelle anbinden: `NEO4J_URI` setzen, Cypher in
-   die `CYPHER`-Konstanten in `api/src/data_api/products/catalog/` an das reale
+   die `CYPHER`-Konstanten in `api/src/products/catalog/` an das reale
    Graphmodell anpassen.
    Prüfen lässt sich das an `meta.source` in jeder API-Antwort.
 2. Das Material-Management-Dashboard auf den API-Client umstellen — damit entfallen

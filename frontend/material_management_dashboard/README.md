@@ -202,7 +202,7 @@ Damit liegen weder Zugangsdaten noch Cypher noch die Definition von
 
 | Datei | Aufgabe |
 |---|---|
-| `data/api_client.py` | Kennt HTTP. Kopie von `api/src/data_api/clients/dash_client.py` -- bei Änderungen dort nachziehen. |
+| `data/api_client.py` | Kennt HTTP. Kopie von `api/src/clients/dash_client.py` -- bei Änderungen dort nachziehen. |
 | `data/repository.py` | **Die Grenze.** Ruft den Client, bildet API-Felder auf Tabellenspalten ab, cached, fängt Ausfälle ab. Der Rest der App ruft nur `get_materials()`. |
 | `data/schema.py` | Was die Tabelle zeigt (Spalten, Labels, Breiten). |
 
