@@ -53,9 +53,13 @@ flowchart LR
   p_material_search_1 --> src_neo4j
   p_supplier_risk_2 --> src_neo4j
   p_supplier_risk_2 --> src_postgres
+  r__api_v1_mappings -.->|invalidates| p_material_overview_3
+  r__api_v1_mappings__mapping_id_ -.->|invalidates| p_material_overview_3
 
   classDef deprecated stroke-dasharray: 4 3;
+  classDef write stroke-width:2px;
   class p_material_overview_2 deprecated;
+  class r__api_v1_mappings,r__api_v1_mappings__mapping_id_ write;
 ```
 
 ## Version states
@@ -133,6 +137,25 @@ classDiagram
   }
   note for SupplierRiskRow "supplier-risk v2"
 ```
+
+## Write routes
+
+Hand-written, not generated -- a write is an ACTION with preconditions,
+a status code of its own and side effects, which a generator cannot
+usefully produce (see `api/v1/mappings.py`). What it CAN do is make sure
+nothing is forgotten: the role and the invalidation below are declared as
+route dependencies, `tests/test_architecture.py` fails the build if either
+is missing, and this table is read back off those same declarations.
+
+**Writes to** is read from the handler body via the AST -- empty means the
+route does not touch a data source yet. **Invalidates** names the read
+products whose cached answer this write makes stale; forgetting one shows
+the user the old value and makes them believe the save failed.
+
+| Route | Method | Role | Writes to | Invalidates |
+|---|---|---|---|---|
+| `/api/v1/mappings` | POST | material-planner | – | material-overview |
+| `/api/v1/mappings/{mapping_id}` | PATCH | material-planner | – | material-overview |
 
 ## Route inventory
 

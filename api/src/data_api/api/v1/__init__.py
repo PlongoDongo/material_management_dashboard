@@ -23,9 +23,22 @@ from fastapi import APIRouter
 from data_api.api.v1 import catalog, health, mappings
 from data_api.products.router import build_products_router
 
+API_V1_PREFIX = "/api/v1"
+
+# The hand-written routers, in the order they are mounted. Exposed as a tuple
+# because `include_router` swallows them: once mounted, FastAPI keeps a router
+# as a private `_IncludedRouter` and its `APIRoute` objects are no longer
+# reachable from the app. Their dependencies are, though, and both
+# tests/test_architecture.py and architecture.py need to read those -- which
+# roles a write route demands and which products it invalidates.
+#
+# The generated data product router is deliberately NOT in here: it has no
+# hand-written dependencies to inspect, and the registry already describes it.
+TOPIC_ROUTERS = (health.router, catalog.router, mappings.router)
+
 
 def build_v1_router() -> APIRouter:
-    router = APIRouter(prefix="/api/v1")
+    router = APIRouter(prefix=API_V1_PREFIX)
     router.include_router(health.router)
     router.include_router(catalog.router)
     router.include_router(build_products_router())   # generated from the registry

@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -69,6 +70,37 @@ class TTLCache:
 
 
 cache = TTLCache()
+
+
+def invalidates(*products: str) -> Callable[[], AsyncIterator[None]]:
+    """Route dependency: evicts these products AFTER a successful write.
+
+        @router.post("", dependencies=[Depends(invalidates("material-overview"))])
+
+    Two reasons this is a dependency rather than a line in the handler:
+
+    * It cannot be forgotten quietly. A new write route without it leaves the
+      dashboard showing the old state for up to `cache_ttl` seconds, and the
+      user concludes the save failed. tests/test_architecture.py fails the build
+      if a write route is missing one.
+    * Everything after `yield` runs only on the SUCCESS path -- the same
+      mechanism as the commit in api/deps.py. A handler that answers 409
+      therefore leaves the cache alone, which is right: nothing changed. The
+      current inline call would run either way.
+
+    The declared products are readable back off the route (see
+    `invalidated_products` below), which is how architecture.py draws the
+    "write route -> product" edges without anyone maintaining a list.
+    """
+
+    async def _invalidate() -> AsyncIterator[None]:
+        yield
+        for product in products:
+            evicted = cache.invalidate(product)
+            log.info("Cache invalidated for %s: %d entries.", product, evicted)
+
+    _invalidate.invalidated_products = products
+    return _invalidate
 
 
 def etag_for(payload: object) -> str:

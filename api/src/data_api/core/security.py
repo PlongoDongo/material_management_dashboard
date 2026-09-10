@@ -215,4 +215,8 @@ def requires(*groups: str) -> Callable[..., Any]:
             )
         return principal
 
+    # Readable back off the route, the same way `invalidates` exposes its
+    # products: tests/test_architecture.py checks that every write route has a
+    # guard, and architecture.py puts the role in the diagram.
+    _guard.required_groups = groups
     return _guard
