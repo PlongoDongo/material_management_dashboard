@@ -119,8 +119,8 @@ def search_page(cypher: str, parameters: dict[str, Any]) -> list[dict[str, Any]]
     else:
         rows.sort(key=lambda r: r["material_number"])
 
-    skip = parameters.get("skip", 0)
-    return rows[skip: skip + parameters.get("limit", len(rows))]
+    offset = parameters.get("offset", 0)
+    return rows[offset: offset + parameters.get("limit", len(rows))]
 
 
 def search_total(parameters: dict[str, Any]) -> list[dict[str, Any]]:

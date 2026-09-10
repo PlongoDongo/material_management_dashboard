@@ -43,9 +43,9 @@ The queries cannot disagree because there is only one filter.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from data_api.db.sources import Sources
 from data_api.products.base import DataProduct, Page, ProductParams
@@ -80,9 +80,11 @@ WHERE ($status           IS NULL OR m.status IN $status)
 # something non-unique (status, say) would need a tie-breaker -- `ORDER BY
 # m.status, m.nr` -- or rows would shuffle between pages.
 #
-# $skip and $limit are ordinary parameters. Values may be parameterised in
-# Cypher; labels, relationship types and property names may not -- which is why
-# the sort column below goes through a whitelist instead.
+# $offset and $limit are ordinary parameters, named exactly like the fields on
+# ProductParams -- that is what lets `load` below hand the whole params object
+# to the driver without copying anything. Values may be parameterised in Cypher;
+# labels, relationship types and property names may not, which is why the sort
+# column goes through a whitelist instead.
 CYPHER_PAGE = _MATCH_AND_FILTER + """
 RETURN m.nr        AS material_number,
        m.name      AS description,
@@ -93,7 +95,7 @@ RETURN m.nr        AS material_number,
        m.bestand   AS stock,
        m.geaendert AS changed_on
 ORDER BY {order_by}
-SKIP $skip LIMIT $limit
+SKIP $offset LIMIT $limit
 """
 
 # 1c. The count, over the SAME filter. No ORDER BY, no window -- sorting rows
@@ -129,6 +131,17 @@ class MaterialSearchRow(BaseModel):
     stock: int | None = None
     changed_on: str | None = None
 
+    @field_validator("material_group")
+    @classmethod
+    def _unclassified_is_none(cls, value: str | None) -> str | None:
+        """"" and null both mean "no material group" in the graph.
+
+        The contract promises one of them, so the difference is flattened here --
+        at the field it concerns, not in a mapping function that would have to
+        list every other field just to touch this one.
+        """
+        return value or None
+
 
 # 3. The allowed filters. EVERY one of these appears in _MATCH_AND_FILTER above
 # -- that is the rule this product lives by. Adding a field here without adding
@@ -142,51 +155,42 @@ class MaterialSearchParams(ProductParams):
     search: str | None = Field(None, description="Substring of material number or description.")
     sort: Literal["material_number", "stock", "changed_on"] = "material_number"
 
+    @field_validator("search")
+    @classmethod
+    def _normalise_search(cls, value: str | None) -> str | None:
+        """Lowered and trimmed HERE, so the query can compare directly.
 
-# 4. There is no `transform()` here, and that is the point.
+        Belongs to the parameter rather than to the loader: it is part of what
+        "search" means, and doing it once on the way in beats `toLower($search)`
+        inside the WHERE clause.
+        """
+        return value.strip().lower() if value else None
+
+
+# 4. There is no `transform()` here, and no row mapping either, and that is the
+# point.
 #
-# material_overview_v3 has a 40-line transform that filters and computes. This
-# product has none: everything it could filter on, the database already did.
-# What is left is renaming and type coercion, which is what `_row` does.
-def _row(record: dict[str, Any]) -> dict[str, Any]:
-    """One graph record -> one contract row. No filtering, no arithmetic."""
-    stock = record.get("stock")
-    return {
-        "material_number": record["material_number"],
-        "description": record.get("description"),
-        # "" and None both mean "unclassified" in the graph; the contract says None.
-        "material_group": record.get("material_group") or None,
-        "plant_id": record.get("plant_id"),
-        "plant_name": record.get("plant_name"),
-        "status": record.get("status"),
-        "stock": int(stock) if stock is not None else None,
-        "changed_on": record.get("changed_on"),
-    }
-
-
-def _filter_arguments(params: MaterialSearchParams) -> dict[str, Any]:
-    """The filter parameters -- built ONCE and passed to both queries.
-
-    The other half of the anti-drift measure: the shared query fragment cannot
-    disagree about the conditions, and this cannot disagree about the values.
-
-    `search` is lowered here rather than in the query so `toLower($search)` does
-    not run per row.
-    """
-    return {
-        "status": params.status,
-        "plant_id": params.plant_id,
-        "material_group": params.material_group,
-        "unclassified_only": params.unclassified_only,
-        "min_stock": params.min_stock,
-        "search": params.search.strip().lower() if params.search else None,
-    }
+# material_overview_v3 has a 40-line `transform()` that filters and computes.
+# This product has none: everything it could filter on, the database already
+# did, and the query aliases straight onto the contract's field names
+# (`m.nr AS material_number`), so the records ARE the rows. FastAPI validates
+# them against MaterialSearchRow on the way out -- including the int cast for
+# `stock`, which is what a response_model is for.
+#
+# The practical consequence: a new column is added in TWO places, the RETURN
+# clause and the contract. A mapping function in between would be a third, and
+# forgetting it there is silent -- the field simply never appears.
 
 
 # 5. The wiring. Returns a `Page`, not a list -- see products/base.py.
 async def load(sources: Sources, params: MaterialSearchParams) -> Page:
     """One page of materials, filtered and ordered inside the graph."""
-    arguments = _filter_arguments(params)
+    # The parameter object goes to the driver as it is. That works because every
+    # field is named exactly like the `$name` it fills -- which is also what
+    # `test_every_declared_filter_appears_in_the_query` checks. Two exclusions:
+    # `sort` is not a value but a piece of the query, and the window belongs to
+    # the page query only (the COUNT counts everything that matches).
+    filters = params.model_dump(exclude={"sort", "limit", "offset"})
 
     # The sort fragment is interpolated, not parameterised -- Cypher does not
     # allow a parameter there. Safe only because the value came out of _SORTS,
@@ -194,15 +198,14 @@ async def load(sources: Sources, params: MaterialSearchParams) -> Page:
     page_query = CYPHER_PAGE.format(order_by=_SORTS[params.sort])
 
     records = await sources.neo4j(
-        page_query, skip=params.offset, limit=params.limit, **arguments
+        page_query, limit=params.limit, offset=params.offset, **filters
     )
     # The COUNT runs even when the page is empty: "no rows on page 40 of 3" and
     # "no rows at all" are different answers, and the client needs the total to
-    # tell them apart.
-    counted = await sources.neo4j(CYPHER_COUNT, **arguments)
-    total = counted[0]["total"] if counted else 0
+    # tell them apart. Same `filters`, so the two queries cannot disagree.
+    counted = await sources.neo4j(CYPHER_COUNT, **filters)
 
-    return Page(rows=[_row(record) for record in records], total=total)
+    return Page(rows=records, total=counted[0]["total"] if counted else 0)
 
 
 # 6. Publish.
