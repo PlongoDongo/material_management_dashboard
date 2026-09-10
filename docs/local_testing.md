@@ -104,6 +104,64 @@ Code-Änderung umstellen:
 SERVER_PORT=8080 SERVER_LOGLEVEL=debug .venv/bin/python -m main
 ```
 
+### „Address already in use" (Errno 98 / 48)
+
+```
+INFO:     Will watch for changes in these directories: [...]
+ERROR:    [Errno 98] Address already in use
+```
+
+Der Port ist belegt. Dass im Browser unter `http://127.0.0.1:8000` nichts
+antwortet, beweist das Gegenteil **nicht** — der Halter kann auf einer anderen
+Schnittstelle lauschen, auf HTTP gar nicht antworten, oder eine Anwendung sein,
+die selbst nicht hochgekommen ist. Frag das Betriebssystem statt den Browser:
+
+```bash
+ss -ltnp 'sport = :8000'          # Linux
+lsof -nP -iTCP:8000 -sTCP:LISTEN  # macOS, oder Linux mit lsof
+fuser -v 8000/tcp                 # Linux, kurz und knapp
+```
+
+Die Ausgabe nennt PID und Kommando. **Zwei Ursachen decken fast alle Fälle ab:**
+
+**1. Ein vergessener Server aus einem anderen Projekt.** Der häufigste Fall, und
+der am schwersten zu erratende — `8000` ist der Default von so ziemlich jedem
+Python-Webframework. Achte in der `NAME`-Spalte auf den Unterschied:
+
+```
+python  15393  *:8000            <- 0.0.0.0, ALLE Schnittstellen
+python  89468  127.0.0.1:8000    <- nur lokal
+```
+
+Wer `0.0.0.0:8000` hält, blockiert `127.0.0.1:8000` **mit**. Auf Linux gibt das
+`Errno 98`; auf macOS geht es teilweise durch, weshalb derselbe Fehler dort
+womöglich nicht auftritt.
+
+**2. Ein verwaistes Kind des Reloaders.** `reload` (an, solange `API_ENV=dev`)
+startet zwei Prozesse: einen Beobachter und ein Kind, das den Socket hält. Wird
+der Beobachter hart beendet — geschlossenes Terminal, `kill -9`, abgestürzte
+IDE — überlebt das Kind und behält den Port. Nachgestellt:
+
+```
+Elternprozess mit kill -9 beendet
+  -> PID 89664 haelt 127.0.0.1:8877 weiterhin
+```
+
+Ein `Ctrl-C` im Vordergrund räumt beide sauber ab; alles Härtere nicht.
+
+**Beheben** — je nachdem, was der Halter ist:
+
+```bash
+kill <PID>                        # freundlich; -9 nur wenn das nicht reicht
+pkill -f "python -m main"         # alle eigenen Instanzen
+SERVER_PORT=8001 .venv/bin/python -m main    # oder einfach ausweichen
+```
+
+Prüf vor dem Killen die Kommandozeile in der `ss`/`lsof`-Ausgabe. Ein
+`0.0.0.0:8000` aus einem fremden Projektpfad gehört einem Kollegen oder einem
+anderen Container — dann ist Ausweichen auf einen anderen Port die richtige
+Antwort, nicht das Beenden.
+
 ---
 
 ## Stufe 3 — Der einfachste Endpunkt
