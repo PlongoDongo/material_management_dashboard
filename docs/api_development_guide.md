@@ -105,7 +105,7 @@ in the same file. See [section 17](#17-why-there-is-no-repository-layer).
 
 ```
 api/
-├── src/data_api/
+├── src/                        no package folder -- these are the top-level modules
 │   ├── main.py                 uvicorn entry point
 │   ├── app.py          create_app() + lifespan
 │   ├── architecture.py         generates docs/architecture.md
@@ -205,18 +205,18 @@ cp .env.example .env          # fill in the Neo4j / Postgres coordinates
 ```
 
 ```bash
-.venv/bin/python -m data_api.main
+.venv/bin/python -m main
 ```
 
 Host, port and log level come from the settings, so `SERVER_PORT=8080` works
-without touching the code. `uvicorn data_api.main:app --reload` still does the
+without touching the code. `uvicorn main:app --reload` still does the
 same thing if you prefer it.
 
 Before starting anything, this prints what the application would actually see —
 the quickest way to check that configuration and credentials arrived:
 
 ```bash
-.venv/bin/python -m data_api.core.config
+.venv/bin/python -m core.config
 ```
 
 ```bash
@@ -241,7 +241,7 @@ psql "$DSN" -f seed/seed_postgres.sql
 
 ## 6. Recipe: add a data product
 
-One file in `src/data_api/products/catalog/`. Nothing else — no router, no
+One file in `src/products/catalog/`. Nothing else — no router, no
 registration list, no `main.py` change.
 
 Naming convention: `<product_name>_v<major>.py`.
@@ -257,9 +257,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from data_api.db.sources import Sources
-from data_api.products.base import DataProduct, ProductParams
-from data_api.products.registry import registry
+from db.sources import Sources
+from products.base import DataProduct, ProductParams
+from products.registry import registry
 
 
 # 1. THE QUERY ─ lives with the product that owns it.
@@ -591,6 +591,105 @@ Procedure:
 
 **Do not patch a version that consumers still use.** "We'll just fix v2 quickly,
 only one dashboard uses it" is the standard way versioning fails.
+
+### Versioning a WRITE route
+
+Write routes have no `/v2` of their own, and that is not an oversight — a
+command is an action, not a dataset. You do not usually want two versions of
+"create a mapping" running side by side, both writing to the same table with
+different rules. So the rules are different from a data product's:
+
+| Change to a write route | What to do |
+|---|---|
+| New OPTIONAL field in the input model | nothing — old callers keep working |
+| New REQUIRED field | breaking. Give it a default, or take the second row |
+| Field removed / renamed / meaning changed | a **new path** next to the old one, or a new API version |
+| Response gains a field | nothing — consumers ignore what they do not read |
+| Status code or error semantics change | breaking; treat like row three |
+
+The reason a new *path* is usually enough: the URL is the version.
+`POST /api/v1/mappings` and `POST /api/v1/mappings/bulk` are two commands, not
+two versions of one. When you genuinely need the same command with different
+semantics, name it for what makes it different rather than numbering it:
+
+```python
+@router.post("", ...)                    # the existing contract, untouched
+async def create_mapping(...): ...
+
+@router.post("/with-review", ...)        # new: requires an approver
+async def create_mapping_with_review(...): ...
+```
+
+Only when *every* write in the API changes shape at once — a new envelope, a new
+error format, a new auth scheme — does the API version move. Which is the next
+section.
+
+### Bumping the API version
+
+`v1` in `/api/v1/...` is the **transport contract**: the response envelope, the
+error format (RFC 9457 Problem Details), the authentication scheme, the shared
+headers. It is not a version of the data.
+
+Something that would force `v2`:
+
+| Change | Why v1 cannot absorb it |
+|---|---|
+| `{"meta": ..., "data": ...}` becomes `{"meta": ..., "items": ...}` | every consumer's parsing breaks at once |
+| Errors stop being Problem Details | every error handler breaks |
+| `X-API-Key` → `Authorization` only | every caller has to change |
+| `limit`/`offset` → cursor paging | every paged call breaks |
+
+Note what is NOT on that list: adding a data product, changing one product's
+fields, adding a filter, adding a write route. Those are the everyday changes,
+and none of them touch the transport.
+
+**How it would look in this codebase.** The version lives in exactly one place —
+the prefix in `api/v1/__init__.py`:
+
+```python
+API_V1_PREFIX = "/api/v1"
+
+def build_v1_router() -> APIRouter:
+    router = APIRouter(prefix=API_V1_PREFIX)
+    ...
+```
+
+So a v2 is a sibling package, not an edit:
+
+```
+src/api/
+├── deps.py                 shared
+├── v1/                     stays exactly as it is, still serving
+│   ├── __init__.py         API_V1_PREFIX = "/api/v1"
+│   ├── health.py
+│   ├── catalog.py
+│   └── mappings.py
+└── v2/                     the new transport contract
+    ├── __init__.py         API_V2_PREFIX = "/api/v2"
+    └── ...
+```
+
+and `app.py` mounts both:
+
+```python
+app.include_router(build_v1_router())
+app.include_router(build_v2_router())
+```
+
+The data products do **not** move. `products/` knows nothing about API versions;
+`build_products_router()` produces routes and each API version mounts them under
+its own prefix and wraps them in its own envelope. `material-overview/v3` is then
+reachable under both `/api/v1/...` and `/api/v2/...`, with the same rows in a
+different wrapper — which is exactly what "two independent axes" means.
+
+Retiring v1 works like retiring a data product version: announce it, watch the
+access logs for callers, then delete the `v1/` package. Route, docs and catalog
+entry go with it.
+
+**Do not do this lightly.** Two API versions means every write route, every
+health check and every error path exists twice for as long as v1 lives. The
+whole point of keeping the two axes separate is that the everyday changes — new
+products, new fields, new filters — never require it.
 
 ---
 

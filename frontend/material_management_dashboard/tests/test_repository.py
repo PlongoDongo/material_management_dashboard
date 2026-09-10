@@ -241,7 +241,7 @@ def test_client_ist_mit_der_vorlage_deckungsgleich() -> None:
 
     hier = Path(__file__).resolve()
     kopie = hier.parents[1] / "data" / "api_client.py"
-    vorlage = hier.parents[3] / "api" / "src" / "data_api" / "clients" / "dash_client.py"
+    vorlage = hier.parents[3] / "api" / "src" / "clients" / "dash_client.py"
 
     if not vorlage.exists():                      # Dashboard ohne Monorepo ausgecheckt
         pytest.skip(f"Vorlage nicht gefunden: {vorlage}")
@@ -256,7 +256,7 @@ def test_client_ist_mit_der_vorlage_deckungsgleich() -> None:
         return "\n".join(ast.dump(k, indent=2) for k in knoten)
 
     assert rumpf(kopie) == rumpf(vorlage), (
-        "data/api_client.py und api/src/data_api/clients/dash_client.py sind "
+        "data/api_client.py und api/src/clients/dash_client.py sind "
         "auseinandergelaufen. Vorlage kopieren und nur den Kopf anpassen."
     )
 

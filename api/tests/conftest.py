@@ -25,10 +25,10 @@ from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
 from tests.types import AuthHeader, KeyPair, MakeToken
 
-from data_api.api.deps import get_sources
-from data_api.app import create_app
-from data_api.core.config import Settings
-from data_api.products.cache import cache
+from api.deps import get_sources
+from app import create_app
+from core.config import Settings
+from products.cache import cache
 
 
 @pytest.fixture(autouse=True)
@@ -77,7 +77,7 @@ def rsa_keypair() -> tuple[Any, Any]:
 @pytest.fixture
 def oidc_settings(settings: Settings, rsa_keypair: KeyPair, monkeypatch: pytest.MonkeyPatch) -> Settings:
     """Settings with auth ON, and the realm's public key wired in locally."""
-    from data_api.core import security
+    from core import security
 
     _, public = rsa_keypair
     monkeypatch.setattr(security, "_signing_key", lambda token, settings: public)

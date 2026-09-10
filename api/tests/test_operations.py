@@ -17,9 +17,9 @@ from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
 from tests.types import AuthHeader
 
-from data_api.app import create_app
-from data_api.core.config import Settings
-from data_api.core.security import ANONYMOUS, Principal
+from app import create_app
+from core.config import Settings
+from core.security import ANONYMOUS, Principal
 
 # --- .env.example is a shipped interface ------------------------------------
 
@@ -52,7 +52,7 @@ def test_request_id_appears_in_the_access_log_line(client: TestClient, caplog: p
     Previously the ContextVar was reset in `finally` -- that is, BEFORE the log
     call -- and that very line carried "-".
     """
-    with caplog.at_level("INFO", logger="data_api.core.middleware"):
+    with caplog.at_level("INFO", logger="core.middleware"):
         client.get("/api/v1/healthz", headers={"X-Request-ID": "abc123"})
 
     lines = [r for r in caplog.records if "healthz" in r.getMessage()]
@@ -202,9 +202,9 @@ def test_readyz_only_checks_required_sources(client_without_sources: TestClient)
 
 def test_required_sources_are_read_from_the_loaders() -> None:
     """Derived, not declared -- that way it cannot drift."""
-    from data_api.products.catalog.material_overview_v3 import load as load_material
-    from data_api.products.catalog.supplier_risk_v2 import load as load_risk
-    from data_api.products.introspect import required_sources, sources_used_by
+    from products.catalog.material_overview_v3 import load as load_material
+    from products.catalog.supplier_risk_v2 import load as load_risk
+    from products.introspect import required_sources, sources_used_by
 
     assert sources_used_by(load_material) == ["neo4j"]
     assert sources_used_by(load_risk) == ["neo4j", "postgres"]

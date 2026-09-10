@@ -14,7 +14,7 @@ The script deliberately uses the SYNCHRONOUS driver: it is a one-off command
 line tool, not a server. Async would be ceremony here.
 
 The structure matches exactly what the catalog queries in
-`src/data_api/products/catalog/` expect. If the graph model changes there, this
+`src/products/catalog/` expect. If the graph model changes there, this
 script has to change too.
 
 The node labels and property names are German because they mirror the graph

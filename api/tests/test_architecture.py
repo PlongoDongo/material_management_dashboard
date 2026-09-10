@@ -13,9 +13,9 @@ from collections.abc import AsyncIterator
 
 from fastapi.routing import APIRoute
 
-from data_api.api.v1 import API_V1_PREFIX, TOPIC_ROUTERS
-from data_api.app import create_app
-from data_api.architecture import (
+from api.v1 import API_V1_PREFIX, TOPIC_ROUTERS
+from app import create_app
+from architecture import (
     DEFAULT_OUT,
     build,
     collect,
@@ -24,12 +24,12 @@ from data_api.architecture import (
     diagram_versions,
     render_markdown,
 )
-from data_api.core.config import Settings
-from data_api.products.cache import cache, invalidates
-from data_api.products.catalog.material_overview_v3 import load as load_material
-from data_api.products.catalog.supplier_risk_v2 import load as load_risk
-from data_api.products.introspect import sources_used_by
-from data_api.products.registry import registry
+from core.config import Settings
+from products.cache import cache, invalidates
+from products.catalog.material_overview_v3 import load as load_material
+from products.catalog.supplier_risk_v2 import load as load_risk
+from products.introspect import sources_used_by
+from products.registry import registry
 
 
 def test_the_ast_finds_the_sources_a_product_uses() -> None:

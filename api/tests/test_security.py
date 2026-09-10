@@ -17,10 +17,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.types import AuthHeader, MakeToken
 
-from data_api.app import create_app
-from data_api.core.config import Settings
-from data_api.core.security import ANONYMOUS, Principal, _groups_from
-from data_api.products.registry import registry
+from app import create_app
+from core.config import Settings
+from core.security import ANONYMOUS, Principal, _groups_from
+from products.registry import registry
 
 CATALOG = "/api/v1/catalog"
 PRODUCT = "/api/v1/data-products/material-overview/v3"
@@ -35,7 +35,7 @@ def secured(oidc_settings: Settings, app: FastAPI) -> Iterator[TestClient]:
     """
     from tests.fakes import FakeSources
 
-    from data_api.api.deps import get_sources
+    from api.deps import get_sources
 
     application = create_app(oidc_settings)
     application.dependency_overrides[get_sources] = FakeSources
@@ -189,7 +189,7 @@ def secured_restricted(restricted_registry: None, oidc_settings: Settings) -> It
     """
     from tests.fakes import FakeSources
 
-    from data_api.api.deps import get_sources
+    from api.deps import get_sources
 
     application = create_app(oidc_settings)
     application.dependency_overrides[get_sources] = FakeSources
@@ -250,7 +250,7 @@ def test_an_issuer_without_an_audience_is_a_configuration_error(settings: Settin
 def test_prod_refuses_to_start_without_authentication(settings: Settings) -> None:
     """A forgotten OIDC_ISSUER leaves the API open and nothing would say so.
     A server that does not come up gets noticed; an open one may not."""
-    from data_api.core.errors import ConfigurationError
+    from core.errors import ConfigurationError
 
     unprotected_prod = settings.model_copy(update={"api_env": "prod", "oidc_issuer": None})
     with pytest.raises(ConfigurationError, match="ALLOW_ANONYMOUS"), \
@@ -273,7 +273,7 @@ def test_prod_starts_unauthenticated_when_that_is_written_down(settings: Setting
     messages: list[str] = []
     collector = logging.Handler()
     collector.emit = lambda record: messages.append(record.getMessage())  # type: ignore[method-assign]
-    app_logger = logging.getLogger("data_api.app")
+    app_logger = logging.getLogger("app")
     app_logger.addHandler(collector)
 
     deliberate = settings.model_copy(update={

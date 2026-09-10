@@ -15,8 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
 
-from data_api.products.cache import cache
-from data_api.products.catalog import material_search_v1 as ms1
+from products.cache import cache
+from products.catalog import material_search_v1 as ms1
 
 SEARCH = "/api/v1/data-products/material-search/v1"
 

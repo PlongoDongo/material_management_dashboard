@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from data_api.core.config import Settings
-from data_api.core.errors import ConfigurationError
+from core.config import Settings
+from core.errors import ConfigurationError
 
 NEO4J_FILE = {
     "protocol": "bolt",
@@ -70,7 +70,7 @@ def test_importing_the_module_reads_nothing(monkeypatch: pytest.MonkeyPatch) -> 
     import importlib
 
     monkeypatch.setenv("CREDENTIALS_DIR", "/definitely/not/here")
-    module = importlib.import_module("data_api.core.config")
+    module = importlib.import_module("core.config")
     importlib.reload(module)          # no exception, nothing read
 
 
@@ -112,7 +112,7 @@ def test_the_file_extension_is_irrelevant(
     code could derive, so they are spelled out in _CREDENTIAL_FILES and the
     parser never looks at the suffix.
     """
-    from data_api.core.config import _CREDENTIAL_FILES
+    from core.config import _CREDENTIAL_FILES
 
     assert set(_CREDENTIAL_FILES) == {"neo4j.dev", "postgres.project"}
     (tmp_path / "neo4j.dev").write_text(yaml.safe_dump(NEO4J_FILE), encoding="utf-8")

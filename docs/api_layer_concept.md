@@ -139,10 +139,9 @@ api/
 ├── .env.example
 ├── README.md
 ├── migrations/                     # Alembic (nur für die Postgres-Schreibseite)
-├── src/
-│   └── data_api/                   # ← echtes, installierbares Paket
-│       ├── main.py                 # uvicorn data_api.main:app
-│       ├── app.py          # create_app() + Lifespan
+├── src/                            # ← flach, kein Paketordner (siehe Punkt 1)
+│       ├── main.py                 # uvicorn main:app
+│       ├── app.py                  # create_app() + Lifespan
 │       │
 │       ├── core/                   # querschnittlich, kennt keine Fachlichkeit
 │       │   ├── config.py           #   Settings (pydantic-settings)
@@ -185,10 +184,31 @@ Die vorhandene Struktur (`src/api/routes.py`, `src/db/`, `src/models/`,
 `src/services/`) ist ein solider Start und in vielen FastAPI-Tutorials genau so
 zu finden. Vier Punkte würde ich ändern, bevor viel Code entsteht:
 
-1. **`src/` braucht einen Paketnamen.** Ohne `src/data_api/` gibt es keinen
-   eindeutigen Importpfad; Imports funktionieren dann je nach Arbeitsverzeichnis
-   mal so, mal so. Ein installierbares Paket (`pip install -e .`) beendet diese
-   Klasse von Fehlern dauerhaft.
+1. **Flaches `src/` ohne Paketordner -- so entschieden, mit offenen Augen.**
+   Ursprünglich stand hier die Empfehlung, einen Paketordner (`src/data_api/`)
+   einzuziehen. Dagegen sprach der Bestand: die übrigen Projekte im Team sind
+   flach, und Einheitlichkeit über Repos hinweg wiegt täglich schwerer als das
+   Risiko unten. Die Struktur ist geblieben, die Gründe bleiben festgehalten:
+
+   * **Was es kostet.** `core`, `db`, `api`, `products`, `main`, `app`,
+     `clients` werden global importierbare Namen. Bringt irgendwann eine
+     Abhängigkeit ein eigenes Top-Level-`api` oder `core` mit, entscheidet die
+     `sys.path`-Reihenfolge, welches gewinnt -- ein Fehler, der sich als
+     "irgendein Import zieht plötzlich das Falsche" äußert. Geprüft: in der
+     aktuellen Umgebung kollidiert nichts.
+   * **Was es NICHT kostet.** Eindeutige Importe gibt es trotzdem, solange das
+     Projekt installiert ist (`pip install -e .`) oder `pythonpath = ["src"]`
+     gesetzt ist -- beides ist der Fall. Die Klasse "funktioniert je nach
+     Arbeitsverzeichnis mal so, mal so" ist damit ebenso ausgeschlossen wie mit
+     Paketordner.
+   * **Die eine Zeile, die man richtig setzen muss.** In `pyproject.toml`
+     `sources = ["src"]` + `only-include = ["src"]` statt einer Liste von
+     Paketen. Sonst baut das Wheel ohne Fehler, lässt aber die losen Module
+     neben den Ordnern weg (`main.py`, `app.py`, `architecture.py`) -- und ein
+     editable Install verdeckt das, bis zum ersten echten Build.
+   * **Rückweg.** Falls doch eine Kollision auftritt, ist die Behebung genau
+     dieser Umbau rückwärts: ein `git mv` und ein `sed` über die Importe. Kein
+     Einbahnstraßen-Risiko.
 
 2. **Eine einzelne `routes.py` skaliert nicht.** Nach dem fünften Dashboard ist
    das eine Datei mit 800 Zeilen und permanenten Merge-Konflikten, weil alle
@@ -255,7 +275,7 @@ Die funktioniert, kostet aber genau das, wofür man FastAPI nimmt: In `/docs`
 stünde dann nur „gibt irgendein JSON zurück". Niemand könnte nachschlagen, welche
 Felder ein Produkt liefert, und es ließen sich keine Clients generieren.
 
-Stattdessen erzeugt [`products/router.py`](../api/src/data_api/products/router.py)
+Stattdessen erzeugt [`products/router.py`](../api/src/products/router.py)
 pro (Produkt, Major-Version) eine echte Route mit eigenem `response_model`.
 Ergebnis: vollständige OpenAPI-Dokumentation **und** „neues Produkt = neue Datei".
 
@@ -431,7 +451,7 @@ denselben Treiber teilen.
 ### `Sources` — der Zugang zu den Datenquellen
 
 Ein Datenprodukt sieht nicht die Sessions, sondern ein Objekt mit zwei Methoden
-([`db/sources.py`](../api/src/data_api/db/sources.py)):
+([`db/sources.py`](../api/src/db/sources.py)):
 
 ```python
 async def load(sources: Sources, params):
@@ -620,7 +640,7 @@ haben unterschiedliche Verträge:
 
 Ein Generator kann das Zweite nicht sinnvoll erzeugen. Kommandos sind deshalb
 normale, handgeschriebene Router unter `/api/v1/<thema>`
-(Beispiel: [`api/v1/mappings.py`](../api/src/data_api/api/v1/mappings.py)).
+(Beispiel: [`api/v1/mappings.py`](../api/src/api/v1/mappings.py)).
 
 Zwei Konventionen dort:
 
@@ -687,7 +707,7 @@ Neo4j-Timeout einen HTML-Stacktrace, steht diese Logik in jedem Dashboard neu.
 **Die Konvention im Code:** In der Domänenschicht wird **nie** `HTTPException`
 geworfen, sondern eine `AppError`-Unterklasse — die kennt kein HTTP und ist ohne
 Webserver testbar. Die Übersetzung nach HTTP passiert an genau einer Stelle
-([`core/errors.py`](../api/src/data_api/core/errors.py)).
+([`core/errors.py`](../api/src/core/errors.py)).
 
 Die Statuscodes, die für die Dashboards wirklich einen Unterschied machen:
 
@@ -834,7 +854,7 @@ sinnvolle CI.
 ## 15. Betrieb und Deployment
 
 ```bash
-uvicorn data_api.main:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 * **Worker-Anzahl**: Jeder Worker ist ein eigener Prozess mit eigenem
@@ -893,7 +913,7 @@ hinzugefügtes Feld nur MINOR ist.
 
 ### Der Client ist eine Kopiervorlage
 
-[`clients/dash_client.py`](../api/src/data_api/clients/dash_client.py) wird in
+[`clients/dash_client.py`](../api/src/clients/dash_client.py) wird in
 jedes Dashboard kopiert, nicht importiert: `api/` hängt an FastAPI, dem
 Neo4j-Treiber und SQLAlchemy — nichts davon soll ins Dashboard, das nur `httpx`
 braucht. Sobald das dritte Dashboard ihn nutzt, lohnt sich ein kleines
@@ -920,9 +940,9 @@ Der Test, ob das Konzept „leicht erweiterbar" hält. Eine Datei in
 ```python
 # products/catalog/plant_utilisation_v1.py
 from pydantic import BaseModel
-from data_api.db.sources import Sources
-from data_api.products.base import DataProduct, ProductParams
-from data_api.products.registry import registry
+from db.sources import Sources
+from products.base import DataProduct, ProductParams
+from products.registry import registry
 
 # 1. die Abfrage
 CYPHER = """
@@ -1013,7 +1033,7 @@ Umgekehrt weiß die Registry bereits alles, was ein generisches Werkzeug mühsam
 erraten müsste: Version, Owner, Cache-TTL, Deprecation-Status, Vertragsfelder,
 erlaubte Filter. Diese Information *nicht* zu nutzen wäre die eigentliche
 Verschwendung. Der Generator ist deshalb rund 200 Zeilen
-([`architecture.py`](../api/src/data_api/architecture.py)) und liefert ein
+([`architecture.py`](../api/src/architecture.py)) und liefert ein
 genaueres Bild als jedes der Pakete oben.
 
 ### Wie die Verbindungen ermittelt werden
@@ -1065,11 +1085,11 @@ Syntaxfehler erst auf, wenn jemand die Datei öffnet — und dort steht dann nur
   name = Abhängigkeiten zeigen nur nach unten
   type = layers
   layers =
-      data_api.api
-      data_api.products
-      data_api.repositories
-      data_api.db
-      data_api.core
+      api
+      products
+      repositories
+      db
+      core
   ```
 
   Das Diagramm zeigt, wie es *ist*; der Contract erzwingt, wie es *sein soll*.

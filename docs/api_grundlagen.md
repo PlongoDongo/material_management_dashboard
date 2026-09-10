@@ -705,7 +705,7 @@ aus Knoten und Kanten, eine Excel-Datei? Die Entscheidungshilfe dafür steht im
 Dann steht sie in einem gemeinsamen Modul, und beide importieren sie:
 
 ```python
-from data_api.products.catalog.material_overview_v2 import CYPHER
+from products.catalog.material_overview_v2 import CYPHER
 ```
 
 Oder man legt `products/queries.py` an. Beides ist in zehn Minuten gemacht —
@@ -765,7 +765,7 @@ Liste, die jemand pflegen müsste, sieht `discover()` nach, welche Dateien im
 Katalogordner liegen:
 
 ```python
-def discover(package="data_api.products.catalog"):
+def discover(package="products.catalog"):
     module = importlib.import_module(package)
     for info in pkgutil.iter_modules(module.__path__):   # liest das Verzeichnis
         importlib.import_module(f"{package}.{info.name}")

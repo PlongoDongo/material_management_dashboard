@@ -14,17 +14,17 @@ import neo4j.time as nt
 import pytest
 from neo4j.graph import Graph, Node
 
-from data_api.db.sources import _to_python_value
-from data_api.products.catalog.material_overview_v3 import (
+from db.sources import _to_python_value
+from products.catalog.material_overview_v3 import (
     MaterialParamsV3,
 )
-from data_api.products.catalog.material_overview_v3 import (
+from products.catalog.material_overview_v3 import (
     transform as transform_material,
 )
-from data_api.products.catalog.supplier_risk_v2 import (
+from products.catalog.supplier_risk_v2 import (
     SupplierRiskParams,
 )
-from data_api.products.catalog.supplier_risk_v2 import (
+from products.catalog.supplier_risk_v2 import (
     transform as transform_risk,
 )
 
