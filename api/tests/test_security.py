@@ -9,6 +9,7 @@ implementation, which is the one thing an auth test must not do.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 
 import pytest
@@ -252,9 +253,47 @@ def test_prod_refuses_to_start_without_authentication(settings: Settings) -> Non
     from data_api.core.errors import ConfigurationError
 
     unprotected_prod = settings.model_copy(update={"api_env": "prod", "oidc_issuer": None})
-    with pytest.raises(ConfigurationError, match="OIDC_ISSUER"), \
+    with pytest.raises(ConfigurationError, match="ALLOW_ANONYMOUS"), \
             TestClient(create_app(unprotected_prod)):
         pass
+
+
+def test_prod_starts_unauthenticated_when_that_is_written_down(settings: Settings) -> None:
+    """A closed network is a legitimate reason to run without authentication.
+
+    The flag does not weaken the check -- it turns "forgot to configure it" into
+    "decided against it", which is the difference the guard exists to see. The
+    warning keeps the state visible in the log of every start rather than only
+    in whoever's memory set the variable.
+
+    Not `caplog`: `create_app` calls `configure_logging`, which REPLACES the root
+    handlers (deliberately -- see core/logging.py) and throws caplog's handler
+    out with them. A handler on the module logger survives that.
+    """
+    messages: list[str] = []
+    collector = logging.Handler()
+    collector.emit = lambda record: messages.append(record.getMessage())  # type: ignore[method-assign]
+    app_logger = logging.getLogger("data_api.app")
+    app_logger.addHandler(collector)
+
+    deliberate = settings.model_copy(update={
+        "api_env": "prod", "oidc_issuer": None, "allow_anonymous": True,
+    })
+    try:
+        with TestClient(create_app(deliberate)) as client:
+            assert client.get(CATALOG).status_code == 200    # no token, still open
+    finally:
+        app_logger.removeHandler(collector)
+
+    assert any("Authentication is OFF" in message for message in messages)
+
+
+def test_the_escape_hatch_does_not_apply_outside_prod(settings: Settings) -> None:
+    """dev and staging are open anyway -- the flag has nothing to do there."""
+    for environment in ("dev", "staging"):
+        relaxed = settings.model_copy(update={"api_env": environment, "oidc_issuer": None})
+        with TestClient(create_app(relaxed)) as client:
+            assert client.get(CATALOG).status_code == 200
 
 
 # --- Route-level roles for hand-written endpoints ---------------------------

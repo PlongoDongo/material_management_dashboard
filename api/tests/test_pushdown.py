@@ -30,8 +30,8 @@ def test_limit_and_offset_are_passed_to_cypher(client: TestClient,
     client.get(SEARCH, params={"limit": 5, "offset": 10})
 
     page_query, page_parameters = fake_sources.calls[0]
-    assert "SKIP $skip LIMIT $limit" in page_query
-    assert page_parameters["skip"] == 10
+    assert "SKIP $offset LIMIT $limit" in page_query
+    assert page_parameters["offset"] == 10
     assert page_parameters["limit"] == 5
 
 
@@ -102,8 +102,11 @@ def test_both_queries_get_identical_filter_arguments(client: TestClient,
     (_page_query, page_parameters), (count_query, count_parameters) = fake_sources.calls[:2]
     assert count_query is ms1.CYPHER_COUNT
 
-    window = {"skip", "limit"}
+    # The COUNT counts everything that matches, so it gets the filters WITHOUT
+    # the window -- and those filters have to be the same ones the page saw.
+    window = {"offset", "limit"}
     assert {k: v for k, v in page_parameters.items() if k not in window} == count_parameters
+    assert window.isdisjoint(count_parameters)
 
 
 # --- The filters really are in the query ------------------------------------
@@ -118,14 +121,20 @@ def test_every_declared_filter_appears_in_the_query() -> None:
         assert f"${name}" in ms1._MATCH_AND_FILTER, f"{name} is declared but never filtered on"
 
 
-def test_the_product_has_no_python_side_filtering() -> None:
-    """`_row` maps, it does not decide. A `continue` or an `if ... in params`
-    in there would mean rows are dropped after the window was cut."""
+def test_nothing_stands_between_the_query_and_the_contract() -> None:
+    """The loader queries and returns -- it does not filter, and it does not map.
+
+    A filter here would run on the already-truncated page (short pages, status
+    200). A mapping function would be a third place to add a new column, and
+    forgetting it there is silent: the field simply never appears.
+    """
     import inspect
 
-    source = inspect.getsource(ms1._row)
-    assert "params" not in source
-    assert "continue" not in source
+    source = inspect.getsource(ms1.load)
+    for smell in ("if params.", "continue", "for record in"):
+        assert smell not in source, f"{smell!r} in load() -- that belongs in the query"
+    assert not hasattr(ms1, "transform")
+    assert not hasattr(ms1, "_row")
 
 
 @pytest.mark.parametrize(("filter_name", "value"), [

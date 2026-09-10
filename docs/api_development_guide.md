@@ -123,10 +123,11 @@ api/
 │   │   └── sources.py          sources.neo4j() / .postgres()  (per request)
 │   │
 │   ├── products/               the data product framework
-│   │   ├── base.py             DataProduct, envelope, meta, params
+│   │   ├── base.py             DataProduct, envelope, meta, params, Page
 │   │   ├── registry.py         registry + auto-discovery
 │   │   ├── router.py           builds typed routes from the registry
-│   │   ├── cache.py            TTL cache + ETag
+│   │   ├── cache.py            TTL cache + ETag + invalidates() dependency
+│   │   ├── introspect.py       which source does a loader use? (read from the AST)
 │   │   └── catalog/            ← YOUR NEW PRODUCT GOES HERE
 │   │
 │   ├── api/                    hand-written routers
@@ -136,8 +137,40 @@ api/
 │   └── clients/dash_client.py  template for the Dash apps
 ├── seed/                       mock data for sources we do not have yet
 ├── tests/
-│   └── fakes.py                test doubles — the only sample data in the repo
+│   ├── fakes.py                test doubles — the only sample data in the repo
+│   └── types.py                type aliases for the fixtures in conftest.py
 └── tools/validate_mermaid.mjs  optional: check generated diagrams
+```
+
+### Start from a template
+
+`catalog/` contains four numbered templates. Find the row that matches what you
+need, copy that file, change the query and the contract. They are real, running
+products — `curl` them before you copy them.
+
+| | Filters | Paging | `COUNT` | `transform()` | Copy it when |
+|---|---|---|---|---|---|
+| `example_1_plain.py` | – | router slices | – | – | small reference set, wanted whole |
+| `example_2_paged.py` | – | in the query | yes | – | too big for one response |
+| `example_3_filtered.py` | in Cypher | router slices | – | – | a filter shrinks it enough |
+| `example_4_full.py` | in Cypher | in the query | yes | yes | big, filtered, and needs computed fields |
+
+The step from 1 to 2 is where the framework needs telling
+(`paginated_by_source=True`); the step from 3 to 4 is where it gets easy to be
+subtly wrong (see the rule at the top of `example_4_full.py`). Everything else is
+just query and contract.
+
+Two shapes the templates do not cover, both in the real products:
+
+| | File | What is different |
+|---|---|---|
+| Filtering and computing in Python | `material_overview_v3.py` | a 40-line `transform()` does the filtering; correct because the router slices a complete result |
+| Two data sources | `supplier_risk_v2.py` | joins Neo4j and Postgres and aggregates in Polars; the result only exists after the join, so it cannot page in a query |
+
+`tests/test_examples.py` asserts that the four steps differ in exactly the
+documented way, so the table above cannot drift away from the code. The
+templates can be taken out of the catalog at any time by renaming them with a
+leading underscore — discovery skips those.
 ```
 
 ---
@@ -172,7 +205,18 @@ cp .env.example .env          # fill in the Neo4j / Postgres coordinates
 ```
 
 ```bash
-.venv/bin/uvicorn data_api.main:app --reload --port 8000
+.venv/bin/python -m data_api.main
+```
+
+Host, port and log level come from the settings, so `SERVER_PORT=8080` works
+without touching the code. `uvicorn data_api.main:app --reload` still does the
+same thing if you prefer it.
+
+Before starting anything, this prints what the application would actually see —
+the quickest way to check that configuration and credentials arrived:
+
+```bash
+.venv/bin/python -m data_api.core.config
 ```
 
 ```bash
@@ -180,6 +224,11 @@ cp .env.example .env          # fill in the Neo4j / Postgres coordinates
 ```
 
 Interactive docs: <http://localhost:8000/docs>
+
+For the full path from "nothing runs" to "data product out of the real
+database" — nine stages, each with a single success criterion — see
+[`local_testing.md`](local_testing.md). Use it the first time and whenever
+something does not come up.
 
 If a source you need does not exist yet, seed it rather than faking it in code:
 
@@ -293,8 +342,9 @@ Then:
 | Operational, minutes | `60` | material overview |
 | Must be immediate after a write | `0` | anything a user edits and re-reads |
 
-Remember to call `cache.invalidate("<product>")` from any write endpoint that
-changes the underlying data.
+Any write endpoint that changes the underlying data declares the affected
+products with `Depends(invalidates("<product>"))` — see §9. The architecture
+test insists on it, so this is not something you have to remember.
 
 ### Passing parameters into the query
 
@@ -381,14 +431,89 @@ Three consistent setups:
 | All filters in Python, router paginates | yes | no | yes |
 | All filters in Cypher, router paginates | yes | yes | filters need an integration test |
 | Some filters in Cypher, some in Python, router paginates | yes | partly | partly |
+| Everything in Cypher **including** `SKIP`/`LIMIT`, router does *not* paginate | yes | yes | filters need an integration test |
 | `LIMIT` in Cypher **and** the router paginating | **no** — empty pages | — | — |
 
-The last row is not a trade-off, it is a bug — see the warning above. The first
-three are all correct because pagination happens in exactly one place.
+The last row is not a trade-off, it is a bug — see the warning above. The others
+are all correct because pagination happens in exactly one place.
 
-The products in `catalog/` mix the first and second setups: `supplier-risk`
-filters `country` in Cypher and everything derived in `transform()`. Move a filter
-into the query when the data volume justifies it — per product, not globally.
+Most products in `catalog/` use the first two setups: `supplier-risk` filters
+`country` in Cypher and everything derived in `transform()`. Move a filter into
+the query when the data volume justifies it — per product, not globally.
+
+#### Full pushdown: `paginated_by_source`
+
+The fourth row is the one that needs a switch, because the router has to be told
+to stop slicing. `material_search_v1.py` is the worked example; copy that shape
+rather than inventing it. Five things move together, and leaving one out is
+silent:
+
+1. **Every** filter in the query. One left in Python runs on the already
+   truncated page — `LIMIT 20` fetches 20 rows, Python drops 17, the client sees
+   3 and concludes there is no more data.
+2. `ORDER BY` on something **unique**. `SKIP`/`LIMIT` over a partial order is
+   undefined: a row may appear on two pages and another on none. Non-unique sort
+   columns need a tie-breaker (`ORDER BY m.bestand DESC, m.nr`).
+3. `SKIP`/`LIMIT` in the query, and `paginated_by_source=True` on the
+   `DataProduct` so the router leaves the rows alone.
+4. A second `COUNT` query for `meta.total_count` — `len(rows)` is the page size
+   now, not the total. Build both queries from **one** shared `MATCH`/`WHERE`
+   fragment; written out twice they drift, and then `total_count` lies quietly.
+5. The loader returns a `Page(rows=..., total=...)` instead of a list.
+
+`limit`/`offset` land in the cache key automatically — the router derives that
+from the same flag, so the two cannot get out of step.
+
+Name the Cypher parameters exactly like the fields (`$limit`, `$offset`,
+`$status`) and the loader can hand the parameter object straight to the driver:
+
+```python
+filters = params.model_dump(exclude={"sort", "limit", "offset"})
+records = await sources.neo4j(page_query, limit=params.limit,
+                              offset=params.offset, **filters)
+counted = await sources.neo4j(CYPHER_COUNT, **filters)
+```
+
+No per-field copying, so a new filter is added in two places — the params model
+and the `WHERE` clause — and `tests/test_pushdown.py` fails if you forget the
+second.
+
+**Sorting must go through a whitelist.** A property name cannot be a Cypher
+parameter, so it has to be interpolated — and `ORDER BY` is a favourite place
+for injection precisely because it looks harmless. Map a closed set of names
+onto fixed fragments and let Pydantic's `Literal` reject everything else.
+
+#### Returning everything, not a page
+
+There is always a limit. `ProductParams.limit` defaults to 1000 and is capped at
+50 000, so a request without the parameter gets 1000 rows and one with
+`?limit=50001` gets a 422. Nothing errors when you leave it out — you simply
+never get "all rows" by accident, which is the point.
+
+When a product legitimately returns more, redeclare the field in its own params
+model. Both numbers are per product, and this is all it takes:
+
+```python
+class MaterialSearchParams(ProductParams):
+    # Default AND ceiling raised: a caller that passes nothing gets everything.
+    limit: int = Field(200_000, ge=1, le=200_000)
+```
+
+Raise the default when the product is meant to be fetched whole (a dashboard
+that filters in the browser), and only the ceiling when paging is the normal
+case but an export needs one big pull.
+
+**Keep a ceiling, whatever you set it to.** Not out of distrust — the row list
+exists three times over during one response: as dicts from the driver, as
+validated models, and as serialised JSON. An unbounded query turns a slow
+request into an out-of-memory kill of the whole worker, which takes every other
+in-flight request with it. A cap plus `meta.total_count` turns the same
+situation into "you got N rows and there were M" — the dashboard already reads
+that field and warns (`data/repository.py`).
+
+Note that the cached entry is the *whole* result, so a 200 000-row product with
+a long `cache_ttl` keeps that much in the process. Lower the TTL when you raise
+the ceiling.
 
 ### What this costs in testing
 
@@ -420,11 +545,12 @@ second source, `transform()`, envelope validation, cache, headers — could fail
 without the test noticing.
 
 Whether the filter actually filters belongs in `tests/test_integration_neo4j.py`,
-which is skipped unless `NEO4J_URI` is set:
+which is skipped unless `NEO4J_HOST` is set:
 
 ```bash
-export NEO4J_URI=bolt://localhost:7687
-export NEO4J_AUTH=neo4j/passwort
+export NEO4J_HOST=localhost
+export NEO4J_USERNAME=neo4j
+export NEO4J_PASSWORD=password
 python seed/seed_neo4j.py
 pytest tests/test_integration_neo4j.py -v
 ```
@@ -528,14 +654,56 @@ See `api/v1/mappings.py` for the reference. Three conventions:
 | `PATCH` | change only the fields sent | yes |
 | `DELETE` | remove | yes |
 
-**Invalidate the cache.** Otherwise the dashboard shows stale data for up to
-`cache_ttl` seconds and the user thinks the save failed:
+**Declare the role and the invalidation on the route, not in the body.** Both
+are cross-cutting concerns, and both are silent when forgotten: a route without
+a role check is open, and one without invalidation shows the dashboard the old
+value for up to `cache_ttl` seconds — the user concludes the save failed.
 
 ```python
-cache.invalidate("material-overview")
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires(WRITE_ROLE)), Depends(invalidates(*INVALIDATES))],
+    responses={409: {"description": "The mapping already exists."}},
+)
 ```
 
+`invalidates()` is a `yield` dependency, so the eviction runs **only after a
+successful response** — a handler that answers 409 leaves the cache alone, which
+is right: nothing changed. An inline `cache.invalidate(...)` would run either
+way.
+
+`tests/test_architecture.py` fails the build if a write route is missing either
+one, and checks that the named products actually exist — a typo evicts nothing
+and does not complain, because the cache key simply never matches.
+
+**A write that affects no data product** — a health probe, a job trigger,
+something writing to a table nothing reads yet — declares the dependency anyway,
+with an empty list:
+
+```python
+dependencies=[Depends(requires(ROLE)), Depends(invalidates())]
+```
+
+The test asks whether the dependency is *there*, not whether the list is
+non-empty, so this passes. It is a supported answer rather than a workaround:
+an empty call is a decision, a missing one is an oversight, and from the outside
+those look identical. It also means that when somebody later removes the last
+product from the list, they have to look at the line and think about it.
+
 Register the router in `api/v1/__init__.py` — the one place that assembles them.
+Add it to `TOPIC_ROUTERS` in the same file, or the architecture test and the
+generated diagram will not see it.
+
+**Why writes are not generated.** The obvious question is whether write routes
+could be data products too — one file in `catalog/`, and `router.py` does the
+rest. They could not, usefully. For reads the generator *supplies behaviour*:
+cache, pagination, envelope, ETag, deprecation headers, all identical per
+product. For writes it would only *relay declarations* — method, status code,
+input model, output model, conflict responses, role, invalidation — while the
+handler body, where the actual work is, stays exactly as long. `@router.post(...)`
+already expresses that in eight lines. The parts worth enforcing are the two
+dependencies above, and those need no generator.
 
 ---
 
@@ -589,18 +757,55 @@ startup instead of in the first request.
 
 | Variable | Meaning |
 |---|---|
-| `NEO4J_URI`, `NEO4J_AUTH`, `NEO4J_DB` | required for graph-backed products |
-| `POSTGRES_DSN` | must be `postgresql+asyncpg://` — async driver |
+| `CREDENTIALS_DIR` | directory the platform mounts the credential files into |
+| `NEO4J_HOST`, `NEO4J_PORT`, `NEO4J_PROTOCOL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` | normally come from the mounted file; set them here to override one |
+| `NEO4J_DB`, `NEO4J_MAX_CONNECTION_POOL_SIZE`, `NEO4J_CONNECTION_ACQUISITION_TIMEOUT` | driver settings, no secret |
+| `SQL_HOST`, `SQL_PORT`, `SQL_USERNAME`, `SQL_PASSWORD`, `SQL_DATABASE`, `SQL_SSL` | same, for Postgres |
 | `API_ENV` | `dev` / `staging` / `prod` |
-| `API_CORS_ORIGINS` | comma-separated origins of the Dash apps |
-| `API_KEYS` | comma-separated; empty disables auth (dev only) |
-| `API_LOG_LEVEL` | `INFO` by default |
+| `SERVER_HOST`, `SERVER_PORT`, `SERVER_LOGLEVEL` | `127.0.0.1:8000`, `info` |
+| `CORS_ORIGINS` and `CORS_ALLOW_*` | comma-separated; empty origins = the middleware is not installed at all |
+| `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID` | empty issuer disables authentication |
+| `ALLOW_ANONYMOUS` | only relevant with `API_ENV=prod` — see below |
+
+### Where credentials come from
+
+Database credentials are **not** in `.env`. The platform mounts one file per
+data source, and `core/config.py` reads them as the lowest-priority source:
+
+```
+1. Settings(sql_host="x")     tests, create_app(settings)
+2. SQL_HOST=x                 the deployment, and local overrides
+3. .env                       developer convenience
+4. <CREDENTIALS_DIR>/<file>   the pod
+```
+
+The first source with a value wins, so a single environment variable overrides
+one field of a mounted file without editing it. `_CREDENTIAL_FILES` in
+`core/config.py` maps file name to field prefix — `host` in `postgres.project`
+fills `sql_host`. That dict is the only place that knows the file names.
+
+A **missing** file is fine: the fields stay empty and the data source reports
+itself inactive, which is what makes local and CI runs work. A file that exists
+but cannot be parsed raises — swallowing that would start the pod with no
+database and no explanation.
+
+Passwords are `SecretStr`, so they show as `**********` in `repr()`,
+`model_dump()` and any log line that prints the settings. Reading the real value
+takes a deliberate `.get_secret_value()`.
+
+### Authentication
+
+Setting `OIDC_ISSUER` is what turns authentication on. Without it every caller
+is `ANONYMOUS` with full access, which is the intended state for development and
+for a deployment on a closed network.
+
+`API_ENV=prod` without an issuer refuses to start, because a forgotten variable
+and a deliberate decision otherwise look identical from the outside. If the
+deployment really is meant to be unauthenticated, say so with
+`ALLOW_ANONYMOUS=true` — the app then starts and logs a warning on every start.
 
 Secrets belong in the platform's secret store, not in a committed `.env`.
 `.env.example` is what gets committed.
-
-The variable names match the dashboards' on purpose — the same `.env` works for
-both.
 
 ---
 
@@ -671,6 +876,15 @@ The diagrams are derived, never maintained by hand:
 | routes, methods, deprecation | `app.openapi()` |
 | version, owner, cache, contract fields | the registry |
 | product → data source | AST of the loader (`sources.X()` calls) |
+| write route → role | the `requires(...)` dependency on the route |
+| write route → invalidated products | the `invalidates(...)` dependency |
+| write route → data source | AST of the handler |
+
+Write routes are in the diagram too. The dashed `invalidates` edge is the one
+worth looking at: "`POST /mappings` makes `material-overview` stale" is written
+down in neither file — the route does not know who caches it, the product does
+not know who changes it. Putting the two together is the reason to generate a
+diagram at all.
 
 `test_documentation_is_current` fails the build if you change the architecture
 without regenerating. Run `architecture-docs` and commit the result.
@@ -687,12 +901,26 @@ For a pull request that adds or changes a data product:
 - [ ] `None` is preserved where the value is genuinely unknown (not coerced to `0`)
 - [ ] version follows the MAJOR/MINOR rule — a changed **formula** is MAJOR
 - [ ] the previous version is untouched, and marked `deprecated` + `sunset` if superseded
-- [ ] `cache_ttl` is deliberate, and write endpoints invalidate the product
+- [ ] `cache_ttl` is deliberate
+- [ ] for a `paginated_by_source` product: every filter, the `ORDER BY` and the
+      `COUNT` use the same shared query fragment, and the sort goes through a
+      whitelist
 - [ ] no `HTTPException` outside `api/` — business code raises an `AppError` subclass
 - [ ] list filters are declared `list[X] | None` so an empty list becomes "no filter"
 - [ ] no sample data added under `src/`
 - [ ] `architecture-docs` was run and the result committed
 - [ ] `pytest -q` is green
+
+For a pull request that adds or changes a **write** endpoint:
+
+- [ ] input and output models are separate
+- [ ] the method matches the semantics (see the table in §9)
+- [ ] `dependencies=[Depends(requires(...)), Depends(invalidates(...))]` — both,
+      even if the invalidation list is empty
+- [ ] the router is in `TOPIC_ROUTERS`, or the diagram and the architecture test
+      will not see it
+- [ ] the response says what happened: 201 with the created object, 409 on a
+      conflict, 404 when the target does not exist
 
 ---
 

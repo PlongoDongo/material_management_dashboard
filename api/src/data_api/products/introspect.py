@@ -23,11 +23,15 @@ from typing import Any
 
 
 def sources_used_by(loader: Callable[..., Any]) -> list[str]:
-    """The method names the loader calls on its first parameter.
+    """The method names a function calls on its `sources` parameter.
 
         async def load(sources, params):
             await sources.neo4j(CYPHER)       ->  ["neo4j"]
             await sources.postgres(SQL, ...)  ->  ["neo4j", "postgres"]
+
+    Works for data product loaders and for hand-written route handlers alike --
+    which is what lets architecture.py show where a WRITE route writes to,
+    without anyone maintaining that list.
     """
     try:
         source_code = textwrap.dedent(inspect.getsource(loader))
@@ -40,7 +44,13 @@ def sources_used_by(loader: Callable[..., Any]) -> list[str]:
     if not node.args.args:
         return []
 
-    parameter = node.args.args[0].arg
+    # The parameter the calls are made on. A data product loader takes it
+    # first (`load(sources, params)`), a hand-written write route usually does
+    # not (`create_mapping(payload, sources, principal)`) -- so prefer the one
+    # actually named `sources` and fall back to the first for anything that
+    # names it differently.
+    names = [argument.arg for argument in node.args.args]
+    parameter = "sources" if "sources" in names else names[0]
     found = {
         n.func.attr
         for n in ast.walk(node)

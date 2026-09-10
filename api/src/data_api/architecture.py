@@ -47,6 +47,7 @@ from data_api.products.introspect import sources_used_by
 # ---------------------------------------------------------------------------
 
 _HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 @dataclass
@@ -58,6 +59,16 @@ class RouteInfo:
     deprecated: bool
     product: DataProduct | None = None
     is_alias: bool = False
+    # Hand-written write routes only. All three are DERIVED, never maintained:
+    # the roles and the invalidated products from the route's dependencies, the
+    # sources from the handler's body via the AST.
+    required_groups: list[str] = field(default_factory=list)
+    invalidates: list[str] = field(default_factory=list)
+    writes_to: list[str] = field(default_factory=list)
+
+    @property
+    def is_write(self) -> bool:
+        return bool(_WRITE_METHODS & set(self.methods))
 
 
 @dataclass
@@ -86,8 +97,44 @@ def _parse_function(obj: Callable[..., Any]) -> ast.AsyncFunctionDef | ast.Funct
     return node if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef) else None
 
 
+def _write_declarations() -> dict[str, dict[str, list[str]]]:
+    """What each hand-written write route declares, keyed by full path.
+
+    Read from the TOPIC_ROUTERS rather than from the app: `include_router`
+    turns a router into a private `_IncludedRouter` whose `APIRoute` objects the
+    app no longer exposes. The routers themselves stay reachable, and that is
+    where the dependencies live.
+
+    Nothing here is maintained by hand -- the roles come from `requires(...)`,
+    the invalidated products from `invalidates(...)`, and the sources from the
+    handler body. Change the route and the diagram follows.
+    """
+    from fastapi.routing import APIRoute
+
+    from data_api.api.v1 import API_V1_PREFIX, TOPIC_ROUTERS
+
+    declarations: dict[str, dict[str, list[str]]] = {}
+    for router in TOPIC_ROUTERS:
+        for route in router.routes:
+            if not isinstance(route, APIRoute) or not _WRITE_METHODS & route.methods:
+                continue
+            roles: list[str] = []
+            invalidates: list[str] = []
+            for dependency in route.dependencies:
+                roles += list(getattr(dependency.dependency, "required_groups", ()))
+                invalidates += list(getattr(dependency.dependency, "invalidated_products", ()))
+            declarations[f"{API_V1_PREFIX}{route.path}"] = {
+                "required_groups": sorted(set(roles)),
+                "invalidates": sorted(set(invalidates)),
+                "writes_to": sources_used_by(route.endpoint),
+            }
+    return declarations
+
+
 def collect(app: FastAPI) -> Architecture:
     from data_api.products.registry import registry
+
+    write_declarations = _write_declarations()
 
     products = [
         ProductInfo(product=product, sources=sources_used_by(product.loader))
@@ -118,6 +165,7 @@ def collect(app: FastAPI) -> Architecture:
             major = newest.major if is_alias else int(version.lstrip("v"))
             product = registry.get(name, major)
 
+        declared = write_declarations.get(path, {})
         routes.append(
             RouteInfo(
                 path=path,
@@ -127,6 +175,9 @@ def collect(app: FastAPI) -> Architecture:
                 deprecated=bool(operation.get("deprecated", False)),
                 product=product,
                 is_alias=is_alias,
+                required_groups=declared.get("required_groups", []),
+                invalidates=declared.get("invalidates", []),
+                writes_to=declared.get("writes_to", []),
             )
         )
     routes.sort(key=lambda r: r.path)
@@ -172,7 +223,8 @@ def diagram_dataflow(arch: Architecture) -> str:
     lines.append("  end")
     lines.append("")
 
-    all_sources = sorted({s for info in arch.products for s in info.sources})
+    all_sources = sorted({s for info in arch.products for s in info.sources}
+                         | {s for route in arch.routes for s in route.writes_to})
     lines.append('  subgraph sources["Data sources"]')
     for source in all_sources:
         shape = f'[("{source}")]'
@@ -191,15 +243,49 @@ def diagram_dataflow(arch: Architecture) -> str:
         for source in info.sources:
             lines.append(f"  {product_node} --> {_id('src', source)}")
 
+    # Write routes. Two different edges on purpose, because they mean different
+    # things: a solid one to the source it actually writes into, and a dashed
+    # one to every read product whose cached answer that write makes stale.
+    # The second is the relationship a developer cannot see from the code of
+    # either side alone -- and the one that causes "I saved it but the table
+    # still shows the old value".
+    for route in arch.routes:
+        route_node = _id("r", route.path)
+        for source in route.writes_to:
+            lines.append(f"  {route_node} ==> {_id('src', source)}")
+        for name in route.invalidates:
+            newest = registry_latest(name)
+            if newest is None:
+                continue
+            lines.append(f'  {route_node} -.->|invalidates| '
+                         f'{_id("p", name, str(newest.major))}')
+
     lines += [
         "",
         "  classDef deprecated stroke-dasharray: 4 3;",
+        "  classDef write stroke-width:2px;",
     ]
     veraltet = [_id("p", i.product.name, str(i.product.major))
                 for i in arch.products if i.product.deprecated]
     if veraltet:
         lines.append(f"  class {','.join(veraltet)} deprecated;")
+    schreibend = [_id("r", r.path) for r in arch.routes if r.is_write]
+    if schreibend:
+        lines.append(f"  class {','.join(schreibend)} write;")
     return "\n".join(lines)
+
+
+def registry_latest(name: str) -> DataProduct | None:
+    """The newest version of a product -- the one an invalidation edge points at.
+
+    A write invalidates the product by NAME, so it hits every version. The edge
+    is drawn to the newest one because that is the one dashboards are told to
+    use; drawing one edge per version would triple the lines and say nothing
+    more.
+    """
+    from data_api.products.registry import registry
+
+    return registry.latest(name)
 
 
 def diagram_versions(arch: Architecture) -> str:
@@ -284,6 +370,36 @@ def render_markdown(arch: Architecture) -> str:
         "```mermaid",
         diagram_contracts(arch),
         "```",
+        "",
+        "## Write routes",
+        "",
+        "Hand-written, not generated -- a write is an ACTION with preconditions,",
+        "a status code of its own and side effects, which a generator cannot",
+        "usefully produce (see `api/v1/mappings.py`). What it CAN do is make sure",
+        "nothing is forgotten: the role and the invalidation below are declared as",
+        "route dependencies, `tests/test_architecture.py` fails the build if either",
+        "is missing, and this table is read back off those same declarations.",
+        "",
+        "**Writes to** is read from the handler body via the AST -- empty means the",
+        "route does not touch a data source yet. **Invalidates** names the read",
+        "products whose cached answer this write makes stale; forgetting one shows",
+        "the user the old value and makes them believe the save failed.",
+        "",
+        "| Route | Method | Role | Writes to | Invalidates |",
+        "|---|---|---|---|---|",
+    ]
+    write_routes = [r for r in arch.routes if r.is_write]
+    if write_routes:
+        for route in write_routes:
+            parts.append(
+                f"| `{route.path}` | {', '.join(route.methods)} "
+                f"| {', '.join(route.required_groups) or '–'} "
+                f"| {', '.join(route.writes_to) or '–'} "
+                f"| {', '.join(route.invalidates) or '–'} |"
+            )
+    else:
+        parts.append("| – | – | – | – | – |")
+    parts += [
         "",
         "## Route inventory",
         "",
