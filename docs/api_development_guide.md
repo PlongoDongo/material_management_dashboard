@@ -463,6 +463,38 @@ parameter, so it has to be interpolated — and `ORDER BY` is a favourite place
 for injection precisely because it looks harmless. Map a closed set of names
 onto fixed fragments and let Pydantic's `Literal` reject everything else.
 
+#### Returning everything, not a page
+
+There is always a limit. `ProductParams.limit` defaults to 1000 and is capped at
+50 000, so a request without the parameter gets 1000 rows and one with
+`?limit=50001` gets a 422. Nothing errors when you leave it out — you simply
+never get "all rows" by accident, which is the point.
+
+When a product legitimately returns more, redeclare the field in its own params
+model. Both numbers are per product, and this is all it takes:
+
+```python
+class MaterialSearchParams(ProductParams):
+    # Default AND ceiling raised: a caller that passes nothing gets everything.
+    limit: int = Field(200_000, ge=1, le=200_000)
+```
+
+Raise the default when the product is meant to be fetched whole (a dashboard
+that filters in the browser), and only the ceiling when paging is the normal
+case but an export needs one big pull.
+
+**Keep a ceiling, whatever you set it to.** Not out of distrust — the row list
+exists three times over during one response: as dicts from the driver, as
+validated models, and as serialised JSON. An unbounded query turns a slow
+request into an out-of-memory kill of the whole worker, which takes every other
+in-flight request with it. A cap plus `meta.total_count` turns the same
+situation into "you got N rows and there were M" — the dashboard already reads
+that field and warns (`data/repository.py`).
+
+Note that the cached entry is the *whole* result, so a 200 000-row product with
+a long `cache_ttl` keeps that much in the process. Lower the TTL when you raise
+the ceiling.
+
 ### What this costs in testing
 
 A filter that lives in Cypher **cannot be tested without a database**. A fake
