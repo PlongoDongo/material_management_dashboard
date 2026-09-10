@@ -675,10 +675,21 @@ way.
 
 `tests/test_architecture.py` fails the build if a write route is missing either
 one, and checks that the named products actually exist — a typo evicts nothing
-and does not complain, because the cache key simply never matches. If a write
-genuinely affects no product, say `invalidates()` with no arguments: an empty
-call is a decision, a missing one is an oversight, and the test cannot tell them
-apart otherwise.
+and does not complain, because the cache key simply never matches.
+
+**A write that affects no data product** — a health probe, a job trigger,
+something writing to a table nothing reads yet — declares the dependency anyway,
+with an empty list:
+
+```python
+dependencies=[Depends(requires(ROLE)), Depends(invalidates())]
+```
+
+The test asks whether the dependency is *there*, not whether the list is
+non-empty, so this passes. It is a supported answer rather than a workaround:
+an empty call is a decision, a missing one is an oversight, and from the outside
+those look identical. It also means that when somebody later removes the last
+product from the list, they have to look at the line and think about it.
 
 Register the router in `api/v1/__init__.py` — the one place that assembles them.
 Add it to `TOPIC_ROUTERS` in the same file, or the architecture test and the

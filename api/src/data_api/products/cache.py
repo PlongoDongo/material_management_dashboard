@@ -91,6 +91,22 @@ def invalidates(*products: str) -> Callable[[], AsyncIterator[None]]:
     The declared products are readable back off the route (see
     `invalidated_products` below), which is how architecture.py draws the
     "write route -> product" edges without anyone maintaining a list.
+
+    A WRITE THAT AFFECTS NO DATA PRODUCT
+    ------------------------------------
+    Then call it with no arguments:
+
+        dependencies=[Depends(requires(ROLE)), Depends(invalidates())]
+
+    That is a supported answer, not a workaround. At runtime the dependency does
+    nothing; in the diagram the route gets no dashed edge and the table shows
+    "-". The architecture test accepts it because it asks whether the dependency
+    is THERE, not whether the list is non-empty.
+
+    The reason it has to be written down at all: an empty call is a decision,
+    a missing one is an oversight, and from the outside those look identical.
+    Somebody removing the last product from the list later should have to think
+    about it, not silently inherit a route that no longer evicts anything.
     """
 
     async def _invalidate() -> AsyncIterator[None]:

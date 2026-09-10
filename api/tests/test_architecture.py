@@ -7,6 +7,10 @@ regenerating gets a red build instead of a quietly wrong diagram.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
+
 from fastapi.routing import APIRoute
 
 from data_api.api.v1 import API_V1_PREFIX, TOPIC_ROUTERS
@@ -21,6 +25,7 @@ from data_api.architecture import (
     render_markdown,
 )
 from data_api.core.config import Settings
+from data_api.products.cache import cache, invalidates
 from data_api.products.catalog.material_overview_v3 import load as load_material
 from data_api.products.catalog.supplier_risk_v2 import load as load_risk
 from data_api.products.introspect import sources_used_by
@@ -196,8 +201,16 @@ def test_write_routes_appear_in_the_diagram_with_their_invalidations(
 
     writes = [route for route in arch.routes if route.is_write]
     assert writes, "no write routes collected"
-    for route in writes:
-        assert route.invalidates, f"{route.path} declares no invalidation"
+
+    # NOT "every write route invalidates something": a write that genuinely
+    # affects no data product declares `invalidates()` with no arguments, and
+    # that is a legitimate answer (see test_every_write_route_invalidates_
+    # something). Requiring a non-empty list here would fail the build for
+    # exactly the case the design allows -- what has to hold is that whatever a
+    # route DOES declare shows up as an edge.
+    drawn = [route for route in writes if route.invalidates]
+    assert drawn, "no write route declares an invalidation -- nothing to draw"
+    for route in drawn:
         for product in route.invalidates:
             assert product.replace("-", "_") in diagram
         assert "invalidates" in diagram
@@ -221,3 +234,32 @@ def test_a_read_route_is_not_marked_as_a_write(settings: Settings) -> None:
 
     assert reads
     assert all(not route.invalidates for route in reads)
+
+
+def test_a_write_that_affects_nothing_may_say_so(settings: Settings) -> None:
+    """`invalidates()` with no arguments is a supported answer.
+
+    A health probe, a job trigger, a write to a table nothing reads yet -- those
+    exist, and they still have to declare the dependency. The guard asks whether
+    it is THERE, not whether the list is non-empty, so an empty call passes
+    while a missing one does not. Without this test the two guards above could
+    drift into demanding a non-empty list and would then fail the build for
+    exactly the case the design allows.
+    """
+    empty = invalidates()
+
+    assert empty.invalidated_products == ()
+    assert hasattr(empty, "invalidated_products")
+
+    # And it does nothing at runtime: the cache survives the dependency.
+    key = cache.make_key("material-overview", 3, "{}")
+    cache.set(key, (["row"], 1, "neo4j", None), ttl=60)
+    asyncio.run(_drain(empty()))
+    assert cache.get(key) is not None
+
+
+async def _drain(generator: AsyncIterator[None]) -> None:
+    """Runs a yield-dependency past its yield, the way FastAPI does."""
+    await generator.__anext__()
+    with contextlib.suppress(StopAsyncIteration):
+        await generator.__anext__()
