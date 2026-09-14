@@ -103,9 +103,9 @@ ANONYMOUS = Principal(
 def _jwk_client(jwks_uri: str) -> PyJWKClient:
     """One key client per realm, cached for the life of the process.
 
-    `PyJWKClient` fetches the realm's public keys once and keeps them. It
-    refetches when a token names a key id it has not seen -- which is what
-    makes Keycloak's key rotation a non-event here.
+    `PyJWKClient` keeps the realm's public keys for five minutes (PyJWT's
+    default `lifespan`) and refetches early when a token names a key id it has
+    not seen -- which is what makes Keycloak's key rotation a non-event here.
     """
     return PyJWKClient(jwks_uri, cache_keys=True)
 
@@ -162,9 +162,11 @@ async def current_principal(
         raise UnauthorizedError("An `Authorization: Bearer <token>` header is required.")
 
     try:
-        # PyJWKClient is synchronous and hits the network on a cache miss.
-        # Called directly it would block the event loop for EVERY request in
-        # flight, not just this one.
+        # PyJWKClient fetches the keys with urllib, which is synchronous: on
+        # the first request, again every five minutes and for any unknown key
+        # id -- each time with a 30 s default timeout. Called directly, that
+        # stalls the event loop for EVERY request in flight; in a worker
+        # thread only this one waits.
         key = await run_in_threadpool(_signing_key, token, settings)
         claims = jwt.decode(
             token,

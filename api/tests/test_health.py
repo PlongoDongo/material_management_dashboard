@@ -17,10 +17,10 @@ def test_healthz_reports_the_product_count(client: TestClient) -> None:
 
 
 def test_readyz_without_sources_reports_503(client_without_sources: TestClient) -> None:
-    """With no source configured the pod must NOT report itself ready.
+    """With no source configured the deployment must NOT report itself ready.
 
-    An API that accepts requests and then fails every one of them is worse than
-    one that honestly takes itself out of the load balancer.
+    /readyz is the check after a rollout. "The process runs" is what /healthz
+    already says; this one has to say whether the products can be served.
     """
     response = client_without_sources.get("/api/v1/readyz")
     assert response.status_code == 503

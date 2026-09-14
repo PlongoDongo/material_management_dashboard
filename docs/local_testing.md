@@ -448,7 +448,7 @@ curl -s ".../data-products/supplier-risk/v2?limit=5" | python -m json.tool
 
 ---
 
-## Stufe 9 — Das Mermaid-Diagramm erzeugen
+## Stufe 9 — Die Architektur-Doku erzeugen
 
 ```bash
 .venv/bin/architecture-docs
@@ -461,18 +461,19 @@ Data product routes created: 4 products.
 
 **Erfolg:** Die Datei wurde geschrieben.
 
-Sie enthält **drei** Mermaid-Diagramme:
+Sie enthält ein Mermaid-Diagramm und drei Tabellen:
 
 | Abschnitt | Inhalt |
 |---|---|
-| `## Data flow` | Route → Datenprodukt → Datenquelle |
-| `## Version states` | welche Version aktiv, abgekündigt, gelöscht |
-| `## Contracts` | die Felder je Produktversion |
+| `## Contracts` | Diagramm: die Felder je Produktversion |
+| `## Write routes` | schreibende Routen: Rolle, Ziel-Datenquelle, invalidierte Produkte |
+| `## Route inventory` | jede Route mit Produkt, Version, Owner, Cache, Status, Sunset |
+| `## Data products in detail` | Steckbrief je Produkt, u. a. welche Datenquelle es braucht |
 
 Ansehen kannst du sie in jedem Markdown-Viewer mit Mermaid-Unterstützung —
 GitHub rendert sie direkt, in VS Code über die Vorschau.
 
-Das Diagramm wird **aus der laufenden App** erzeugt, nicht gepflegt. Deshalb
+Die Datei wird **aus der laufenden App** erzeugt, nicht gepflegt. Deshalb
 gibt es auch:
 
 ```bash

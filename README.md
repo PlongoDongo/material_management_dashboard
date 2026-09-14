@@ -78,7 +78,7 @@ psql "$DSN" -f seed/seed_postgres.sql
 | [`docs/api_grundlagen.md`](docs/api_grundlagen.md) | **Für Einsteiger.** Was ist ein Router, eine Session, async? Mit der Historie hinter den heutigen Standards. |
 | [`docs/api_development_guide.md`](docs/api_development_guide.md) | **Für Entwickler** (englisch). Rezepte: Datenprodukt hinzufügen, brechende Änderung ausliefern, Datenquelle anbinden. Review-Checkliste. |
 | [`docs/api_layer_concept.md`](docs/api_layer_concept.md) | Konzept und Begründung aller Architekturentscheidungen inkl. Alternativen. |
-| [`docs/architecture.md`](docs/architecture.md) | Ist-Zustand als Mermaid-Diagramme — **automatisch erzeugt**, nicht von Hand bearbeiten. |
+| [`docs/architecture.md`](docs/architecture.md) | Ist-Zustand: Routen, Datenprodukte, Schreibrouten, Verträge — **automatisch erzeugt**, nicht von Hand bearbeiten. |
 | [`frontend/material_management_dashboard/README.md`](frontend/material_management_dashboard/README.md) | Aufbau des Dashboards, Filter-Mechanik, Layout-Entscheidungen. |
 
 Diagramme neu erzeugen (nach jeder Architekturänderung):

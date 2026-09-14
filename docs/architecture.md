@@ -7,113 +7,6 @@
 
 8 data products · 14 routes
 
-## Data flow
-
-From the route through the data product to the data source.
-⚠ marks versions that are being retired.
-
-```mermaid
-flowchart LR
-  subgraph clients["Konsumenten"]
-    dash["Dash-Dashboards"]
-  end
-
-  subgraph routes["Routen /api/v1"]
-    r__api_v1_catalog["GET /catalog"]
-    r__api_v1_catalog__name_["GET /catalog/{name}"]
-    r__api_v1_data_products_example_1_plain_v1["GET /data-products/example-1-plain/v1"]
-    r__api_v1_data_products_example_2_paged_v1["GET /data-products/example-2-paged/v1"]
-    r__api_v1_data_products_example_3_filtered_v1["GET /data-products/example-3-filtered/v1"]
-    r__api_v1_data_products_example_4_full_v1["GET /data-products/example-4-full/v1"]
-    r__api_v1_data_products_material_overview_v2["GET /data-products/material-overview/v2 ⚠"]
-    r__api_v1_data_products_material_overview_v3["GET /data-products/material-overview/v3"]
-    r__api_v1_data_products_material_search_v1["GET /data-products/material-search/v1"]
-    r__api_v1_data_products_supplier_risk_v2["GET /data-products/supplier-risk/v2"]
-    r__api_v1_healthz["GET /healthz"]
-    r__api_v1_mappings["POST /mappings"]
-    r__api_v1_mappings__mapping_id_["PATCH /mappings/{mapping_id}"]
-    r__api_v1_readyz["GET /readyz"]
-  end
-
-  subgraph products["Data products"]
-    p_example_1_plain_1["example-1-plain<br/>v1 · 1.0"]
-    p_example_2_paged_1["example-2-paged<br/>v1 · 1.0"]
-    p_example_3_filtered_1["example-3-filtered<br/>v1 · 1.0"]
-    p_example_4_full_1["example-4-full<br/>v1 · 1.0"]
-    p_material_overview_2["material-overview<br/>v2 · 2.1 ⚠"]
-    p_material_overview_3["material-overview<br/>v3 · 3.0"]
-    p_material_search_1["material-search<br/>v1 · 1.0"]
-    p_supplier_risk_2["supplier-risk<br/>v2 · 2.0"]
-  end
-
-  subgraph sources["Data sources"]
-    src_neo4j[("neo4j")]
-    src_postgres[("postgres")]
-  end
-
-  dash --> routes
-  r__api_v1_data_products_example_1_plain_v1 --> p_example_1_plain_1
-  r__api_v1_data_products_example_2_paged_v1 --> p_example_2_paged_1
-  r__api_v1_data_products_example_3_filtered_v1 --> p_example_3_filtered_1
-  r__api_v1_data_products_example_4_full_v1 --> p_example_4_full_1
-  r__api_v1_data_products_material_overview_v2 --> p_material_overview_2
-  r__api_v1_data_products_material_overview_v3 --> p_material_overview_3
-  r__api_v1_data_products_material_search_v1 --> p_material_search_1
-  r__api_v1_data_products_supplier_risk_v2 --> p_supplier_risk_2
-  p_example_1_plain_1 --> src_neo4j
-  p_example_2_paged_1 --> src_neo4j
-  p_example_3_filtered_1 --> src_neo4j
-  p_example_4_full_1 --> src_neo4j
-  p_material_overview_2 --> src_neo4j
-  p_material_overview_3 --> src_neo4j
-  p_material_search_1 --> src_neo4j
-  p_supplier_risk_2 --> src_neo4j
-  p_supplier_risk_2 --> src_postgres
-  r__api_v1_mappings -.->|invalidates| p_material_overview_3
-  r__api_v1_mappings__mapping_id_ -.->|invalidates| p_material_overview_3
-
-  classDef deprecated stroke-dasharray: 4 3;
-  classDef write stroke-width:2px;
-  class p_material_overview_2 deprecated;
-  class r__api_v1_mappings,r__api_v1_mappings__mapping_id_ write;
-```
-
-## Version states
-
-```mermaid
-flowchart LR
-  subgraph f_example_1_plain["example-1-plain"]
-    direction LR
-    v_example_1_plain_1["v1 · 1.0<br/>active"]
-  end
-  subgraph f_example_2_paged["example-2-paged"]
-    direction LR
-    v_example_2_paged_1["v1 · 1.0<br/>active"]
-  end
-  subgraph f_example_3_filtered["example-3-filtered"]
-    direction LR
-    v_example_3_filtered_1["v1 · 1.0<br/>active"]
-  end
-  subgraph f_example_4_full["example-4-full"]
-    direction LR
-    v_example_4_full_1["v1 · 1.0<br/>active"]
-  end
-  subgraph f_material_overview["material-overview"]
-    direction LR
-    v_material_overview_2["v2 · 2.1<br/>retiring<br/>Sunset 2026-12-31"]
-    v_material_overview_3["v3 · 3.0<br/>active"]
-    v_material_overview_2 -.->|superseded by| v_material_overview_3
-  end
-  subgraph f_material_search["material-search"]
-    direction LR
-    v_material_search_1["v1 · 1.0<br/>active"]
-  end
-  subgraph f_supplier_risk["supplier-risk"]
-    direction LR
-    v_supplier_risk_2["v2 · 2.0<br/>active"]
-  end
-```
-
 ## Contracts
 
 The fields the dashboards rely on.
@@ -222,29 +115,29 @@ the user the old value and makes them believe the save failed.
 
 ## Route inventory
 
-| Route | Methods | Product | Version | Owner | Cache | Status |
-|---|---|---|---|---|---|---|
-| `/api/v1/catalog` | GET | – | – | – | – | active |
-| `/api/v1/catalog/{name}` | GET | – | – | – | – | active |
-| `/api/v1/data-products/example-1-plain/latest` | GET | example-1-plain | 1.0 | team-material-management | 60s | alias |
-| `/api/v1/data-products/example-1-plain/v1` | GET | example-1-plain | 1.0 | team-material-management | 60s | active |
-| `/api/v1/data-products/example-2-paged/latest` | GET | example-2-paged | 1.0 | team-material-management | 30s | alias |
-| `/api/v1/data-products/example-2-paged/v1` | GET | example-2-paged | 1.0 | team-material-management | 30s | active |
-| `/api/v1/data-products/example-3-filtered/latest` | GET | example-3-filtered | 1.0 | team-material-management | 60s | alias |
-| `/api/v1/data-products/example-3-filtered/v1` | GET | example-3-filtered | 1.0 | team-material-management | 60s | active |
-| `/api/v1/data-products/example-4-full/latest` | GET | example-4-full | 1.0 | team-material-management | 30s | alias |
-| `/api/v1/data-products/example-4-full/v1` | GET | example-4-full | 1.0 | team-material-management | 30s | active |
-| `/api/v1/data-products/material-overview/latest` | GET | material-overview | 3.0 | team-material-management | 60s | alias |
-| `/api/v1/data-products/material-overview/v2` | GET | material-overview | 2.1 | team-material-management | 60s | retiring |
-| `/api/v1/data-products/material-overview/v3` | GET | material-overview | 3.0 | team-material-management | 60s | active |
-| `/api/v1/data-products/material-search/latest` | GET | material-search | 1.0 | team-material-management | 30s | alias |
-| `/api/v1/data-products/material-search/v1` | GET | material-search | 1.0 | team-material-management | 30s | active |
-| `/api/v1/data-products/supplier-risk/latest` | GET | supplier-risk | 2.0 | team-supply-chain | 300s | alias |
-| `/api/v1/data-products/supplier-risk/v2` | GET | supplier-risk | 2.0 | team-supply-chain | 300s | active |
-| `/api/v1/healthz` | GET | – | – | – | – | active |
-| `/api/v1/mappings` | POST | – | – | – | – | active |
-| `/api/v1/mappings/{mapping_id}` | PATCH | – | – | – | – | active |
-| `/api/v1/readyz` | GET | – | – | – | – | active |
+| Route | Methods | Product | Version | Owner | Cache | Status | Sunset |
+|---|---|---|---|---|---|---|---|
+| `/api/v1/catalog` | GET | – | – | – | – | active | – |
+| `/api/v1/catalog/{name}` | GET | – | – | – | – | active | – |
+| `/api/v1/data-products/example-1-plain/latest` | GET | example-1-plain | 1.0 | team-material-management | 60s | alias | – |
+| `/api/v1/data-products/example-1-plain/v1` | GET | example-1-plain | 1.0 | team-material-management | 60s | active | – |
+| `/api/v1/data-products/example-2-paged/latest` | GET | example-2-paged | 1.0 | team-material-management | 30s | alias | – |
+| `/api/v1/data-products/example-2-paged/v1` | GET | example-2-paged | 1.0 | team-material-management | 30s | active | – |
+| `/api/v1/data-products/example-3-filtered/latest` | GET | example-3-filtered | 1.0 | team-material-management | 60s | alias | – |
+| `/api/v1/data-products/example-3-filtered/v1` | GET | example-3-filtered | 1.0 | team-material-management | 60s | active | – |
+| `/api/v1/data-products/example-4-full/latest` | GET | example-4-full | 1.0 | team-material-management | 30s | alias | – |
+| `/api/v1/data-products/example-4-full/v1` | GET | example-4-full | 1.0 | team-material-management | 30s | active | – |
+| `/api/v1/data-products/material-overview/latest` | GET | material-overview | 3.0 | team-material-management | 60s | alias | – |
+| `/api/v1/data-products/material-overview/v2` | GET | material-overview | 2.1 | team-material-management | 60s | retiring | 2026-12-31 |
+| `/api/v1/data-products/material-overview/v3` | GET | material-overview | 3.0 | team-material-management | 60s | active | – |
+| `/api/v1/data-products/material-search/latest` | GET | material-search | 1.0 | team-material-management | 30s | alias | – |
+| `/api/v1/data-products/material-search/v1` | GET | material-search | 1.0 | team-material-management | 30s | active | – |
+| `/api/v1/data-products/supplier-risk/latest` | GET | supplier-risk | 2.0 | team-supply-chain | 300s | alias | – |
+| `/api/v1/data-products/supplier-risk/v2` | GET | supplier-risk | 2.0 | team-supply-chain | 300s | active | – |
+| `/api/v1/healthz` | GET | – | – | – | – | active | – |
+| `/api/v1/mappings` | POST | – | – | – | – | active | – |
+| `/api/v1/mappings/{mapping_id}` | PATCH | – | – | – | – | active | – |
+| `/api/v1/readyz` | GET | – | – | – | – | active | – |
 
 ## Data products in detail
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime as dt
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.security import CurrentPrincipal
 from products.base import DataProduct
@@ -23,15 +23,30 @@ router = APIRouter(prefix="/catalog", tags=["Catalog"])
 
 
 class VersionInfo(BaseModel):
+    """One published version of a data product: what to call, what it returns.
+
+    `path` is the route to request. `fields` are the column names this version
+    returns -- the quickest way to see what changed between two versions.
+    `sunset` is only set for a deprecated version and names its planned removal
+    date. `cache_ttl` is how many seconds the API may answer from its cache.
+    """
+
     version: str
     path: str
     deprecated: bool
     sunset: dt.date | None
     cache_ttl: int
-    fields: list[str]
+    fields: list[str] = Field(description="Column names this version returns.")
 
 
 class CatalogEntry(BaseModel):
+    """A data product with every version the caller is allowed to fetch.
+
+    `owner` is the team to ask about the data. `latest` is the highest version,
+    for orientation only -- dashboards should pin a fixed `path` from `versions`,
+    so a new major version cannot break them unannounced.
+    """
+
     name: str
     summary: str
     owner: str

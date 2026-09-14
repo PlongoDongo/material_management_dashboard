@@ -10,16 +10,21 @@ had simply not been held to the same standard yet.
 from __future__ import annotations
 
 import locale
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
 from tests.types import AuthHeader
 
+from api.deps import get_sources
 from app import create_app
 from core.config import Settings
+from core.errors import ConflictError
 from core.security import ANONYMOUS, Principal
+from products.cache import cache
 
 # --- .env.example is a shipped interface ------------------------------------
 
@@ -189,6 +194,34 @@ def test_the_audit_field_holds_an_identity_not_a_credential(oidc_settings: Setti
     changed_by = response.json()["changed_by"]
     assert changed_by == "m.renner"
     assert "eyJ" not in changed_by         # no part of the token itself
+
+
+def test_a_failed_commit_is_the_response_not_a_log_line(app: FastAPI, client: TestClient) -> None:
+    """The commit runs after the handler has returned -- a duplicate key is
+    often only detected there.
+
+    With a dependency's default scope that code runs AFTER the response has
+    left: the failure is only logged, and the client holds a 201 for data that
+    was never written. `scope="function"` on SourcesDep moves it in front of
+    the response. Without it this test sees 201.
+    """
+    async def sources_whose_commit_conflicts() -> AsyncIterator[FakeSources]:
+        yield FakeSources()
+        raise ConflictError("duplicate key value violates unique constraint")
+
+    app.dependency_overrides[get_sources] = sources_whose_commit_conflicts
+    key = cache.make_key("material-overview", 3, "{}")
+    cache.set(key, (["row"], 1, "neo4j", None), ttl=60)
+
+    response = client.post(
+        "/api/v1/mappings",
+        json={"material_number": "MAT-1", "target_material_group": "Rohstoffe"},
+    )
+
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["code"] == "conflict"
+    assert cache.get(key) is not None, "a write that failed must not evict the cache"
 
 
 # --- Readiness --------------------------------------------------------------

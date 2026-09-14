@@ -3,12 +3,20 @@ Health and readiness endpoints.
 
 The distinction matters operationally:
 
-    /healthz   "The process is alive."  -> otherwise Kubernetes restarts it.
+    /healthz   "The process is alive."  -> if not, Kubernetes restarts the pod.
                Checks NOTHING external. Otherwise a short Neo4j outage would
-               kill every pod instead of merely producing errors.
+               restart the pod instead of merely producing errors.
 
-    /readyz    "I can answer requests."  -> otherwise the load balancer takes
-               the pod out of rotation. Checks the data sources.
+    /readyz    "Everything this deployment needs is reachable." Checks the data
+               sources the products actually query.
+
+Which one belongs in the Kubernetes readinessProbe depends on the replica count.
+With several pods, /readyz takes one without a database out of rotation while
+the others keep serving. With a SINGLE pod there are no others: a failing
+readiness probe leaves the dashboard with no API at all -- a connection error
+from the ingress -- instead of a 503 that names the broken source. So for one
+pod, probe /healthz and use /readyz as the check after a rollout or from
+monitoring.
 """
 from __future__ import annotations
 
@@ -33,7 +41,7 @@ async def healthz() -> dict[str, Any]:
 async def readyz(request: Request, settings: SettingsDep, response: Response) -> dict[str, Any]:
     # Only check what a data product actually queries. A deployment without
     # Postgres that only serves graph products is ready -- insisting on both
-    # sources would keep the pod out of the load balancer forever.
+    # sources would report 503 forever for a database nothing uses.
     needed = required_sources()
     checks: dict[str, str] = {}
 

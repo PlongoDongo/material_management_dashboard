@@ -15,7 +15,7 @@ requires-python = ">=3.11"
 dependencies = [
     # >=0.115 for query parameter models (Annotated[Model, Query()]),
     # which the data product router relies on.
-    "fastapi>=0.115",
+    "fastapi>=0.121.1",   # Depends(scope="function"), see src/api/deps.py
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
