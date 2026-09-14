@@ -311,7 +311,12 @@ def build() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    # A literal, not `__doc__.splitlines()[1]`: `python -OO` and PYTHONOPTIMIZE=2
+    # strip docstrings, `__doc__` is then None, and the CLI died before doing
+    # anything.
+    parser = argparse.ArgumentParser(
+        description="Generate docs/architecture.md from the running app."
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
                         help=f"Output file (default: {DEFAULT_OUT}).")
     parser.add_argument("--check", action="store_true",

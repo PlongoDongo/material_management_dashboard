@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from fastapi.routing import APIRoute
 
@@ -111,6 +115,26 @@ def test_documentation_is_current() -> None:
     assert DEFAULT_OUT.read_text(encoding="utf-8") == build(), (
         "docs/architecture.md is out of date -- run 'architecture-docs'."
     )
+
+
+def test_the_cli_runs_with_docstrings_stripped(tmp_path: Path) -> None:
+    """`python -OO` and PYTHONOPTIMIZE=2 remove docstrings, so `__doc__` is None.
+
+    The CLI used to build its --help text from the module docstring and crashed
+    with an AttributeError in exactly that environment -- while every in-process
+    test, which imports the module normally, stayed green.
+    """
+    out = tmp_path / "architecture.md"
+    result = subprocess.run(
+        [sys.executable, "-OO", "-c",
+         f"from architecture import main; raise SystemExit(main(['--out', {str(out)!r}]))"],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+        capture_output=True, text=True, check=False,
+    )
+
+    assert "AttributeError" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert out.exists()
 
 
 # --- Every write route carries its guards -----------------------------------
