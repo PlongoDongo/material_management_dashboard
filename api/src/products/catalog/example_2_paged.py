@@ -103,7 +103,6 @@ registry.add(DataProduct(
     ),
     item_model=ExamplePagedRow,
     loader=load,
-    owner="team-material-management",
     tags=("example", "template", "paged"),
     # Short on purpose: with the window in the cache key there is one entry per
     # page, so a long TTL fills the cache with stale single pages.

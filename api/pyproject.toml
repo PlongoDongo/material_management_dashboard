@@ -34,10 +34,6 @@ dependencies = [
 postgres = ["asyncpg>=0.29"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.5"]
 
-[project.scripts]
-# Generates docs/architecture.md from the running app.
-architecture-docs = "architecture:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -46,9 +42,9 @@ build-backend = "hatchling.build"
 # `sources` strips the leading src/ so the modules land at the wheel's top
 # level; `only-include` says which tree to take. The obvious alternative,
 # `packages = ["src/core", "src/db", ...]`, builds WITHOUT an error but silently
-# leaves out the loose modules next to those folders -- main.py, app.py,
-# architecture.py. An editable install hides that, because it just puts src/ on
-# the path; it surfaces on the first real build.
+# leaves out the loose modules next to those folders -- main.py and app.py. An
+# editable install hides that, because it just puts src/ on the path; it
+# surfaces on the first real build.
 sources = ["src"]
 only-include = ["src"]
 
@@ -62,11 +58,18 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-# ANN is switched on deliberately: the pre-commit hooks enforce it, so the
-# project config has to agree with them. If it did not, `ruff --fix` would strip
-# every `# noqa: ANN...` as an unused suppression (RUF100) and the next hook run
+# Switched on deliberately: the pre-commit hooks enforce these, so the project
+# config has to agree with them. If it did not, `ruff --fix` would strip every
+# `# noqa` for them as an unused suppression (RUF100) and the next hook run
 # would report the same findings all over again.
-extend-select = ["ANN"]
+extend-select = ["ANN", "B905", "ERA001", "LOG004", "PLC0415", "PLR2004", "T201"]
+# Our messages carry context only known where the error is raised ("Neo4j
+# unavailable: <driver error>"); a class per message would add code, not clarity.
+ignore = ["TRY003"]
+
+[tool.ruff.lint.per-file-ignores]
+# The expected value in an assertion is the point of the test, not a magic number.
+"tests/**" = ["PLR2004"]
 
 [tool.ruff.lint.flake8-annotations]
 # `self` and `cls` carry no information -- annotating them is noise.

@@ -8,7 +8,7 @@ Status: Entwurf v1 · Referenzimplementierung unter [`api/`](../api/) · 47 Test
 |---|---|
 | „Wie füge ich ein Datenprodukt hinzu?" | [api_development_guide.md](api_development_guide.md) (englisch) |
 | „Warum macht man das überhaupt so?" | [api_grundlagen.md](api_grundlagen.md) — Grundlagen und Historie |
-| „Wie sieht der Ist-Zustand aus?" | [architecture.md](architecture.md) — automatisch erzeugt |
+| „Welche Datenprodukte gibt es gerade?" | `GET /api/v1/catalog` und `/docs` der laufenden API |
 
 ---
 
@@ -31,8 +31,7 @@ Status: Entwurf v1 · Referenzimplementierung unter [`api/`](../api/) · 47 Test
 15. [Betrieb und Deployment](#15-betrieb-und-deployment)
 16. [Anbindung der Dashboards](#16-anbindung-der-dashboards)
 17. [Ein neues Datenprodukt anlegen](#17-ein-neues-datenprodukt-anlegen)
-18. [Automatische Architekturdokumentation](#18-automatische-architekturdokumentation)
-19. [Roadmap und offene Entscheidungen](#19-roadmap-und-offene-entscheidungen)
+18. [Roadmap und offene Entscheidungen](#18-roadmap-und-offene-entscheidungen)
 
 ---
 
@@ -65,7 +64,7 @@ unmöglich.
 
 Der zentrale Begriff des Konzepts. Ein **Datenprodukt** ist nicht „eine Route,
 die zufällig die Datenbank abfragt", sondern ein benannter, versionierter
-Vertrag mit einem Besitzer:
+Vertrag:
 
 ```
 name         material-overview          stabiler fachlicher Name
@@ -73,7 +72,6 @@ version      2.0                        MAJOR.MINOR
 item_model   MaterialRowV3              DER Vertrag: Felder, Typen, Pflicht/Optional
 params_model MaterialParamsV3           erlaubte Filter, typisiert
 loader       async (repos, params)      Query + Transformation
-owner        team-material-management   wen fragt man
 cache_ttl    60                         wie frisch muss es sein
 ```
 
@@ -81,8 +79,6 @@ Konsequenzen dieser Definition:
 
 * **Das Schema ist der Vertrag, nicht die Query.** Wenn sich das Graphmodell
   ändert, aber die gelieferten Felder gleich bleiben, merkt kein Dashboard etwas.
-* **Jedes Produkt hat einen Owner.** Bei „warum ist die Zahl so?" gibt es eine
-  zuständige Person, nicht eine Suche durch fünf Code-Repositories.
 * **Ein Produkt ist auffindbar.** Der Katalog (`/api/v1/catalog`) wird aus
   derselben Registry erzeugt wie die Routen und kann deshalb nicht veralten.
 
@@ -204,7 +200,7 @@ zu finden. Vier Punkte würde ich ändern, bevor viel Code entsteht:
    * **Die eine Zeile, die man richtig setzen muss.** In `pyproject.toml`
      `sources = ["src"]` + `only-include = ["src"]` statt einer Liste von
      Paketen. Sonst baut das Wheel ohne Fehler, lässt aber die losen Module
-     neben den Ordnern weg (`main.py`, `app.py`, `architecture.py`) -- und ein
+     neben den Ordnern weg (`main.py`, `app.py`) -- und ein
      editable Install verdeckt das, bis zum ersten echten Build.
    * **Rückweg.** Falls doch eine Kollision auftritt, ist die Behebung genau
      dieser Umbau rückwärts: ein `git mv` und ein `sed` über die Importe. Kein
@@ -809,7 +805,7 @@ tests/test_transformations.py   Fachlogik pur, ohne DB und HTTP   ← die meiste
 tests/test_registry.py          Registry-Regeln und Schutzmechanismen
 tests/test_data_products.py     Ende-zu-Ende über HTTP            ← Verdrahtung
 tests/test_health.py            Betriebsendpunkte
-tests/test_architecture.py      Diagramm-Generator + Veraltungs-Check
+tests/test_write_routes.py      Rolle + Cache-Invalidierung je Schreibroute
 ```
 
 Zwei Techniken, die das erst möglich machen:
@@ -986,7 +982,7 @@ registry.add(DataProduct(              # 6. veröffentlichen
     name="plant-utilisation", version="1.0",
     summary="Materialien und Bestand je Werk",
     item_model=PlantRow, params_model=PlantParams, loader=load,
-    owner="team-material-management", cache_ttl=120,
+    cache_ttl=120,
 ))
 ```
 
@@ -1002,113 +998,7 @@ Kein Router, keine `main.py`, keine Registrierungsliste wurde angefasst.
 
 ---
 
-## 18. Automatische Architekturdokumentation
-
-Ein Diagramm, das von Hand gepflegt wird, ist nach drei Sprints falsch — und ein
-falsches Diagramm ist schlimmer als keines. Deshalb wird die visuelle
-Dokumentation **aus der laufenden App erzeugt**:
-
-```bash
-architecture-docs            # schreibt docs/architecture.md
-architecture-docs --check    # CI: schlägt fehl, wenn die Datei veraltet ist
-```
-
-Ergebnis: [`docs/architecture.md`](architecture.md) mit einem Mermaid-Diagramm
-der Vertragsschemata, einer Tabelle der schreibenden Routen, einem
-Routeninventar und einem Steckbrief je Datenprodukt.
-
-> Früher gab es zusätzlich ein Datenfluss- und ein Versionsdiagramm. Beide
-> zeigten nichts, was nicht auch in den Tabellen steht, und kosteten
-> Wartungsaufwand — deshalb wurden sie entfernt.
-
-### Warum selbst gebaut statt eines fertigen Pakets
-
-Es gibt brauchbare Werkzeuge, aber keines passt auf diese Architektur:
-
-| Werkzeug | Was es tut | Warum es hier zu kurz greift |
-|---|---|---|
-| [`fastapi-router-viz`](https://pypi.org/project/fastapi-router-viz/) | Lädt die App, zeichnet Routen → Pydantic-Schemata → Module (DOT/PNG/Webansicht) | Kommt den Routen nahe, endet aber beim Schema. Datenquellen, Versionen, Owner, Cache kennt es nicht. Braucht Graphviz, kein Mermaid. |
-| [`fastapi-di-viz`](https://pypi.org/project/fastapi-di-viz/) | Läuft den Dependency-Baum ab, gibt DOT **und Mermaid** aus | Bei uns hängt *jede* Route an derselben Dependency (`get_repositories`). Der Graph sähe für alle Routen gleich aus. |
-| [`pyreverse`](https://pylint.readthedocs.io/en/stable/additional_tools/pyreverse/index.html) (in pylint) | UML-Klassendiagramme, u. a. als `.mmd` | Gut für Klassenbeziehungen, kennt aber keine Routen und keinen Datenfluss. |
-| `pydeps`, `code2flow` | Modul- bzw. Aufrufgraphen | Zeigen Dateien, nicht Fachlichkeit. Bei ~35 Modulen entsteht ein unlesbarer Teller Spaghetti. |
-
-Der entscheidende Punkt ist ein Detail unserer Architektur: **Unsere
-Datenprodukt-Routen existieren nicht im Quelltext.** Sie entstehen zur Laufzeit
-aus der Registry. Jedes Werkzeug, das Quelltext parst, sieht sie schlicht nicht.
-
-Umgekehrt weiß die Registry bereits alles, was ein generisches Werkzeug mühsam
-erraten müsste: Version, Owner, Cache-TTL, Deprecation-Status, Vertragsfelder,
-erlaubte Filter. Diese Information *nicht* zu nutzen wäre die eigentliche
-Verschwendung. Der Generator ist deshalb rund 200 Zeilen
-([`architecture.py`](../api/src/architecture.py)) und liefert ein
-genaueres Bild als jedes der Pakete oben.
-
-### Wie die Verbindungen ermittelt werden
-
-Drei Quellen, alle abgeleitet — nichts wird von Hand gepflegt:
-
-| Information | Woher |
-|---|---|
-| Routen, Methoden, Tags, Deprecation | `app.openapi()` — der öffentliche, stabile Vertrag der App |
-| Produkt, Version, Owner, Cache, Vertragsfelder | die Registry |
-| **Produkt → Datenquelle** | AST des Loaders: welche `sources.X()` ruft er auf |
-
-Die letzte ist der Trick. `sources_used_by()` parst den Loader und sammelt alle
-Aufrufe auf dessen erstem Parameter — per AST und nicht per Regex, damit ein
-`sources.neo4j` im Kommentar nicht mitzählt.
-
-> **Nebenbefund beim Bauen:** Der erste Entwurf las die Routen aus `app.routes`.
-> In der installierten FastAPI-Version liegen eingebundene Router aber als
-> interne `_IncludedRouter`-Objekte vor, nicht flach ausgerollt — das Diagramm
-> kam mit *null* Routen heraus. Das OpenAPI-Schema ist die stabilere Quelle und
-> gleichzeitig genau das, was FastAPI offiziell garantiert.
-
-### Der Teil, der es am Leben hält
-
-```python
-def test_documentation_is_current():
-    assert DEFAULT_OUT.read_text() == build()
-```
-
-Wer ein Datenprodukt anlegt und die Doku nicht neu erzeugt, bekommt einen roten
-Build statt eines stillschweigend falschen Diagramms. Das ist der eigentliche
-Wert der Automatisierung — nicht das Zeichnen, sondern die garantierte
-Aktualität.
-
-Optional prüft [`api/tools/validate_mermaid.mjs`](../api/tools/validate_mermaid.mjs)
-die erzeugten Diagramme mit mermaids echtem Parser. Ohne das fällt ein
-Syntaxfehler erst auf, wenn jemand die Datei öffnet — und dort steht dann nur
-„Syntax error in text" statt eines Diagramms.
-
-### Was zusätzlich sinnvoll ist
-
-* **[`import-linter`](https://import-linter.readthedocs.io/)** — die
-  *Durchsetzung* zum Diagramm. Man deklariert die Schichtenordnung als Vertrag,
-  und der Build schlägt fehl, sobald ein Repository FastAPI importiert oder eine
-  `transform()`-Funktion eine Datenbank anfasst:
-
-  ```ini
-  [importlinter:contract:schichten]
-  name = Abhängigkeiten zeigen nur nach unten
-  type = layers
-  layers =
-      api
-      products
-      repositories
-      db
-      core
-  ```
-
-  Das Diagramm zeigt, wie es *ist*; der Contract erzwingt, wie es *sein soll*.
-* **OpenAPI-Diff in CI** — `/openapi.json` gegen den Stand des Zielbranches
-  prüfen, um unbeabsichtigt brechende Änderungen an Datenprodukten zu finden,
-  bevor sie ein Dashboard treffen.
-* **MkDocs**, sobald die Dokumentation wächst: rendert Mermaid nativ und kann
-  `docs/` als durchsuchbare interne Seite ausliefern.
-
----
-
-## 19. Roadmap und offene Entscheidungen
+## 18. Roadmap und offene Entscheidungen
 
 ### Was jetzt steht
 
@@ -1119,7 +1009,6 @@ Syntaxfehler erst auf, wenn jemand die Datei öffnet — und dort steht dann nur
 - ✅ Cross-Source-Produkt mit Polars-Transformation als Referenz
 - ✅ Cache, ETag, Paginierung, Problem Details, Request-IDs, Health/Readiness
 - ✅ Client-Vorlage für die Dash-Apps
-- ✅ Automatisch erzeugte Architekturdiagramme mit Veraltungs-Check in CI
 - ✅ 47 Tests
 
 ### Nächste Schritte, in dieser Reihenfolge
@@ -1141,7 +1030,7 @@ Syntaxfehler erst auf, wenn jemand die Datei öffnet — und dort steht dann nur
 | Frage | Optionen | Meine Empfehlung |
 |---|---|---|
 | **Ein API-Service oder mehrere?** | Monolith / Service je Domäne | Ein Service. Bei drei Dashboards und einem Team ist alles andere Overhead. Der Schnitt nach Datenprodukten macht ein späteres Aufteilen einfach. |
-| **Wer schreibt Datenprodukte?** | zentrales API-Team / die Dashboard-Teams selbst | Die Dashboard-Teams, mit `owner`-Pflichtfeld und Review. Ein zentrales Team wird sonst zum Flaschenhals. |
+| **Wer schreibt Datenprodukte?** | zentrales API-Team / die Dashboard-Teams selbst | Die Dashboard-Teams, mit Review. Ein zentrales Team wird sonst zum Flaschenhals. |
 | **Wie streng ist die Versionsregel?** | strikt / pragmatisch | Strikt ab dem ersten produktiven Dashboard. Vorher darf man v1 noch ändern — dann nie wieder. |
 | **Cache im Prozess oder Redis?** | TTLCache / Redis | Erst mal im Prozess. Redis, wenn ihr über zwei Worker hinausgeht oder die Trefferquote messbar leidet. |
 | **Antwortformat: Records oder spaltenweise?** | `[{...}]` / `{"columns": [], "rows": [[]]}` | Records. Spaltenweise ist bei >100k Zeilen deutlich kompakter — dann als zusätzlicher `format`-Parameter, nicht als Ersatz. |

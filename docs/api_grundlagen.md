@@ -354,15 +354,13 @@ Perspektivwechsel: Ein Datensatz ist kein Nebenprodukt, sondern ein **Produkt**
 mit denselben Eigenschaften wie eine Software:
 
 * Es hat einen **Namen**, unter dem man es findet.
-* Es hat einen **Besitzer**, den man fragen kann.
 * Es hat einen **Vertrag** — feste Felder, feste Bedeutung.
 * Es hat **Versionen** und einen Lebenszyklus.
 * Es ist **auffindbar** — es gibt einen Katalog.
 
 Genau das ist unser `@data_product`-Dekorator. Wenn du dich fragst, warum wir
 nicht einfach Routen schreiben, sondern eine Registry haben: **weil ein Name,
-ein Owner und ein Katalog sonst nirgends stehen**. Eine Route hat keinen Besitzer.
-Ein Datenprodukt hat einen.
+eine Version und ein Katalog sonst nirgends stehen**.
 
 ---
 

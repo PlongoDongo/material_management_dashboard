@@ -105,13 +105,16 @@ WEIGHT_DELAY = 0.5
 WEIGHT_ON_TIME = 0.3
 WEIGHT_COMPLAINTS = 0.2
 
+HIGH_RISK_SCORE = 60
+MEDIUM_RISK_SCORE = 30
+
 
 def _risk_class(score: float | None) -> str:
     if score is None:
         return "unknown"
-    if score >= 60:
+    if score >= HIGH_RISK_SCORE:
         return "high"
-    if score >= 30:
+    if score >= MEDIUM_RISK_SCORE:
         return "medium"
     return "low"
 
@@ -228,7 +231,6 @@ registry.add(DataProduct(
     item_model=SupplierRiskRow,
     params_model=SupplierRiskParams,
     loader=load,
-    owner="team-supply-chain",
     tags=("supplier", "risk", "cross-source"),
     cache_ttl=300,   # expensive computation, data changes daily
 ))

@@ -111,7 +111,6 @@ registry.add(DataProduct(
     item_model=ExampleFilteredRow,
     params_model=ExampleFilteredParams,
     loader=load,
-    owner="team-material-management",
     tags=("example", "template", "filtered"),
     cache_ttl=60,
 ))

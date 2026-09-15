@@ -41,9 +41,9 @@ log = logging.getLogger(__name__)
 WRITE_ROLE = "material-planner"
 
 # Which read products go stale when something here changes. Declared at the
-# route rather than called inside the handler: it cannot be forgotten (the
-# architecture test insists on it), it runs only when the write actually
-# succeeded, and architecture.py reads it for the generated docs.
+# route rather than called inside the handler: it cannot be forgotten
+# (tests/test_write_routes.py insists on it), and it runs only when the write
+# actually succeeded.
 INVALIDATES = ("material-overview",)
 
 router = APIRouter(prefix="/mappings", tags=["Mappings (write)"])

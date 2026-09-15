@@ -131,12 +131,16 @@ def transform(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+HIGH_STOCK_VALUE = 500_000
+MEDIUM_STOCK_VALUE = 50_000
+
+
 def _stock_class(value: float | None) -> str:
     if value is None:
         return "unknown"
-    if value >= 500_000:
+    if value >= HIGH_STOCK_VALUE:
         return "high"
-    if value >= 50_000:
+    if value >= MEDIUM_STOCK_VALUE:
         return "medium"
     return "low"
 
@@ -174,7 +178,6 @@ registry.add(DataProduct(
     item_model=ExampleFullRow,
     params_model=ExampleFullParams,
     loader=load,
-    owner="team-material-management",
     tags=("example", "template", "paged", "filtered"),
     cache_ttl=30,
     paginated_by_source=True,

@@ -11,6 +11,8 @@ five things that have to move together (see catalog/material_search_v1.py):
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
@@ -128,7 +130,6 @@ def test_nothing_stands_between_the_query_and_the_contract() -> None:
     200). A mapping function would be a third place to add a new column, and
     forgetting it there is silent: the field simply never appears.
     """
-    import inspect
 
     source = inspect.getsource(ms1.load)
     for smell in ("if params.", "continue", "for record in"):

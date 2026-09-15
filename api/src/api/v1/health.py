@@ -1,32 +1,20 @@
 """
 Health and readiness endpoints.
 
-The distinction matters operationally:
-
-    /healthz   "The process is alive."  -> if not, Kubernetes restarts the pod.
-               Checks NOTHING external. Otherwise a short Neo4j outage would
-               restart the pod instead of merely producing errors.
-
-    /readyz    "Everything this deployment needs is reachable." Checks the data
-               sources the products actually query.
-
-Which one belongs in the Kubernetes readinessProbe depends on the replica count.
-With several pods, /readyz takes one without a database out of rotation while
-the others keep serving. With a SINGLE pod there are no others: a failing
-readiness probe leaves the dashboard with no API at all -- a connection error
-from the ingress -- instead of a 503 that names the broken source. So for one
-pod, probe /healthz and use /readyz as the check after a rollout or from
-monitoring.
+    /healthz   "The process is alive." Checks nothing external, so a short
+               database outage does not get the process restarted.
+    /readyz    "Both data sources are reachable." The check to run after a
+               deployment; a 503 names the source that is missing or broken.
 """
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, Request, Response, status
+from sqlalchemy import text
 
 from api.deps import SettingsDep
 from core.config import __version__
-from products.introspect import required_sources
 from products.registry import registry
 
 router = APIRouter(tags=["Operations"])
@@ -39,10 +27,6 @@ async def healthz() -> dict[str, Any]:
 
 @router.get("/readyz", summary="Readiness -- checks the data sources")
 async def readyz(request: Request, settings: SettingsDep, response: Response) -> dict[str, Any]:
-    # Only check what a data product actually queries. A deployment without
-    # Postgres that only serves graph products is ready -- insisting on both
-    # sources would report 503 forever for a database nothing uses.
-    needed = required_sources()
     checks: dict[str, str] = {}
 
     driver = getattr(request.app.state, "neo4j_driver", None)
@@ -60,26 +44,18 @@ async def readyz(request: Request, settings: SettingsDep, response: Response) ->
         checks["postgres"] = "not-configured"
     else:
         try:
-            from sqlalchemy import text
-
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
             checks["postgres"] = "ok"
         except Exception as exc:                      # noqa: BLE001
             checks["postgres"] = f"error: {type(exc).__name__}"
 
-    # A source that is not configured is just as bad as a broken one -- but only
-    # if a product needs it. The pod then reports "not ready" instead of
-    # accepting requests it cannot serve.
-    degraded = [name for name, state in checks.items()
-                if name in needed and state != "ok"]
-
+    degraded = [name for name, state in checks.items() if state != "ok"]
     if degraded:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     return {
         "status": "degraded" if degraded else "ready",
         "env": settings.api_env,
-        "required": sorted(needed),
         "checks": checks,
     }

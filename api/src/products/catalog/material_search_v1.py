@@ -223,7 +223,6 @@ registry.add(DataProduct(
     item_model=MaterialSearchRow,
     params_model=MaterialSearchParams,
     loader=load,
-    owner="team-material-management",
     tags=("material", "search", "paged"),
     # Short: a page is cheap to re-fetch, and with the window in the cache key
     # there are many more entries than for an unpaged product. A long TTL would

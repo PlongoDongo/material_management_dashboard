@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+from http import HTTPStatus
 from typing import Any
 
 import httpx
@@ -112,7 +113,7 @@ class DataProductClient:
         except httpx.HTTPError as error:
             raise DataProductError(f"API unreachable: {error}") from error
 
-        if response.status_code >= 400:
+        if response.is_error:
             raise _error_for(response, f"{product}/{version}")
 
         body = response.json()
@@ -134,7 +135,7 @@ class DataProductClient:
         except httpx.HTTPError as error:
             raise DataProductError(f"API unreachable: {error}") from error
 
-        if response.status_code >= 400:
+        if response.is_error:
             raise _error_for(response, "catalog")
         return response.json()
 
@@ -150,9 +151,9 @@ def _bearer(token: str | None) -> dict[str, str]:
 def _error_for(response: httpx.Response, what: str) -> DataProductError:
     """Maps a failed response onto the exception the caller can act on."""
     message = f"{what}: {_error_text(response)}"
-    if response.status_code == 401:
+    if response.status_code == HTTPStatus.UNAUTHORIZED:
         return NotAuthenticatedError(message)
-    if response.status_code == 403:
+    if response.status_code == HTTPStatus.FORBIDDEN:
         return NotAuthorisedError(message)
     return DataProductError(message)
 

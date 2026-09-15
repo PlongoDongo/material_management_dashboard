@@ -354,5 +354,5 @@ if __name__ == "__main__":
     # plain string does not know it contains a password, while SecretStr
     # redacts itself. Host, port and user stay visible, which is what you came
     # for; the passwords show as '**********'.
-    print(f"credentials dir: {credentials_dir()}")
-    print(get_settings())
+    print(f"credentials dir: {credentials_dir()}")  # noqa: T201
+    print(get_settings())  # noqa: T201

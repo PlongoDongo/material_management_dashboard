@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from http import HTTPStatus
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -161,8 +162,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     """
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
-        if exc.status_code >= 500:
-            log.exception("AppError: %s", exc.detail)
+        if HTTPStatus(exc.status_code).is_server_error:
+            log.error("AppError: %s", exc.detail, exc_info=exc)
         return _problem(request, exc.status_code, exc.title, exc.detail, exc.code)
 
     @app.exception_handler(StarletteHTTPException)
@@ -186,6 +187,6 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        log.exception("Unhandled error: %s", exc)
+        log.error("Unhandled error: %s", exc, exc_info=exc)
         return _problem(request, 500, "Internal server error",
                         "Unexpected error.", "internal_error")

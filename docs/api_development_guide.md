@@ -8,7 +8,6 @@ the patterns below are the ones you actually need.
 
 Related documents:
 * [`api_layer_concept.md`](api_layer_concept.md) — the design rationale and trade-offs.
-* [`architecture.md`](architecture.md) — auto-generated overview of the current state.
 * [`api_grundlagen.md`](api_grundlagen.md) — background for readers new to these patterns (German).
 
 ---
@@ -28,11 +27,10 @@ Related documents:
 11. [Configuration](#11-configuration)
 12. [Errors](#12-errors)
 13. [Caching](#13-caching)
-14. [Architecture docs](#14-architecture-docs)
-15. [Review checklist](#15-review-checklist)
-16. [When the data isn't rows](#16-when-the-data-isnt-rows)
-17. [Why there is no repository layer](#17-why-there-is-no-repository-layer)
-18. [Pitfalls](#18-pitfalls)
+14. [Review checklist](#14-review-checklist)
+15. [When the data isn't rows](#15-when-the-data-isnt-rows)
+16. [Why there is no repository layer](#16-why-there-is-no-repository-layer)
+17. [Pitfalls](#17-pitfalls)
 
 ---
 
@@ -62,7 +60,6 @@ version       2.0                        MAJOR.MINOR
 item_model    MaterialRowV3              THE contract: fields, types, optionality
 params_model  MaterialParamsV3           allowed filters, typed
 loader        async (repos, params)      query + transformation
-owner         team-material-management   who to ask
 cache_ttl     60                         how fresh it must be
 ```
 
@@ -97,7 +94,7 @@ products. A `transform()` function knows nothing about databases. That is why
 the business logic is testable in milliseconds.
 
 There is deliberately **no repository layer**. Each data product owns its query,
-in the same file. See [section 17](#17-why-there-is-no-repository-layer).
+in the same file. See [section 16](#16-why-there-is-no-repository-layer).
 
 ---
 
@@ -108,7 +105,6 @@ api/
 ├── src/                        no package folder -- these are the top-level modules
 │   ├── main.py                 uvicorn entry point
 │   ├── app.py          create_app() + lifespan
-│   ├── architecture.py         generates docs/architecture.md
 │   │
 │   ├── core/                   cross-cutting, no business logic
 │   │   ├── config.py           Settings (pydantic-settings)
@@ -127,7 +123,6 @@ api/
 │   │   ├── registry.py         registry + auto-discovery
 │   │   ├── router.py           builds typed routes from the registry
 │   │   ├── cache.py            TTL cache + ETag + invalidates() dependency
-│   │   ├── introspect.py       which source does a loader use? (read from the AST)
 │   │   └── catalog/            ← YOUR NEW PRODUCT GOES HERE
 │   │
 │   ├── api/                    hand-written routers
@@ -136,10 +131,9 @@ api/
 │   │
 │   └── clients/dash_client.py  template for the Dash apps
 ├── seed/                       mock data for sources we do not have yet
-├── tests/
-│   ├── fakes.py                test doubles — the only sample data in the repo
-│   └── types.py                type aliases for the fixtures in conftest.py
-└── tools/validate_mermaid.mjs  optional: check generated diagrams
+└── tests/
+    ├── fakes.py                test doubles — the only sample data in the repo
+    └── types.py                type aliases for the fixtures in conftest.py
 ```
 
 ### Start from a template
@@ -309,7 +303,6 @@ registry.add(DataProduct(
     item_model=PlantRow,
     params_model=PlantParams,
     loader=load,
-    owner="team-material-management",
     tags=("werk", "aggregat"),
     cache_ttl=120,
 ))
@@ -330,7 +323,6 @@ After a restart you automatically get:
 Then:
 
 ```bash
-.venv/bin/architecture-docs        # regenerate docs/architecture.md
 .venv/bin/python -m pytest -q
 ```
 
@@ -343,8 +335,9 @@ Then:
 | Must be immediate after a write | `0` | anything a user edits and re-reads |
 
 Any write endpoint that changes the underlying data declares the affected
-products with `Depends(invalidates("<product>"))` — see §9. The architecture
-test insists on it, so this is not something you have to remember.
+products with `Depends(invalidates("<product>"))` — see §9.
+`tests/test_write_routes.py` insists on it, so this is not something you have to
+remember.
 
 ### Passing parameters into the query
 
@@ -726,9 +719,6 @@ product loader.
 **Step 4 — teach the test fake.** Add a branch to `FakeSources` in
 `tests/fakes.py` so tests can answer the new source.
 
-The generated docs pick the new source up automatically: `sources_used_by()`
-reads the `sources.<name>(...)` calls in each loader. Nothing to maintain by hand.
-
 ---
 
 ## 9. Recipe: add a write endpoint
@@ -771,7 +761,7 @@ successful response** — a handler that answers 409 leaves the cache alone, whi
 is right: nothing changed. An inline `cache.invalidate(...)` would run either
 way.
 
-`tests/test_architecture.py` fails the build if a write route is missing either
+`tests/test_write_routes.py` fails the build if a write route is missing either
 one, and checks that the named products actually exist — a typo evicts nothing
 and does not complain, because the cache key simply never matches.
 
@@ -790,8 +780,8 @@ those look identical. It also means that when somebody later removes the last
 product from the list, they have to look at the line and think about it.
 
 Register the router in `api/v1/__init__.py` — the one place that assembles them.
-Add it to `TOPIC_ROUTERS` in the same file, or the architecture test and the
-generated docs will not see it.
+Add it to `TOPIC_ROUTERS` in the same file, or `tests/test_write_routes.py` will
+not see it.
 
 **Why writes are not generated.** The obvious question is whether write routes
 could be data products too — one file in `catalog/`, and `router.py` does the
@@ -812,7 +802,7 @@ tests/test_transformations.py   pure business logic, no DB, no HTTP  ← most te
 tests/test_registry.py          registry rules (version collisions, latest)
 tests/test_data_products.py     end-to-end over HTTP
 tests/test_health.py            operational endpoints
-tests/test_architecture.py      diagram generator + staleness check
+tests/test_write_routes.py      every write route has a role and an invalidation
 tests/fakes.py                  test doubles (a tool, not a test)
 ```
 
@@ -973,40 +963,10 @@ otherwise it would change on every request.
 
 ---
 
-## 14. Architecture docs
-
-```bash
-.venv/bin/architecture-docs            # writes ../docs/architecture.md
-.venv/bin/architecture-docs --check    # CI: fails if the file is stale
-```
-
-The diagrams are derived, never maintained by hand:
-
-| Information | Source |
-|---|---|
-| routes, methods, deprecation | `app.openapi()` |
-| version, owner, cache, contract fields | the registry |
-| product → data source | AST of the loader (`sources.X()` calls) |
-| write route → role | the `requires(...)` dependency on the route |
-| write route → invalidated products | the `invalidates(...)` dependency |
-| write route → data source | AST of the handler |
-
-Write routes are in the diagram too. The dashed `invalidates` edge is the one
-worth looking at: "`POST /mappings` makes `material-overview` stale" is written
-down in neither file — the route does not know who caches it, the product does
-not know who changes it. Putting the two together is the reason to generate a
-diagram at all.
-
-`test_documentation_is_current` fails the build if you change the architecture
-without regenerating. Run `architecture-docs` and commit the result.
-
----
-
-## 15. Review checklist
+## 14. Review checklist
 
 For a pull request that adds or changes a data product:
 
-- [ ] `owner` is set to a real team
 - [ ] `transform()` is pure — no `repos`, no `Request`, no I/O
 - [ ] tests for `transform()` cover empty input, `None` values and every filter
 - [ ] `None` is preserved where the value is genuinely unknown (not coerced to `0`)
@@ -1019,7 +979,6 @@ For a pull request that adds or changes a data product:
 - [ ] no `HTTPException` outside `api/` — business code raises an `AppError` subclass
 - [ ] list filters are declared `list[X] | None` so an empty list becomes "no filter"
 - [ ] no sample data added under `src/`
-- [ ] `architecture-docs` was run and the result committed
 - [ ] `pytest -q` is green
 
 For a pull request that adds or changes a **write** endpoint:
@@ -1028,16 +987,15 @@ For a pull request that adds or changes a **write** endpoint:
 - [ ] the method matches the semantics (see the table in §9)
 - [ ] `dependencies=[Depends(requires(...)), Depends(invalidates(...))]` — both,
       even if the invalidation list is empty
-- [ ] the router is in `TOPIC_ROUTERS`, or the diagram and the architecture test
-      will not see it
+- [ ] the router is in `TOPIC_ROUTERS`, or the write-route test will not see it
 - [ ] the response says what happened: 201 with the created object, 409 on a
       conflict, 404 when the target does not exist
 
 ---
 
-## 16. When the data isn't rows
+## 15. When the data isn't rows
 
-### 16.0 Two things that are easy to confuse
+### 15.0 Two things that are easy to confuse
 
 **Does a Cypher query always return a list?** Yes — a result is always zero or
 more rows, never a bare value.
@@ -1161,7 +1119,7 @@ response_model=ProductEnvelope[list[product.item_model]]
 
 Plus a branch in the router so `limit`/`offset` only apply when the payload is a
 list. Roughly ten lines. Add them when the first graph product exists — see
-[section 17](#17-why-there-is-no-repository-layer) for why we wait.
+[section 16](#16-why-there-is-no-repository-layer) for why we wait.
 
 **A file (Excel, PDF, image).** Not a data product. Data products are JSON with a
 schema, cacheable and versioned. A file download is a hand-written endpoint
@@ -1187,7 +1145,7 @@ envelope already supports via `meta.total_count`.
 
 ---
 
-## 17. Why there is no repository layer
+## 16. Why there is no repository layer
 
 An earlier draft had a `repositories/` package: `Protocol` ports, Neo4j/SQL
 adapters, one module per business domain. It was removed. Worth knowing why,
@@ -1217,7 +1175,7 @@ on its own.
 
 ---
 
-## 18. Pitfalls
+## 17. Pitfalls
 
 **Blocking calls inside `async def`.** The synchronous Neo4j driver, `requests`,
 `time.sleep` — any of these blocks the whole event loop, so *every* concurrent

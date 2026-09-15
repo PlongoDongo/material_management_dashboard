@@ -10,7 +10,6 @@ This README is the short version to get started. In more depth:
 | [`docs/api_development_guide.md`](../docs/api_development_guide.md) | **Developer guide** — recipes for extending it, conventions, review checklist |
 | [`docs/api_layer_concept.md`](../docs/api_layer_concept.md) | Concept and the reasoning behind the architectural decisions |
 | [`docs/api_grundlagen.md`](../docs/api_grundlagen.md) | Background for newcomers — what is a router, a session, async? Includes the history (German) |
-| [`docs/architecture.md`](../docs/architecture.md) | Auto-generated diagrams of the current state |
 
 ---
 
@@ -43,8 +42,8 @@ curl -s localhost:8000/api/v1/catalog | python -m json.tool
 ## The core ideas in 60 seconds
 
 **Data product** — a named, versioned contract over a dataset. Not "a route that
-happens to query the database". It has a schema, an owner, a cache duration and
-a lifecycle.
+happens to query the database". It has a schema, a cache duration and a
+lifecycle.
 
 **Two version axes** — easy to confuse:
 
@@ -123,7 +122,7 @@ registry.add(DataProduct(
     name="plant-utilisation", version="1.0",
     summary="Materials and stock per plant",
     item_model=PlantRow, params_model=PlantParams, loader=load,
-    owner="team-material-management", cache_ttl=120,
+    cache_ttl=120,
 ))
 ```
 
@@ -185,35 +184,6 @@ should show up in the git diff, not happen silently.
 
 ---
 
-## Generating the architecture diagram
-
-The visual documentation is generated from the **running app**, not maintained
-by hand:
-
-```bash
-.venv/bin/architecture-docs            # writes ../docs/architecture.md
-.venv/bin/architecture-docs --check    # CI: fails when stale
-```
-
-The connections are derived, never maintained:
-
-| Information | Source |
-|---|---|
-| routes, methods, deprecation | `app.openapi()` |
-| version, owner, cache, contract fields | the registry |
-| product → data source | AST of the loader (`sources.X()` calls) |
-
-`tests/test_architecture.py::test_documentation_is_current` makes sure nobody
-adds a product and lets the diagram go stale.
-
-Optionally, validate the mermaid syntax with the real parser:
-
-```bash
-npm install mermaid jsdom && node tools/validate_mermaid.mjs ../docs/architecture.md
-```
-
----
-
 ## Mock data for missing sources
 
 ```bash
@@ -234,7 +204,7 @@ tests/test_registry.py          registry rules (version collisions etc.)
 tests/test_data_products.py     end-to-end over HTTP
 tests/test_operations.py        request ids, cache metadata, auth, readiness
 tests/test_health.py            operational endpoints
-tests/test_architecture.py      diagram generator + staleness check
+tests/test_write_routes.py      every write route has a role and an invalidation
 tests/test_integration_neo4j.py against a REAL database (skipped without NEO4J_URI)
 tests/fakes.py                  test doubles (a tool, not a test)
 ```

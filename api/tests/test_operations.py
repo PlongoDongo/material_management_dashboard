@@ -37,7 +37,6 @@ def test_env_example_loads_and_leaves_auth_off(tmp_path: Path) -> None:
     when a value precedes it: `OIDC_ISSUER=  # empty = off` would have read the
     comment text as an issuer and switched auth ON.
     """
-    from pathlib import Path
 
     example = Path(__file__).resolve().parents[1] / ".env.example"
     target = tmp_path / ".env"
@@ -151,7 +150,7 @@ def test_the_sunset_header_is_locale_independent(client: TestClient) -> None:
 # --- Authentication ---------------------------------------------------------
 
 def test_the_catalog_is_as_protected_as_the_data_products(oidc_settings: Settings, auth_header: AuthHeader) -> None:
-    """The catalog lists owners, cache times and every contract field.
+    """The catalog lists cache times and every contract field.
 
     Leaving it open without a key would be a decision -- previously it was just
     an omitted line.
@@ -223,22 +222,3 @@ def test_a_failed_commit_is_the_response_not_a_log_line(app: FastAPI, client: Te
     assert response.json()["code"] == "conflict"
     assert cache.get(key) is not None, "a write that failed must not evict the cache"
 
-
-# --- Readiness --------------------------------------------------------------
-
-def test_readyz_only_checks_required_sources(client_without_sources: TestClient) -> None:
-    """Both sources are needed here -> both are missing -> 503."""
-    response = client_without_sources.get("/api/v1/readyz")
-    assert response.status_code == 503
-    assert set(response.json()["required"]) == {"neo4j", "postgres"}
-
-
-def test_required_sources_are_read_from_the_loaders() -> None:
-    """Derived, not declared -- that way it cannot drift."""
-    from products.catalog.material_overview_v3 import load as load_material
-    from products.catalog.supplier_risk_v2 import load as load_risk
-    from products.introspect import required_sources, sources_used_by
-
-    assert sources_used_by(load_material) == ["neo4j"]
-    assert sources_used_by(load_risk) == ["neo4j", "postgres"]
-    assert required_sources() == {"neo4j", "postgres"}
