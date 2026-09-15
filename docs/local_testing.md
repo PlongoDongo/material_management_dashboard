@@ -30,8 +30,17 @@ uv pip install -e ".[dev]"               # oder: .venv/bin/pip install -e ".[dev
 .venv/bin/python -c "from core.config import __version__; print(__version__)"
 ```
 
-Gibt `0.1.0` aus. Damit ist der Code importierbar — das allein schließt schon
-die häufigsten Einrichtungsprobleme aus.
+Gibt die Version aus `pyproject.toml` aus, z. B. `0.1.0`. Damit ist der Code
+importierbar — das allein schließt schon die häufigsten Einrichtungsprobleme aus.
+
+Die Version steht **nur** in `pyproject.toml`. Der Code liest sie aus dem
+installierten Paket, und das kennt eine neue Nummer erst nach dem erneuten
+Installieren. Wer die Version erhöht, führt deshalb danach noch einmal
+`uv pip install -e ".[dev]"` aus. Vergessen meldet
+`tests/test_config.py::test_the_version_is_the_one_in_pyproject`.
+
+`PackageNotFoundError: data-api` heißt: Das Projekt ist in dieser Umgebung nicht
+installiert — `uv pip install -e ".[dev]"` fehlt oder lief in einer anderen `.venv`.
 
 ---
 
@@ -46,6 +55,7 @@ Der schnellste Weg herauszufinden, **was die Anwendung tatsächlich sieht**:
 Ausgabe (gekürzt):
 
 ```
+version: 0.1.0
 credentials dir: /etc/credentials
 api_env='dev' server_host='127.0.0.1' server_port=8000 server_loglevel='info'
 neo4j_host=None neo4j_password=None sql_host=None ...
@@ -58,6 +68,7 @@ Worauf du achtest:
 
 | Zeile | Bedeutung |
 |---|---|
+| `version:` | Muss der Nummer in `pyproject.toml` entsprechen, sonst neu installieren. |
 | `credentials dir:` | Wo gesucht wird. Stimmt der Pfad? |
 | `neo4j_host=None` | Es wurde **nichts** gefunden — lokal normal |
 | `neo4j_host='...'` | Die Credentials-Datei wurde gelesen |
