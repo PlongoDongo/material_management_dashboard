@@ -28,9 +28,9 @@ API_V1_PREFIX = "/api/v1"
 # The hand-written routers, in the order they are mounted. Exposed as a tuple
 # because `include_router` swallows them: once mounted, FastAPI keeps a router
 # as a private `_IncludedRouter` and its `APIRoute` objects are no longer
-# reachable from the app. Their dependencies are, though, and both
-# tests/test_architecture.py and architecture.py need to read those -- which
-# roles a write route demands and which products it invalidates.
+# reachable from the app. Their dependencies are, though, and
+# tests/test_write_routes.py reads those -- which roles a write route demands
+# and which products it invalidates.
 #
 # The generated data product router is deliberately NOT in here: it has no
 # hand-written dependencies to inspect, and the registry already describes it.

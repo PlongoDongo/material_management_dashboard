@@ -1,10 +1,9 @@
 """
-The catalog: which data products exist, in which versions, and who owns them?
+The catalog: which data products exist, and in which versions?
 
 This is not decoration. Once there are more than a handful of products, the
 catalog is the answer to "has somebody already built this?" -- and it can be
-consumed programmatically (to fill a product picker in a dashboard, or to check
-in CI that no product was committed without an owner).
+consumed programmatically, e.g. to fill a product picker in a dashboard.
 
 It is generated from the same registry as the routes, so it cannot go stale.
 """
@@ -42,14 +41,13 @@ class VersionInfo(BaseModel):
 class CatalogEntry(BaseModel):
     """A data product with every version the caller is allowed to fetch.
 
-    `owner` is the team to ask about the data. `latest` is the highest version,
-    for orientation only -- dashboards should pin a fixed `path` from `versions`,
-    so a new major version cannot break them unannounced.
+    `latest` is the highest version, for orientation only -- dashboards should
+    pin a fixed `path` from `versions`, so a new major version cannot break
+    them unannounced.
     """
 
     name: str
     summary: str
-    owner: str
     tags: list[str]
     latest: str
     versions: list[VersionInfo]
@@ -63,7 +61,6 @@ def _entry(name: str, versions: list[DataProduct]) -> CatalogEntry:
     return CatalogEntry(
         name=name,
         summary=newest.summary,
-        owner=newest.owner,
         tags=list(newest.tags),
         latest=newest.version,
         versions=[
@@ -81,7 +78,7 @@ def _entry(name: str, versions: list[DataProduct]) -> CatalogEntry:
 
 
 # The catalog requires THE SAME authentication as the data products. It lists
-# names, owners, cache times, sunset dates and every contract field -- the full
+# names, cache times, sunset dates and every contract field -- the full
 # map of what sits behind the auth. Leaving it open would be a decision; it just
 # had not been made.
 @router.get("", summary="All available data products")

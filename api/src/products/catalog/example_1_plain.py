@@ -93,7 +93,6 @@ registry.add(DataProduct(
     ),
     item_model=ExamplePlainRow,
     loader=load,
-    owner="team-material-management",
     tags=("example", "template"),
     cache_ttl=60,
 ))

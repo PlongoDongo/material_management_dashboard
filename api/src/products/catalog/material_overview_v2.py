@@ -105,7 +105,6 @@ registry.add(DataProduct(
     item_model=MaterialRowV2,
     params_model=MaterialParamsV2,
     loader=load,
-    owner="team-material-management",
     tags=("material", "master-data"),
     cache_ttl=60,
     deprecated=True,

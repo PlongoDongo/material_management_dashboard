@@ -199,7 +199,6 @@ Ohne Datenbank:
 {
     "status": "degraded",
     "env": "dev",
-    "required": ["neo4j", "postgres"],
     "checks": {
         "neo4j": "not-configured",
         "postgres": "not-configured"
@@ -448,43 +447,6 @@ curl -s ".../data-products/supplier-risk/v2?limit=5" | python -m json.tool
 
 ---
 
-## Stufe 9 — Die Architektur-Doku erzeugen
-
-```bash
-.venv/bin/architecture-docs
-```
-
-```
-Data product routes created: 4 products.
-/Users/.../docs/architecture.md written.
-```
-
-**Erfolg:** Die Datei wurde geschrieben.
-
-Sie enthält ein Mermaid-Diagramm und drei Tabellen:
-
-| Abschnitt | Inhalt |
-|---|---|
-| `## Contracts` | Diagramm: die Felder je Produktversion |
-| `## Write routes` | schreibende Routen: Rolle, Ziel-Datenquelle, invalidierte Produkte |
-| `## Route inventory` | jede Route mit Produkt, Version, Owner, Cache, Status, Sunset |
-| `## Data products in detail` | Steckbrief je Produkt, u. a. welche Datenquelle es braucht |
-
-Ansehen kannst du sie in jedem Markdown-Viewer mit Mermaid-Unterstützung —
-GitHub rendert sie direkt, in VS Code über die Vorschau.
-
-Die Datei wird **aus der laufenden App** erzeugt, nicht gepflegt. Deshalb
-gibt es auch:
-
-```bash
-.venv/bin/architecture-docs --check     # nur prüfen, ob es aktuell ist (für CI)
-.venv/bin/architecture-docs --out /tmp/architektur.md
-```
-
-Eine Datenbank braucht es dafür nicht — die Struktur steht in der Registry.
-
----
-
 ## Wenn du fertig bist: die Tests
 
 ```bash
@@ -515,4 +477,3 @@ python seed/seed_neo4j.py
 | 6 | `curl ".../material-overview/v3?limit=2"` | 500 ohne DB, 200 mit |
 | 7 | `python -m core.config` | Felder gefüllt statt `None` |
 | 8 | `curl ".../material-overview/v3?limit=3"` | `meta` + `data` |
-| 9 | `architecture-docs` | `architecture.md written.` |

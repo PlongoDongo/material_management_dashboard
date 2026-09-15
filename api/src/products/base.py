@@ -1,8 +1,8 @@
 """
 What is a data product?
 
-A data product is a named, versioned dataset with an owner -- not simply "a
-route that happens to query the database".
+A data product is a named, versioned dataset -- not simply "a route that
+happens to query the database".
 
 This file contains four things:
 
@@ -14,6 +14,7 @@ This file contains four things:
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -187,6 +188,9 @@ class Page:
     total: int
 
 
+_MAJOR_MINOR = re.compile(r"[0-9]+\.[0-9]+")
+
+
 @dataclass(frozen=True)
 class DataProduct:
     """The description of a data product.
@@ -206,7 +210,6 @@ class DataProduct:
     item_model: type[BaseModel]     # the row schema = the contract
     loader: Any                     # async def load(sources, params) -> list[dict]
     params_model: type[ProductParams] = ProductParams
-    owner: str = "unassigned"       # who to ask about this product
     description: str = ""
     tags: tuple[str, ...] = ()
     cache_ttl: int = 60             # seconds; 0 = do not cache
@@ -223,11 +226,9 @@ class DataProduct:
     paginated_by_source: bool = False
 
     def __post_init__(self) -> None:
-        parts = self.version.split(".")
-        if len(parts) < 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+        if not _MAJOR_MINOR.fullmatch(self.version):
             raise ValueError(
-                f"{self.name}: version must be 'MAJOR.MINOR' (e.g. '1.0'), "
-                f"not {self.version!r}."
+                f"{self.name}: version must be 'MAJOR.MINOR' (e.g. '1.0'), not {self.version!r}."
             )
 
     @property

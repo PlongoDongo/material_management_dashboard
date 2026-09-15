@@ -27,9 +27,20 @@ def test_path_contains_only_the_major() -> None:
     assert _product("p", "2.7").version == "2.7"
 
 
-def test_an_invalid_version_fails_immediately() -> None:
+@pytest.mark.parametrize("version", ["1.0", "2.1", "10.12"])
+def test_a_major_minor_version_is_accepted(version: str) -> None:
+    assert _product("p", version).version == version
+
+
+@pytest.mark.parametrize("version", [
+    "v1", "1", "1.", ".1", "1.x",
+    "1.0.1", "1.0.XX.YYY",      # the old split() check only looked at the first two parts
+    "1.0\n",                    # `$` in a regex would still match before the newline
+    "².0", "١.٠",               # str.isdigit() and `\d` both accept these
+])
+def test_an_invalid_version_fails_immediately(version: str) -> None:
     with pytest.raises(ValueError, match="MAJOR.MINOR"):
-        _product("p", "v1")
+        _product("p", version)
 
 
 def test_a_collision_on_the_same_major_is_rejected() -> None:

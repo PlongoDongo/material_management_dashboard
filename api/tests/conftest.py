@@ -19,7 +19,9 @@ import time
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
@@ -27,6 +29,7 @@ from tests.types import AuthHeader, KeyPair, MakeToken
 
 from api.deps import get_sources
 from app import create_app
+from core import security
 from core.config import Settings
 from products.cache import cache
 
@@ -68,7 +71,6 @@ AUDIENCE = "data-api"
 @pytest.fixture(scope="session")
 def rsa_keypair() -> tuple[Any, Any]:
     """One throwaway RSA key for the whole session (generating it is slow)."""
-    from cryptography.hazmat.primitives.asymmetric import rsa
 
     private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     return private, private.public_key()
@@ -77,7 +79,6 @@ def rsa_keypair() -> tuple[Any, Any]:
 @pytest.fixture
 def oidc_settings(settings: Settings, rsa_keypair: KeyPair, monkeypatch: pytest.MonkeyPatch) -> Settings:
     """Settings with auth ON, and the realm's public key wired in locally."""
-    from core import security
 
     _, public = rsa_keypair
     monkeypatch.setattr(security, "_signing_key", lambda token, settings: public)
@@ -91,7 +92,6 @@ def oidc_settings(settings: Settings, rsa_keypair: KeyPair, monkeypatch: pytest.
 @pytest.fixture
 def make_token(rsa_keypair: KeyPair) -> MakeToken:
     """Mints a Keycloak-shaped access token. Every claim can be overridden."""
-    import jwt
 
     private, _ = rsa_keypair
 

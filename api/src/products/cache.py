@@ -81,7 +81,7 @@ def invalidates(*products: str) -> Callable[[], AsyncIterator[None]]:
 
     * It cannot be forgotten quietly. A new write route without it leaves the
       dashboard showing the old state for up to `cache_ttl` seconds, and the
-      user concludes the save failed. tests/test_architecture.py fails the build
+      user concludes the save failed. tests/test_write_routes.py fails the build
       if a write route is missing one.
     * Everything after `yield` runs only on the SUCCESS path -- the same
       mechanism as the commit in api/deps.py. A handler that answers 409
@@ -89,8 +89,8 @@ def invalidates(*products: str) -> Callable[[], AsyncIterator[None]]:
       current inline call would run either way.
 
     The declared products are readable back off the route (see
-    `invalidated_products` below), which is how architecture.py fills the
-    "Invalidates" column without anyone maintaining a list.
+    `invalidated_products` below), which is how tests/test_write_routes.py
+    checks them.
 
     A WRITE THAT AFFECTS NO DATA PRODUCT
     ------------------------------------
@@ -99,9 +99,8 @@ def invalidates(*products: str) -> Callable[[], AsyncIterator[None]]:
         dependencies=[Depends(requires(ROLE)), Depends(invalidates())]
 
     That is a supported answer, not a workaround. At runtime the dependency does
-    nothing; in the generated docs the "Invalidates" column shows "-". The
-    architecture test accepts it because it asks whether the dependency
-    is THERE, not whether the list is non-empty.
+    nothing. The write-route test accepts it because it asks whether the
+    dependency is THERE, not whether the list is non-empty.
 
     The reason it has to be written down at all: an empty call is a decision,
     a missing one is an oversight, and from the outside those look identical.

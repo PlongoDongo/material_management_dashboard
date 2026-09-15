@@ -194,7 +194,6 @@ def build_products_router() -> APIRouter:
             description=(
                 f"{product.description}\n\n"
                 f"**Version:** {product.version} &nbsp;|&nbsp; "
-                f"**Owner:** {product.owner} &nbsp;|&nbsp; "
                 f"**Cache:** {product.cache_ttl}s"
             ),
             operation_id=f"{product.name.replace('-', '_')}_{product.path_version}",

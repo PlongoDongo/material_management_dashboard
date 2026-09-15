@@ -20,6 +20,7 @@ green without infrastructure.
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
@@ -93,7 +94,6 @@ async def test_the_optional_filter_applies_with_a_value(sources: Sources) -> Non
 
 async def test_neo4j_types_arrive_as_python_types(sources: Sources) -> None:
     """Checks the conversion in db/sources.py against real data."""
-    import datetime as dt
 
     rows = await sources.neo4j(
         "RETURN date('2026-08-20') AS d, duration({days: 2}) AS dur, "

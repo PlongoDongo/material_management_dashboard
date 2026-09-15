@@ -10,6 +10,7 @@ plain text with no request id to find it in the logs by.
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import AsyncExitStack
 from typing import Any, Self
 
@@ -112,7 +113,6 @@ async def _run(source: str, error: Exception, fails_on: str = "execute") -> None
     (CypherSyntaxError("invalid input"), CypherSyntaxError),
 ], ids=lambda value: type(value).__name__ if isinstance(value, Exception) else "")
 def test_neo4j_failures_are_translated(error: Exception, expected: type[Exception]) -> None:
-    import asyncio
 
     with pytest.raises(expected):
         asyncio.run(_run("neo4j", error))
@@ -130,7 +130,6 @@ def test_neo4j_failures_are_translated(error: Exception, expected: type[Exceptio
     (_sql(DataError), DataError),
 ], ids=lambda value: type(value).__name__ if isinstance(value, Exception) else "")
 def test_postgres_failures_are_translated(error: Exception, expected: type[Exception]) -> None:
-    import asyncio
 
     with pytest.raises(expected):
         asyncio.run(_run("postgres", error))
@@ -138,7 +137,6 @@ def test_postgres_failures_are_translated(error: Exception, expected: type[Excep
 
 def test_a_conflict_at_commit_time_is_a_conflict_too() -> None:
     """Deferred constraints and flushes fail in COMMIT, not in the statement."""
-    import asyncio
 
     with pytest.raises(ConflictError):
         asyncio.run(_run("postgres", _sql(IntegrityError), fails_on="commit"))
@@ -147,7 +145,6 @@ def test_a_conflict_at_commit_time_is_a_conflict_too() -> None:
 def test_a_conflict_names_the_constraint_but_not_the_statement() -> None:
     """str() of a SQLAlchemy error appends the SQL and its bound parameters --
     fine in a log, not in a response body."""
-    import asyncio
 
     with pytest.raises(ConflictError) as caught:
         asyncio.run(_run("postgres", _sql(IntegrityError)))

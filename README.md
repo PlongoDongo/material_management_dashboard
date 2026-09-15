@@ -27,7 +27,7 @@ versionierte *Datenprodukte* über die API ab. Warum das so ist, steht in
 |---|---|---|
 | [`api/`](api/) | FastAPI-Service: Datenprodukte, Cache, Auth. **Code und API-Felder auf Englisch.** | lauffähig, 71 Tests |
 | [`frontend/material_management_dashboard/`](frontend/material_management_dashboard/) | Plotly-Dash-Dashboard für Materialstammdaten | lauffähig |
-| [`docs/`](docs/) | Konzept, Entwicklerleitfaden, Grundlagen, generierte Diagramme | — |
+| [`docs/`](docs/) | Konzept, Entwicklerleitfaden, Grundlagen | — |
 | `ingestion/` | Befüllung von Neo4j/Postgres aus den Quellsystemen | noch nicht angelegt |
 
 ---
@@ -78,14 +78,7 @@ psql "$DSN" -f seed/seed_postgres.sql
 | [`docs/api_grundlagen.md`](docs/api_grundlagen.md) | **Für Einsteiger.** Was ist ein Router, eine Session, async? Mit der Historie hinter den heutigen Standards. |
 | [`docs/api_development_guide.md`](docs/api_development_guide.md) | **Für Entwickler** (englisch). Rezepte: Datenprodukt hinzufügen, brechende Änderung ausliefern, Datenquelle anbinden. Review-Checkliste. |
 | [`docs/api_layer_concept.md`](docs/api_layer_concept.md) | Konzept und Begründung aller Architekturentscheidungen inkl. Alternativen. |
-| [`docs/architecture.md`](docs/architecture.md) | Ist-Zustand: Routen, Datenprodukte, Schreibrouten, Verträge — **automatisch erzeugt**, nicht von Hand bearbeiten. |
 | [`frontend/material_management_dashboard/README.md`](frontend/material_management_dashboard/README.md) | Aufbau des Dashboards, Filter-Mechanik, Layout-Entscheidungen. |
-
-Diagramme neu erzeugen (nach jeder Architekturänderung):
-
-```bash
-cd api && .venv/bin/architecture-docs
-```
 
 ---
 

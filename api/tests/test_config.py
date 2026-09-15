@@ -8,13 +8,15 @@ malformed file starts an application with no database and no explanation.
 """
 from __future__ import annotations
 
+import importlib
+import json
 import logging
 from pathlib import Path
 
 import pytest
 import yaml
 
-from core.config import Settings
+from core.config import _CREDENTIAL_FILES, Settings
 from core.errors import ConfigurationError
 
 NEO4J_FILE = {
@@ -67,7 +69,6 @@ def test_importing_the_module_reads_nothing(monkeypatch: pytest.MonkeyPatch) -> 
     traceback points at an import line rather than at the code that needs
     credentials.
     """
-    import importlib
 
     monkeypatch.setenv("CREDENTIALS_DIR", "/definitely/not/here")
     module = importlib.import_module("core.config")
@@ -112,7 +113,6 @@ def test_the_file_extension_is_irrelevant(
     code could derive, so they are spelled out in _CREDENTIAL_FILES and the
     parser never looks at the suffix.
     """
-    from core.config import _CREDENTIAL_FILES
 
     assert set(_CREDENTIAL_FILES) == {"neo4j.dev", "postgres.project"}
     (tmp_path / "neo4j.dev").write_text(yaml.safe_dump(NEO4J_FILE), encoding="utf-8")
@@ -129,7 +129,6 @@ def test_a_json_file_is_read_just_as_well(
     JSON is a subset of YAML, so `yaml.safe_load` covers both -- which means the
     format question does not have to be answered before this works.
     """
-    import json
 
     (tmp_path / "neo4j.dev").write_text(json.dumps(NEO4J_FILE), encoding="utf-8")
     monkeypatch.setenv("CREDENTIALS_DIR", str(tmp_path))

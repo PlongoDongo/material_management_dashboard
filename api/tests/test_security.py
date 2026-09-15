@@ -9,16 +9,20 @@ implementation, which is the one thing an auth test must not do.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Iterator
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.fakes import FakeSources
 from tests.types import AuthHeader, MakeToken
 
+from api.deps import get_sources
 from app import create_app
 from core.config import Settings
+from core.errors import ConfigurationError
 from core.security import ANONYMOUS, Principal, _groups_from
 from products.registry import registry
 
@@ -33,9 +37,6 @@ def secured(oidc_settings: Settings, app: FastAPI) -> Iterator[TestClient]:
     Reuses the `app` fixture's FakeSources override so these tests stay about
     auth and do not need a database.
     """
-    from tests.fakes import FakeSources
-
-    from api.deps import get_sources
 
     application = create_app(oidc_settings)
     application.dependency_overrides[get_sources] = FakeSources
@@ -166,7 +167,6 @@ def restricted_registry() -> Iterator[None]:
     for a modified copy rather than mutated -- and swapped back afterwards,
     because the registry is process-wide and would leak into the next test.
     """
-    import dataclasses
 
     # Every major, not just v3: the catalog lists a product as long as ONE
     # version is visible, so leaving v2 open would keep the name in the list
@@ -187,9 +187,6 @@ def secured_restricted(restricted_registry: None, oidc_settings: Settings) -> It
     product object at route-creation time, so restricting the registry after
     `create_app` would change the catalog but not the route.
     """
-    from tests.fakes import FakeSources
-
-    from api.deps import get_sources
 
     application = create_app(oidc_settings)
     application.dependency_overrides[get_sources] = FakeSources
@@ -250,7 +247,6 @@ def test_an_issuer_without_an_audience_is_a_configuration_error(settings: Settin
 def test_prod_refuses_to_start_without_authentication(settings: Settings) -> None:
     """A forgotten OIDC_ISSUER leaves the API open and nothing would say so.
     A server that does not come up gets noticed; an open one may not."""
-    from core.errors import ConfigurationError
 
     unprotected_prod = settings.model_copy(update={"api_env": "prod", "oidc_issuer": None})
     with pytest.raises(ConfigurationError, match="ALLOW_ANONYMOUS"), \

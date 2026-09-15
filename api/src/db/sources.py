@@ -76,7 +76,7 @@ def _to_python_value(value: Any) -> Any:  # noqa: ANN401
         # have the shape {"srid","x","y"} and a 3D one {"srid","x","y","z"} --
         # a response mixing both would contain inconsistent objects, and a row
         # model with `z: float | None` could not be satisfied.
-        coordinates = dict(zip(("x", "y", "z"), tuple(value)))
+        coordinates = dict(zip(("x", "y", "z"), tuple(value), strict=False))
         return {"srid": value.srid, "x": coordinates.get("x"),
                 "y": coordinates.get("y"), "z": coordinates.get("z")}
     if isinstance(value, Path):

@@ -41,7 +41,7 @@ Layer between the Dash dashboards and the data sources (Neo4j, Postgres, and
 further services later on).
 
 * **Data products** (`/api/v1/data-products/...`) -- versioned, read-only
-  contracts. Every product has an owner and a fixed schema.
+  contracts with a fixed schema.
 * **Catalog** (`/api/v1/catalog`) -- which products exist in which versions.
 * **Commands** (e.g. `/api/v1/mappings`) -- write endpoints.
 
