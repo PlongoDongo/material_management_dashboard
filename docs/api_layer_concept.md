@@ -503,8 +503,8 @@ eine legitime Wahl (weniger Fallstricke), skaliert aber schlechter.
 
 Es gibt **keinen** Ersatzdatensatz im Produktionspfad. Fehlt `NEO4J_URI`, melden
 alle Datenprodukte, die den Graphen brauchen, einen `ConfigurationError` (HTTP
-500), und `/readyz` meldet 503, sodass der Loadbalancer den Pod aus dem Verkehr
-nimmt.
+500), und `/readyz` meldet 503 — wer nach dem Deployment `/readyz` aufruft,
+sieht sofort, welche Quelle fehlt.
 
 Das ist eine bewusste Entscheidung. Eine API, die stillschweigend erfundene
 Zahlen liefert, ist gefährlicher als eine, die ehrlich einen Fehler meldet —
@@ -862,7 +862,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
   Datenbank-Pools berücksichtigen: `pool_size × workers`.
 * **`/healthz` vs. `/readyz`**: Liveness prüft **nichts** Externes — sonst killt
   ein kurzer Neo4j-Ausfall alle Pods, statt nur Fehler zu liefern. Readiness
-  prüft die Datenquellen und nimmt den Pod bei Bedarf aus dem Loadbalancer.
+  prüft die Datenquellen. Als Kubernetes-`readinessProbe` taugt das nur bei
+  mehreren Pods; bei einem einzelnen Pod gehört die Probe auf `/healthz`, sonst
+  ist die API während eines Datenbankausfalls gar nicht erreichbar statt mit
+  einem 503 (Begründung in `api/v1/health.py`).
 * **Logging** geht nach stdout (Container-Konvention), mit Request-ID in jeder
   Zeile.
 * **OpenAPI** unter `/docs` (interaktiv), `/redoc` (lesbar), `/openapi.json`
@@ -1010,9 +1013,13 @@ architecture-docs            # schreibt docs/architecture.md
 architecture-docs --check    # CI: schlägt fehl, wenn die Datei veraltet ist
 ```
 
-Ergebnis: [`docs/architecture.md`](architecture.md) mit drei Mermaid-Diagrammen
-(Datenfluss Route → Produkt → Repository → Quelle, Versionsstände,
-Vertragsschemata), einem Routeninventar und einem Steckbrief je Datenprodukt.
+Ergebnis: [`docs/architecture.md`](architecture.md) mit einem Mermaid-Diagramm
+der Vertragsschemata, einer Tabelle der schreibenden Routen, einem
+Routeninventar und einem Steckbrief je Datenprodukt.
+
+> Früher gab es zusätzlich ein Datenfluss- und ein Versionsdiagramm. Beide
+> zeigten nichts, was nicht auch in den Tabellen steht, und kosteten
+> Wartungsaufwand — deshalb wurden sie entfernt.
 
 ### Warum selbst gebaut statt eines fertigen Pakets
 

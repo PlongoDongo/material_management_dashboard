@@ -2,14 +2,18 @@
 Tests of the generated architecture documentation.
 
 The last test is the important one: `test_documentation_is_current`. It is why
-the diagram cannot go stale -- anyone who adds a data product without
-regenerating gets a red build instead of a quietly wrong diagram.
+the document cannot go stale -- anyone who adds a data product without
+regenerating gets a red build instead of a quietly wrong page.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from fastapi.routing import APIRoute
 
@@ -20,8 +24,6 @@ from architecture import (
     build,
     collect,
     diagram_contracts,
-    diagram_dataflow,
-    diagram_versions,
     render_markdown,
 )
 from core.config import Settings
@@ -74,29 +76,34 @@ def test_products_know_their_sources(settings: Settings) -> None:
     risk = next(p for p in arch.products if p.product.name == "supplier-risk")
     assert risk.sources == ["neo4j", "postgres"]
     material = next(p for p in arch.products if p.product.major == 3)
-    assert material.sources == ["neo4j"]      # no Postgres -> no edge in the diagram
+    assert material.sources == ["neo4j"]      # no Postgres -> "Sources: neo4j"
 
 
-def test_the_diagrams_contain_the_expected_nodes(settings: Settings) -> None:
+def test_the_contract_diagram_lists_the_fields(settings: Settings) -> None:
     arch = collect(create_app(settings))
+    contracts = diagram_contracts(arch)
 
-    dataflow = diagram_dataflow(arch)
-    assert dataflow.startswith("flowchart")
-    assert "supplier-risk" in dataflow
-    assert "src_neo4j" in dataflow and "src_postgres" in dataflow
-    # the alias only duplicates edges and does not belong in the flow diagram
-    assert "latest" not in dataflow
-
-    assert "superseded by" in diagram_versions(arch)
-    assert "stock_value" in diagram_contracts(arch)
+    assert contracts.startswith("classDiagram")
+    assert "stock_value" in contracts
 
 
 def test_the_markdown_contains_every_section() -> None:
     markdown = build()
-    assert markdown.count("```mermaid") == 3
-    assert "## Data flow" in markdown
-    assert "## Route inventory" in markdown
+    assert markdown.count("```mermaid") == 1
+    for section in ("## Contracts", "## Write routes", "## Route inventory",
+                    "## Data products in detail"):
+        assert section in markdown
     assert "team-supply-chain" in markdown
+    assert "**Sources:** neo4j + postgres" in markdown
+
+
+def test_the_route_inventory_shows_the_sunset_date(settings: Settings) -> None:
+    """The one thing the removed version diagram showed that no table did."""
+    markdown = render_markdown(collect(create_app(settings)))
+    row = next(line for line in markdown.splitlines()
+               if line.startswith("| `/api/v1/data-products/material-overview/v2` |"))
+
+    assert row.endswith("| retiring | 2026-12-31 |")
 
 
 def test_documentation_is_current() -> None:
@@ -108,6 +115,26 @@ def test_documentation_is_current() -> None:
     assert DEFAULT_OUT.read_text(encoding="utf-8") == build(), (
         "docs/architecture.md is out of date -- run 'architecture-docs'."
     )
+
+
+def test_the_cli_runs_with_docstrings_stripped(tmp_path: Path) -> None:
+    """`python -OO` and PYTHONOPTIMIZE=2 remove docstrings, so `__doc__` is None.
+
+    The CLI used to build its --help text from the module docstring and crashed
+    with an AttributeError in exactly that environment -- while every in-process
+    test, which imports the module normally, stayed green.
+    """
+    out = tmp_path / "architecture.md"
+    result = subprocess.run(
+        [sys.executable, "-OO", "-c",
+         f"from architecture import main; raise SystemExit(main(['--out', {str(out)!r}]))"],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
+        capture_output=True, text=True, check=False,
+    )
+
+    assert "AttributeError" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert out.exists()
 
 
 # --- Every write route carries its guards -----------------------------------
@@ -186,18 +213,18 @@ def test_invalidated_products_actually_exist() -> None:
 
 # --- Write routes reach the generated documentation --------------------------
 
-def test_write_routes_appear_in_the_diagram_with_their_invalidations(
+def test_write_routes_appear_in_the_table_with_their_invalidations(
     settings: Settings,
 ) -> None:
-    """The edge a developer cannot see from either side's code alone.
+    """The relationship a developer cannot see from either side's code alone.
 
     "POST /mappings makes material-overview stale" is written down in neither
     file: the route does not know who caches it, and the product does not know
-    who changes it. Only the diagram puts the two together -- which is the whole
-    reason to generate it.
+    who changes it. Only the generated table puts the two together -- which is
+    the whole reason to generate it.
     """
     arch = collect(create_app(settings))
-    diagram = diagram_dataflow(arch)
+    lines = render_markdown(arch).splitlines()
 
     writes = [route for route in arch.routes if route.is_write]
     assert writes, "no write routes collected"
@@ -207,13 +234,14 @@ def test_write_routes_appear_in_the_diagram_with_their_invalidations(
     # that is a legitimate answer (see test_every_write_route_invalidates_
     # something). Requiring a non-empty list here would fail the build for
     # exactly the case the design allows -- what has to hold is that whatever a
-    # route DOES declare shows up as an edge.
-    drawn = [route for route in writes if route.invalidates]
-    assert drawn, "no write route declares an invalidation -- nothing to draw"
-    for route in drawn:
+    # route DOES declare shows up in its row.
+    declaring = [route for route in writes if route.invalidates]
+    assert declaring, "no write route declares an invalidation -- nothing to check"
+    for route in declaring:
+        row = next(line for line in lines
+                   if line.startswith(f"| `{route.path}` | {', '.join(route.methods)} |"))
         for product in route.invalidates:
-            assert product.replace("-", "_") in diagram
-        assert "invalidates" in diagram
+            assert product in row, f"{route.path}: {product} missing from its row"
 
 
 def test_the_write_route_table_lists_role_and_invalidation(settings: Settings) -> None:

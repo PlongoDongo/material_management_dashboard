@@ -8,7 +8,7 @@ the patterns below are the ones you actually need.
 
 Related documents:
 * [`api_layer_concept.md`](api_layer_concept.md) — the design rationale and trade-offs.
-* [`architecture.md`](architecture.md) — auto-generated diagrams of the current state.
+* [`architecture.md`](architecture.md) — auto-generated overview of the current state.
 * [`api_grundlagen.md`](api_grundlagen.md) — background for readers new to these patterns (German).
 
 ---
@@ -330,7 +330,7 @@ After a restart you automatically get:
 Then:
 
 ```bash
-.venv/bin/architecture-docs        # regenerate the diagrams
+.venv/bin/architecture-docs        # regenerate docs/architecture.md
 .venv/bin/python -m pytest -q
 ```
 
@@ -726,9 +726,8 @@ product loader.
 **Step 4 — teach the test fake.** Add a branch to `FakeSources` in
 `tests/fakes.py` so tests can answer the new source.
 
-The architecture diagram picks the new source up automatically: it reads the
-`return` statements of the container methods and the `source` attribute of the
-adapters. Nothing to maintain by hand.
+The generated docs pick the new source up automatically: `sources_used_by()`
+reads the `sources.<name>(...)` calls in each loader. Nothing to maintain by hand.
 
 ---
 
@@ -792,7 +791,7 @@ product from the list, they have to look at the line and think about it.
 
 Register the router in `api/v1/__init__.py` — the one place that assembles them.
 Add it to `TOPIC_ROUTERS` in the same file, or the architecture test and the
-generated diagram will not see it.
+generated docs will not see it.
 
 **Why writes are not generated.** The obvious question is whether write routes
 could be data products too — one file in `catalog/`, and `router.py` does the
@@ -921,15 +920,28 @@ Raise the right one from `core/errors.py`:
 
 | Exception | Status | When |
 |---|---|---|
+| `UnauthorizedError` | 401 | no token, or not a valid one |
 | `ForbiddenError` | 403 | caller is known but not allowed to see this product |
-| `UpstreamUnavailableError` | 503 | Neo4j/Postgres unreachable — "retry later" |
+| `ConflictError` | 409 | the write contradicts existing data — duplicate key, constraint |
+| `UpstreamUnavailableError` | 503 | Neo4j/Postgres unavailable — "retry later" |
 | `ConfigurationError` | 500 | a required source is not configured |
 | `AppError` | 500 | anything else that is genuinely our bug |
 
-503 vs 500 matters to consumers: the first means "try again", the second means
-"file a bug". `Sources` translates driver failures (`ServiceUnavailable`,
-`OperationalError`) into `UpstreamUnavailableError` so this distinction actually
-reaches the dashboard instead of collapsing into a generic 500.
+The status tells the consumer what to do: 503 "try again", 409 "change the
+input", 500 "file a bug". `Sources` translates driver failures so this
+distinction reaches the dashboard instead of collapsing into a generic 500:
+
+| Driver exception | Becomes |
+|---|---|
+| Neo4j `ServiceUnavailable`, `SessionExpired`, `TransientError` (incl. `DatabaseUnavailable`), `OSError` | 503 |
+| Neo4j `ConstraintError`, SQL `IntegrityError` | 409 |
+| SQL `ProgrammingError`, `DataError`, Neo4j `CypherSyntaxError`, … | 500 — a bug in the query |
+| any other SQL `DBAPIError`, `OSError` | 503 |
+
+SQLAlchemy wraps every asyncpg exception in its own `sqlalchemy.exc` class, so
+a handler for `asyncpg.InterfaceError` would never fire — catch the SQLAlchemy
+class. The commit runs **before** the response is sent (`scope="function"` in
+`api/deps.py`), so a conflict detected at commit time is a 409, not a 201.
 
 Every response carries an `X-Request-ID`, in the body *and* as a header, and the
 same id appears in every log line for that request — including the access-log

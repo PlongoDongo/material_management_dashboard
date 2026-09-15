@@ -1,5 +1,5 @@
 """
-Generates the visual architecture documentation from the RUNNING app.
+Generates the architecture documentation from the RUNNING app.
 
     python -m architecture --out ../docs/architecture.md
     python -m architecture --check          # CI: fails when stale
@@ -15,15 +15,15 @@ source code or the dependency chain. Neither is enough here:
     therefore looks identical for every route and says nothing about WHICH
     source a product actually uses.
 
-These 200 lines, by contrast, know what those tools would have to guess:
+This file, by contrast, knows what those tools would have to guess:
 version, owner, cache TTL, deprecation, contract fields -- it is all in the
 registry already. The one missing piece (which product uses which source) is
 read from the loader via the AST (products/introspect.py) instead of being
 maintained by hand.
 
-The consequence: the diagram cannot go stale. Adding a data product or
-switching a source changes the diagram automatically -- and `--check` makes sure
-nobody forgets to regenerate it.
+The consequence: the document cannot go stale. Adding a data product or
+switching a source changes it automatically -- and `--check` makes sure nobody
+forgets to regenerate it.
 """
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ def _write_declarations() -> dict[str, dict[str, list[str]]]:
 
     Nothing here is maintained by hand -- the roles come from `requires(...)`,
     the invalidated products from `invalidates(...)`, and the sources from the
-    handler body. Change the route and the diagram follows.
+    handler body. Change the route and the table follows.
     """
     from fastapi.routing import APIRoute
 
@@ -185,133 +185,8 @@ def collect(app: FastAPI) -> Architecture:
 
 
 # ---------------------------------------------------------------------------
-# Rendering (Mermaid)
+# Rendering
 # ---------------------------------------------------------------------------
-
-def _id(*parts: str) -> str:
-    """Mermaid node ids must not contain special characters."""
-    raw = "_".join(parts)
-    return "".join(c if c.isalnum() or c == "_" else "_" for c in raw)
-
-
-def diagram_dataflow(arch: Architecture) -> str:
-    """The main diagram: route -> data product -> data source."""
-    lines = [
-        "flowchart LR",
-        "  subgraph clients[\"Konsumenten\"]",
-        "    dash[\"Dash-Dashboards\"]",
-        "  end",
-        "",
-        "  subgraph routes[\"Routen /api/v1\"]",
-    ]
-    for route in arch.routes:
-        if route.is_alias:
-            continue          # the alias points at the same version -- duplicate edges
-        label = route.path.replace("/api/v1", "")
-        marker = " ⚠" if route.deprecated else ""
-        lines.append(f'    {_id("r", route.path)}["{"/".join(m for m in route.methods)} '
-                     f'{label}{marker}"]')
-    lines.append("  end")
-    lines.append("")
-
-    lines.append('  subgraph products["Data products"]')
-    for info in arch.products:
-        node = _id("p", info.product.name, str(info.product.major))
-        marker = " ⚠" if info.product.deprecated else ""
-        lines.append(f'    {node}["{info.product.name}<br/>v{info.product.major} '
-                     f'· {info.product.version}{marker}"]')
-    lines.append("  end")
-    lines.append("")
-
-    all_sources = sorted({s for info in arch.products for s in info.sources}
-                         | {s for route in arch.routes for s in route.writes_to})
-    lines.append('  subgraph sources["Data sources"]')
-    for source in all_sources:
-        shape = f'[("{source}")]'
-        lines.append(f'    {_id("src", source)}{shape}')
-    lines.append("  end")
-    lines.append("")
-
-    lines.append("  dash --> routes")
-    for route in arch.routes:
-        if route.is_alias or route.product is None:
-            continue
-        lines.append(f'  {_id("r", route.path)} --> '
-                     f'{_id("p", route.product.name, str(route.product.major))}')
-    for info in arch.products:
-        product_node = _id("p", info.product.name, str(info.product.major))
-        for source in info.sources:
-            lines.append(f"  {product_node} --> {_id('src', source)}")
-
-    # Write routes. Two different edges on purpose, because they mean different
-    # things: a solid one to the source it actually writes into, and a dashed
-    # one to every read product whose cached answer that write makes stale.
-    # The second is the relationship a developer cannot see from the code of
-    # either side alone -- and the one that causes "I saved it but the table
-    # still shows the old value".
-    for route in arch.routes:
-        route_node = _id("r", route.path)
-        for source in route.writes_to:
-            lines.append(f"  {route_node} ==> {_id('src', source)}")
-        for name in route.invalidates:
-            newest = registry_latest(name)
-            if newest is None:
-                continue
-            lines.append(f'  {route_node} -.->|invalidates| '
-                         f'{_id("p", name, str(newest.major))}')
-
-    lines += [
-        "",
-        "  classDef deprecated stroke-dasharray: 4 3;",
-        "  classDef write stroke-width:2px;",
-    ]
-    veraltet = [_id("p", i.product.name, str(i.product.major))
-                for i in arch.products if i.product.deprecated]
-    if veraltet:
-        lines.append(f"  class {','.join(veraltet)} deprecated;")
-    schreibend = [_id("r", r.path) for r in arch.routes if r.is_write]
-    if schreibend:
-        lines.append(f"  class {','.join(schreibend)} write;")
-    return "\n".join(lines)
-
-
-def registry_latest(name: str) -> DataProduct | None:
-    """The newest version of a product -- the one an invalidation edge points at.
-
-    A write invalidates the product by NAME, so it hits every version. The edge
-    is drawn to the newest one because that is the one dashboards are told to
-    use; drawing one edge per version would triple the lines and say nothing
-    more.
-    """
-    from products.registry import registry
-
-    return registry.latest(name)
-
-
-def diagram_versions(arch: Architecture) -> str:
-    """Version states per product family -- what is live, what is being retired."""
-    families: dict[str, list[ProductInfo]] = {}
-    for info in arch.products:
-        families.setdefault(info.product.name, []).append(info)
-
-    lines = ["flowchart LR"]
-    for name, infos in sorted(families.items()):
-        lines.append(f'  subgraph {_id("f", name)}["{name}"]')
-        lines.append("    direction LR")
-        previous = None
-        for info in sorted(infos, key=lambda i: i.product.major):
-            node = _id("v", name, str(info.product.major))
-            product = info.product
-            status = "retiring" if product.deprecated else "active"
-            sunset = f"<br/>Sunset {product.sunset}" if product.sunset else ""
-            lines.append(f'    {node}["v{product.major} · {product.version}'
-                         f'<br/>{status}{sunset}"]')
-            if previous:
-                lines.append(f"    {previous} -.->|superseded by| {node}")
-            previous = node
-        lines.append("  end")
-    return "\n".join(lines)
-
 
 def diagram_contracts(arch: Architecture) -> str:
     """The contracts themselves -- which fields each version returns."""
@@ -347,21 +222,6 @@ def render_markdown(arch: Architecture) -> str:
         "",
         (f"{len(arch.products)} data products · "
          f"{len([r for r in arch.routes if not r.is_alias])} routes"),
-        "",
-        "## Data flow",
-        "",
-        "From the route through the data product to the data source.",
-        "⚠ marks versions that are being retired.",
-        "",
-        "```mermaid",
-        diagram_dataflow(arch),
-        "```",
-        "",
-        "## Version states",
-        "",
-        "```mermaid",
-        diagram_versions(arch),
-        "```",
         "",
         "## Contracts",
         "",
@@ -403,8 +263,8 @@ def render_markdown(arch: Architecture) -> str:
         "",
         "## Route inventory",
         "",
-        "| Route | Methods | Product | Version | Owner | Cache | Status |",
-        "|---|---|---|---|---|---|---|",
+        "| Route | Methods | Product | Version | Owner | Cache | Status | Sunset |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for route in arch.routes:
         product = route.product
@@ -414,7 +274,8 @@ def render_markdown(arch: Architecture) -> str:
             f"| {product.version if product else '–'} "
             f"| {product.owner if product else '–'} "
             f"| {f'{product.cache_ttl}s' if product else '–'} "
-            f"| {'retiring' if route.deprecated else ('alias' if route.is_alias else 'active')} |"
+            f"| {'retiring' if route.deprecated else ('alias' if route.is_alias else 'active')} "
+            f"| {product.sunset if product and product.sunset else '–'} |"
         )
 
     parts += ["", "## Data products in detail", ""]
@@ -450,7 +311,12 @@ def build() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    # A literal, not `__doc__.splitlines()[1]`: `python -OO` and PYTHONOPTIMIZE=2
+    # strip docstrings, `__doc__` is then None, and the CLI died before doing
+    # anything.
+    parser = argparse.ArgumentParser(
+        description="Generate docs/architecture.md from the running app."
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
                         help=f"Output file (default: {DEFAULT_OUT}).")
     parser.add_argument("--check", action="store_true",

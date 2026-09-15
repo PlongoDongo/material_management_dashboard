@@ -9,9 +9,9 @@ Why derived instead of declared? A field like `sources=("neo4j",)` on the
 DataProduct would be easier to read but could drift from the actual code --
 somebody adds a Postgres query and forgets the field. This way it cannot.
 
-Two places use it:
-  * /readyz          checks only the sources that are actually needed
-  * architecture.py  draws the product -> source edges
+Two places use it (details in `sources_used_by`):
+  * GET /readyz      counts a missing source as a problem only if a product needs it
+  * architecture.py  lists the sources per data product and per write route
 """
 from __future__ import annotations
 
@@ -29,9 +29,18 @@ def sources_used_by(loader: Callable[..., Any]) -> list[str]:
             await sources.neo4j(CYPHER)       ->  ["neo4j"]
             await sources.postgres(SQL, ...)  ->  ["neo4j", "postgres"]
 
-    Works for data product loaders and for hand-written route handlers alike --
-    which is what lets architecture.py show where a WRITE route writes to,
-    without anyone maintaining that list.
+    Who reads the result, and why -- both would otherwise need a list kept in
+    step by hand:
+
+      * GET /readyz, via `required_sources()`. A source no product queries is
+        not a problem; one a product needs is. So a deployment that forgot
+        SQL_HOST shows up in /readyz right after the rollout, instead of on
+        the first dashboard click that happens to hit a Postgres product.
+      * docs/architecture.md. "Sources" per data product answers "Postgres is
+        down -- which dashboards are affected?", and "Writes to" shows where a
+        hand-written write route writes.
+
+    Works for data product loaders and for hand-written route handlers alike.
     """
     try:
         source_code = textwrap.dedent(inspect.getsource(loader))

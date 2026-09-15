@@ -31,7 +31,14 @@ log = logging.getLogger(__name__)
 
 
 class AppError(Exception):
-    """Base class of all domain errors. Deliberately knows nothing about FastAPI."""
+    """Base class of all domain errors. Deliberately knows nothing about FastAPI.
+
+    An unhandled exception becomes a 500 anyway -- this exists for every error
+    that should NOT be one. A subclass sets the status (503, 409, 403, ...) and
+    a stable `code` the dashboard can branch on; db/ and products/ raise it
+    without importing FastAPI, and `register_exception_handlers` below turns it
+    into the response.
+    """
 
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
     code: str = "internal_error"
@@ -81,6 +88,19 @@ class UpstreamUnavailableError(AppError):
     title = "Upstream data source unavailable"
 
 
+class ConflictError(AppError):
+    """The write contradicts data that already exists -- a duplicate key, a
+    violated constraint -> 409.
+
+    Unlike a 503, retrying will not help: the input has to change. db/sources.py
+    raises it for Neo4j's ConstraintError and SQL's IntegrityError.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    code = "conflict"
+    title = "Conflict with existing data"
+
+
 class ConfigurationError(AppError):
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     code = "configuration_error"
@@ -125,6 +145,20 @@ def _problem(
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    """Makes every error leave the API in the one shape `_problem` builds.
+
+    What FastAPI answers WITHOUT these handlers:
+
+        AppError                plain-text 500 -- the subclass's 503/409 is lost
+        HTTPException           {"detail": "..."} -- no code, no request id
+        RequestValidationError  422 {"detail": [...]} -- a list, where every
+                                other error has a string
+        Exception               plain-text 500 -- no JSON, no request id, which
+                                is the one case where the id is needed most
+
+    One registration per base class is enough: the lookup walks the exception's
+    class hierarchy, so a new AppError subclass needs nothing here.
+    """
     @app.exception_handler(AppError)
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
         if exc.status_code >= 500:

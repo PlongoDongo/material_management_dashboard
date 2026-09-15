@@ -71,9 +71,13 @@ from core.errors import ConfigurationError
 
 log = logging.getLogger(__name__)
 
-# The application version. A module-level CONSTANT, deliberately not a Settings
-# field: the version describes the code, and a value an environment variable
-# could override is one nobody can trust in a bug report.
+# The application version. Published in /docs and openapi.json (`info.version`,
+# via FastAPI(version=...) in app.py) and returned by GET /healthz -- the
+# quickest way to check which build a pod is actually running.
+#
+# A module-level CONSTANT, deliberately not a Settings field: the version
+# describes the code, and a value an environment variable could override is one
+# nobody can trust in a bug report.
 #
 # It lives here rather than in a package __init__ because a flat `src/` layout
 # has none, and a file holding a single line would be its own kind of clutter.

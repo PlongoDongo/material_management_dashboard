@@ -22,19 +22,20 @@ from __future__ import annotations
 
 import base64
 import logging
-from contextlib import AsyncExitStack
+from collections.abc import Iterator
+from contextlib import AsyncExitStack, contextmanager
 from typing import Any
 
 from neo4j import AsyncDriver
-from neo4j.exceptions import ServiceUnavailable, SessionExpired
+from neo4j.exceptions import ConstraintError, ServiceUnavailable, SessionExpired, TransientError
 from neo4j.graph import Entity, Path
 from neo4j.spatial import Point
 from neo4j.time import Date, DateTime, Duration, Time
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError, OperationalError
+from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, ProgrammingError
 
 from core.config import Settings
-from core.errors import ConfigurationError, UpstreamUnavailableError
+from core.errors import ConfigurationError, ConflictError, UpstreamUnavailableError
 from db.sql import SessionMaker
 
 log = logging.getLogger(__name__)
@@ -110,6 +111,45 @@ def _to_python_value(value: Any) -> Any:  # noqa: ANN401
     return value
 
 
+@contextmanager
+def _neo4j_errors() -> Iterator[None]:
+    """Translates a driver failure into what the dashboard should do about it.
+
+        503  unreachable or temporarily unavailable -- retrying may help
+        409  a constraint is violated -- retrying will not, the input must change
+        500  anything else (a Cypher syntax error, ...) -- a bug, left untouched
+    """
+    try:
+        yield
+    except ConstraintError as error:
+        raise ConflictError(f"Neo4j constraint violated: {error}") from error
+    except (ServiceUnavailable, SessionExpired, TransientError, OSError) as error:
+        # TransientError covers DatabaseUnavailable, deadlocks and lock timeouts.
+        raise UpstreamUnavailableError(f"Neo4j unavailable: {error}") from error
+
+
+@contextmanager
+def _postgres_errors() -> Iterator[None]:
+    """The same translation for Postgres (see `_neo4j_errors`).
+
+    SQLAlchemy wraps every asyncpg exception in its own `sqlalchemy.exc` class,
+    so those are what arrive here -- never asyncpg's. Order matters: the first
+    three are all subclasses of DBAPIError, and catching that alone reported a
+    duplicate key as "unreachable", telling the client to retry something that
+    can never succeed.
+    """
+    try:
+        yield
+    except IntegrityError as error:
+        # `.orig` is the database's own message; str(error) would append the
+        # SQL statement and its bound parameters.
+        raise ConflictError(f"Postgres constraint violated: {error.orig}") from error
+    except (ProgrammingError, DataError):
+        raise                            # our SQL is wrong -> stays a 500
+    except (DBAPIError, OSError) as error:
+        raise UpstreamUnavailableError(f"Postgres unavailable: {error}") from error
+
+
 class Sources:
     """Lives for exactly one request."""
 
@@ -157,7 +197,7 @@ class Sources:
         # parameter that happens to be called `query` or `parameters` would
         # otherwise land in the driver's own slot instead of in the query --
         # once as a TypeError, once as a silent mix-up.
-        try:
+        with _neo4j_errors():
             result = await self._sessions["neo4j"].run(cypher, parameters=parameters)
             # Deliberately not `result.data()`: that would silently flatten
             # nodes to properties without giving us a chance to translate the
@@ -166,10 +206,6 @@ class Sources:
                 {name: _to_python_value(value) for name, value in record.items()}
                 async for record in result
             ]
-        except (ServiceUnavailable, SessionExpired, OSError) as error:
-            # 503 rather than 500: for the dashboard that is the difference
-            # between "try again later" and "please report this as a bug".
-            raise UpstreamUnavailableError(f"Neo4j unreachable: {error}") from error
 
     # ANN401: same reasoning as `neo4j` above.
     async def postgres(self, sql: str, **parameters: Any) -> list[Row]:  # noqa: ANN401
@@ -189,11 +225,9 @@ class Sources:
                 self._sessionmaker()
             )
         self.used.add("postgres")
-        try:
+        with _postgres_errors():
             result = await self._sessions["sql"].execute(text(sql), parameters)
             return [dict(row) for row in result.mappings()]
-        except (OperationalError, DBAPIError, OSError) as error:
-            raise UpstreamUnavailableError(f"Postgres unreachable: {error}") from error
 
     async def commit(self) -> None:
         """Commits the SQL transaction. Called by the request scope.
@@ -205,11 +239,15 @@ class Sources:
         Silent again, plausible-looking again.
 
         Called ONLY on the success path (see api/deps.py): if the endpoint
-        raises, the AsyncExitStack rolls back instead.
+        raises, the AsyncExitStack rolls back instead. And called BEFORE the
+        response is sent, so a commit that fails -- a duplicate key is often
+        only detected here -- becomes the response rather than a log line
+        behind a 201.
         """
         session = self._sessions.get("sql")
         if session is not None:
-            await session.commit()
+            with _postgres_errors():
+                await session.commit()
 
     @property
     def label(self) -> str:

@@ -26,8 +26,9 @@ async def get_sources(request: Request, settings: SettingsDep) -> AsyncIterator[
     """One Sources object per request.
 
     Everything before `yield` runs before the endpoint, everything after it runs
-    after the response. The AsyncExitStack closes every connection opened during
-    the request -- even if the endpoint raised.
+    once the endpoint has returned -- but before the response is sent (see
+    `SourcesDep`). The AsyncExitStack closes every connection opened during the
+    request -- even if the endpoint raised.
     """
     async with AsyncExitStack() as stack:
         sources = Sources(
@@ -43,4 +44,7 @@ async def get_sources(request: Request, settings: SettingsDep) -> AsyncIterator[
         await sources.commit()
 
 
-SourcesDep = Annotated[Sources, Depends(get_sources)]
+# scope="function": the code after `yield` -- the commit -- runs BEFORE the
+# response is sent. With the default ("request") it runs afterwards, and a
+# commit that fails is only logged while the client already holds its 201.
+SourcesDep = Annotated[Sources, Depends(get_sources, scope="function")]

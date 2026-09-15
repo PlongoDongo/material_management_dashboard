@@ -43,7 +43,7 @@ WRITE_ROLE = "material-planner"
 # Which read products go stale when something here changes. Declared at the
 # route rather than called inside the handler: it cannot be forgotten (the
 # architecture test insists on it), it runs only when the write actually
-# succeeded, and architecture.py reads it to draw the edge in the diagram.
+# succeeded, and architecture.py reads it for the generated docs.
 INVALIDATES = ("material-overview",)
 
 router = APIRouter(prefix="/mappings", tags=["Mappings (write)"])
