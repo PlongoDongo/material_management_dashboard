@@ -60,6 +60,7 @@ from __future__ import annotations
 import logging
 import os
 from functools import lru_cache
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -71,20 +72,9 @@ from core.errors import ConfigurationError
 
 log = logging.getLogger(__name__)
 
-# The application version. Published in /docs and openapi.json (`info.version`,
-# via FastAPI(version=...) in app.py) and returned by GET /healthz -- the
-# quickest way to check which build a pod is actually running.
-#
-# A module-level CONSTANT, deliberately not a Settings field: the version
-# describes the code, and a value an environment variable could override is one
-# nobody can trust in a bug report.
-#
-# It lives here rather than in a package __init__ because a flat `src/` layout
-# has none, and a file holding a single line would be its own kind of clutter.
-# `core.config` is imported by almost everything anyway, so this costs no extra
-# import. Keep it in step with `version` in pyproject.toml -- or make that one
-# dynamic and read it from here, see the comment there.
-__version__ = "0.1.0"
+# Written down only in pyproject.toml and read from the installed package. The
+# installation stores the number, so after bumping it: `uv pip install -e ".[dev]"`.
+__version__ = version("data-api")
 
 # Where the platform mounts the credentials.
 DEFAULT_CREDENTIALS_DIR = "/etc/credentials"
@@ -354,5 +344,6 @@ if __name__ == "__main__":
     # plain string does not know it contains a password, while SecretStr
     # redacts itself. Host, port and user stay visible, which is what you came
     # for; the passwords show as '**********'.
+    print(f"version: {__version__}")  # noqa: T201
     print(f"credentials dir: {credentials_dir()}")  # noqa: T201
     print(get_settings())  # noqa: T201
