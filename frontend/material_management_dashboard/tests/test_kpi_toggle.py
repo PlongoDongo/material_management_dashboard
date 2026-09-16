@@ -142,7 +142,7 @@ def test_empty_click_keeps_sidebar_filters(cb: Callbacks) -> None:
 # --------------------------------------------------------------------------
 def test_filter_state_normalizes(cb: Callbacks) -> None:
     assert filter_state(None, None, None, None, None) == {
-        "status": [], "plant": [], "material_group": [], "search": "", "ohne_klass": False,
+        "status": [], "plant_name": [], "material_group": [], "search": "", "ohne_klass": False,
     }
     assert filter_state(["Aktiv"], [], [], "abc", ["on"])["ohne_klass"] is True
 

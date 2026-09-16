@@ -203,20 +203,26 @@ Damit liegen weder Zugangsdaten noch Cypher noch die Definition von
 | Datei | Aufgabe |
 |---|---|
 | `data/api_client.py` | Kennt HTTP. Kopie von `api/src/clients/dash_client.py` -- bei Änderungen dort nachziehen. |
-| `data/repository.py` | **Die Grenze.** Holt den Bestand seitenweise vollständig, bildet API-Felder auf Tabellenspalten ab, cached, fängt Ausfälle ab. Der Rest der App ruft nur `get_materials()` — und nach einem Schreibvorgang `invalidate()`. |
+| `data/repository.py` | **Die Grenze.** Holt den Bestand seitenweise vollständig, cached ihn im Prozess, fängt Ausfälle ab. Der Rest der App ruft nur `get_materials()` — und nach einem Schreibvorgang `invalidate()`. |
 | `data/schema.py` | Was die Tabelle zeigt (Spalten, Labels, Breiten). |
 
 Der Rest des Dashboards -- Filter, KPIs, Tabelle, Callbacks -- wurde beim
 Umstieg **nicht angefasst**, weil er ohnehin nur `get_materials()` kennt. Genau
 dafür war die Datenschicht von Anfang an isoliert.
 
-### Zwei Namensräume
+### Spalten heißen wie die API-Felder
 
-Die API spricht Englisch (`material_number`, `plant_name`, `stock_value`), die
-Tabelle benennt ihre Spalten deutsch wie die Oberfläche. Übersetzt wird an genau
-einer sichtbaren Stelle: `data/repository.py::_API_TO_UI`. Felder der API, die
-das Dashboard nicht braucht (`plant_id`, `price`), stehen dort nicht -- **ein
-neues Feld in der API kann das Dashboard deshalb nie brechen.**
+Die Spalten-IDs in `data/schema.py` sind die Feldnamen des Datenprodukts
+(`material_number`, `plant_name`, `stock_value`); nur die Beschriftungen sind
+deutsch, weil Nutzer sie lesen. `repository.py` übernimmt genau die Spalten aus
+`COLUMNS` und lässt den Rest liegen -- Felder wie `plant_id` oder `price`
+landen gar nicht erst in der Tabelle, **ein neues Feld in der API kann das
+Dashboard deshalb nie brechen.**
+
+Benennt die API ein Feld um, ist das eine Zeile in `data/schema.py` plus die
+Stellen, die die Spalte benutzen. Eine Übersetzungstabelle dafür gibt es
+bewusst nicht mehr: Bei acht Spalten kostet sie mehr Verständnis, als sie
+spart.
 
 ### Version fest verdrahtet
 

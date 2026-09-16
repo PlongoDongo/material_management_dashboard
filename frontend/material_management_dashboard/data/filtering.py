@@ -6,7 +6,7 @@ live in a dcc.Store):
 
     {
         "status":      ["Aktiv", "Gesperrt"],   # empty list = no constraint
-        "plant":        ["Werk Köln"],
+        "plant_name":        ["Werk Köln"],
         "material_group": [],
         "search":      "MAT-101",                # free-text search
         "ohne_klass":  False,                    # only materials without a group
@@ -22,7 +22,7 @@ import polars as pl
 # Default / empty state of the filter
 EMPTY_FILTERS: dict = {
     "status": [],
-    "plant": [],
+    "plant_name": [],
     "material_group": [],
     "search": "",
     "ohne_klass": False,
@@ -34,7 +34,7 @@ def normalize_filters(raw: dict | None) -> dict:
     raw = raw or {}
     return {
         "status": list(raw.get("status") or []),
-        "plant": list(raw.get("plant") or []),
+        "plant_name": list(raw.get("plant_name") or []),
         "material_group": list(raw.get("material_group") or []),
         "search": (raw.get("search") or "").strip(),
         "ohne_klass": bool(raw.get("ohne_klass", False)),
@@ -46,7 +46,7 @@ def normalize_filters(raw: dict | None) -> dict:
 # here data-driven: another such column = one more entry, not a new if branch.
 # The two special cases below (ohne_klass, search) deliberately do NOT follow
 # this pattern and are therefore spelled out.
-_MULTISELECT_COLUMNS = ("status", "plant", "material_group")
+_MULTISELECT_COLUMNS = ("status", "plant_name", "material_group")
 
 
 def _search_predicate(needle: str) -> pl.Expr:

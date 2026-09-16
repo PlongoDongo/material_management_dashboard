@@ -14,17 +14,18 @@ What the dashboard therefore no longer needs:
   * knowledge of the graph model (Cypher)
   * an opinion of its own about what "stock value" means
 
-TWO NAMESPACES, ONE BOUNDARY
-============================
-The API contract and the column names of the table are NOT the same thing. The
-API speaks English (`material_number`, `plant_name`, `stock_value`); the
-dashboard labels its columns in German, like the user interface. The
-translation happens at this boundary -- see `_API_TO_UI`.
+The table columns are named exactly like the fields of the data product (see
+data/schema.py), so there is nothing to map here: the frame keeps the columns
+listed in COLUMNS and drops the rest. A field the API renames is a column id to
+rename in data/schema.py, and `_rows_to_frame` logs a warning until that is done.
 
-That is deliberate and not a stopgap: the API belongs to another team and is
-free to rename its fields without breaking the dashboard. What changes then is
-one line here. All that matters is that the translation sits VISIBLY in one
-place instead of being scattered across the code.
+NO AUTHENTICATION YET
+=====================
+The API runs without OIDC at the moment, so no token is sent. Three things come
+back when it is switched on: the token on `_client.fetch(...)`, a cache key per
+role (otherwise one user is served what another fetched), and re-raising
+`NotAuthenticatedError` / `NotAuthorisedError` in `get_materials` instead of
+answering them from the cache.
 """
 from __future__ import annotations
 
@@ -34,14 +35,8 @@ import time
 
 import polars as pl
 
-from auth import access_token, user_roles
-from data.api_client import (
-    DataProductClient,
-    DataProductError,
-    NotAuthenticatedError,
-    NotAuthorisedError,
-)
-from data.schema import COLUMN_LABELS, COLUMNS  # noqa: F401  (re-export)
+from data.api_client import DataProductClient, DataProductError
+from data.schema import COLUMNS
 
 log = logging.getLogger(__name__)
 
@@ -55,52 +50,23 @@ VERSION = "v3"
 # ProductParams.limit -- the API does not accept more.
 PAGE_SIZE = 50_000
 
-# Upper bound across all pages together. The dashboard keeps the complete data
-# set in memory, so loading stops here instead of blowing up the worker. If the
-# bound is reached, that MUST be noticed (see load_materials): a table that
-# looks complete but holds incomplete data is worse than an error message, and
-# the KPI tiles do not count the missing rows either.
-MAX_ROWS = 500_000
+# Only a log threshold, not a limit: everything is loaded either way. About
+# 200,000 materials are expected, and the dashboard holds them all in memory,
+# so we want to hear about it long before that becomes a problem.
+EXPECTED_MAX_ROWS = 300_000
 
 # How long a once-fetched snapshot stays valid inside the dashboard process.
 # The server caches as well (cache_ttl of the data product); this cache here
 # saves the HTTP round trip on every callback.
 CACHE_TTL_SECONDS = int(os.getenv("DATA_CACHE_TTL", "60"))
 
-# API field -> dashboard column. Only what is listed here ends up in the table.
-# API fields the dashboard does not need (werk_id, preis) are deliberately
-# missing -- new API fields therefore never break the dashboard.
-_API_TO_UI: dict[str, str] = {
-    "material_number": "material_number",
-    "description": "description",
-    "material_group": "material_group",
-    "plant_name": "plant",
-    "status": "status",
-    "stock": "stock",
-    "stock_value": "stock_value",
-    "changed_on": "changed_on",
-}
-
 # ONE client per process. It keeps the connection pool open; an
 # `httpx.get(...)` per callback would reconnect every time.
 _client = DataProductClient()
 
-# A cache container instead of a bare module global, so the function below does
+# A cache container instead of a bare module global, so the functions below do
 # not have to rebind the name via `global`.
-#
-# IMPORTANT: the cache is PROCESS-WIDE, but the dashboard serves many users.
-# That is why it lives under a key derived from the user's roles. Without it, a
-# user without permission would be served the snapshot a permitted colleague
-# fetched moments earlier -- the API's 403 would never be raised, because no
-# request would run at all. Roles and not user name as the key: everyone with
-# the same rights sees the same data, so the hit rate stays high, and only what
-# has to be separated is separated.
-_CACHE: dict[tuple[str, ...], dict[str, object]] = {}
-
-
-def _cache_slot() -> dict[str, object]:
-    """The cache bucket for the current user's rights."""
-    return _CACHE.setdefault(tuple(sorted(user_roles())), {})
+_CACHE: dict[str, object] = {}
 
 
 def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
@@ -119,12 +85,11 @@ def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
         )
 
     frame = pl.DataFrame(rows)
-    # Take over only known fields and rename them to the UI names.
-    known = {api: ui for api, ui in _API_TO_UI.items() if api in frame.columns}
-    frame = frame.select(list(known)).rename(known)
 
     # Add missing columns: if the API does not (yet) deliver a field, the table
-    # should still render instead of blowing up.
+    # should still render instead of blowing up. Fields the dashboard does not
+    # show (plant_id, price) are dropped by the `select` below, so a new API
+    # field never breaks the table either.
     for column in COLUMNS:
         if column not in frame.columns:
             log.warning("Data product %s/%s delivers no field for column '%s'.",
@@ -136,16 +101,7 @@ def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
     )
 
 
-class RowCountChanged(DataProductError):
-    """The number of rows changed between two pages.
-
-    The pages then no longer fit together -- rows can show up twice or go
-    missing. Inherits from DataProductError so that the fallback path in
-    `get_materials` applies if the second attempt fails as well.
-    """
-
-
-def _all_pages(token: str | None) -> tuple[list[dict], dict]:
+def _all_pages() -> tuple[list[dict], dict]:
     """Fetches the data product page by page until the data set is complete.
 
     The dashboard ALWAYS needs every row: the KPI tiles compute over the entire
@@ -154,8 +110,8 @@ def _all_pages(token: str | None) -> tuple[list[dict], dict]:
     all three would be silently wrong -- entries would be missing without
     anything reporting it.
 
-    On the server side this is cheap: `material-overview` loads the whole data set
-    anyway and only cuts out the window afterwards, and for such products
+    On the server side this is cheap: `material-overview` loads the whole data
+    set anyway and only cuts out the window afterwards, and for such products
     limit/offset do NOT enter the cache key. Page two and all further pages
     therefore come from the same cache entry, without a new query -- as long as
     the data product's `cache_ttl` is greater than 0.
@@ -163,56 +119,50 @@ def _all_pages(token: str | None) -> tuple[list[dict], dict]:
     Loading stops as soon as a page is shorter than PAGE_SIZE: the API then has
     nothing left, whatever `total_count` claims. Without that condition an API
     that delivers less than it reports would loop here forever.
+
+    Two attempts: a changing `total_count` means somebody wrote while we were
+    loading, and pages from two different states do not fit together -- rows
+    can show up twice or go missing.
     """
-    rows: list[dict] = []
-    meta: dict = {}
-    total: int | None = None
+    for _ in range(2):
+        rows: list[dict] = []
+        total: int | None = None
 
-    while True:
-        page, meta = _client.fetch(PRODUCT, VERSION, token=token,
-                                   limit=PAGE_SIZE, offset=len(rows))
-        if total is not None and meta.get("total_count") != total:
-            raise RowCountChanged(
-                f"total_count changed from {total} to {meta.get('total_count')}"
-            )
-        total = meta.get("total_count")
-        rows.extend(page)
+        while True:
+            page, meta = _client.fetch(PRODUCT, VERSION, limit=PAGE_SIZE, offset=len(rows))
+            if total is not None and meta.get("total_count") != total:
+                log.warning("Row count changed from %s to %s while loading -- starting over.",
+                            total, meta.get("total_count"))
+                break
+            total = meta.get("total_count")
+            rows.extend(page)
 
-        if (len(page) < PAGE_SIZE or total is None
-                or len(rows) >= total or len(rows) >= MAX_ROWS):
-            return rows, meta
+            if len(page) < PAGE_SIZE or total is None or len(rows) >= total:
+                return rows, meta
+
+    raise DataProductError("The data set kept changing while loading -- gave up after two tries.")
 
 
 def load_materials() -> pl.DataFrame:
     """Fetches the data product from the API layer and shapes it for the table."""
-    token = access_token()
-    try:
-        rows, meta = _all_pages(token)
-    except RowCountChanged as shifted:
-        # Someone wrote while we were loading. Exactly one new attempt; if that
-        # fails too, the fallback path in get_materials applies.
-        log.warning("Data set changed while loading (%s) -- trying again.", shifted)
-        rows, meta = _all_pages(token)
+    rows, meta = _all_pages()
+    total = meta.get("total_count") or len(rows)
 
     log.info("Snapshot %s | source %s | %s of %s rows | cache %s",
              meta.get("generated_at"), meta.get("source"),
-             len(rows), meta.get("total_count"), meta.get("cache"))
+             len(rows), total, meta.get("cache"))
 
-    total = meta.get("total_count") or len(rows)
-    if total > len(rows):
-        # Not just logging: nobody sees logged errors in production, and the
-        # number in the management meeting would then be wrong. The UI shows
-        # the hint next to the row counter (see tabs/data_overview.py).
-        log.error("Data product truncated: %s of %s rows loaded (upper bound %s). "
-                  "KPI tiles and counters are incomplete.",
-                  len(rows), total, MAX_ROWS)
-        _cache_slot()["truncated"] = (len(rows), total)
-    else:
-        _cache_slot().pop("truncated", None)
-
+    if len(rows) < total:
+        # The API announced more rows than it handed out. The table then looks
+        # complete but is not, and the KPI tiles count too little.
+        log.warning("Data product incomplete: %s of %s rows loaded.", len(rows), total)
+    if total > EXPECTED_MAX_ROWS:
+        log.warning("Data product has %s rows -- more than the %s this dashboard is sized for.",
+                    total, EXPECTED_MAX_ROWS)
     if meta.get("deprecated"):
         log.warning("Data product %s/%s is deprecated (sunset %s) -- please migrate.",
                     PRODUCT, VERSION, meta.get("sunset"))
+
     return _rows_to_frame(rows)
 
 
@@ -224,27 +174,21 @@ def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
     showing briefly outdated numbers is better than one that is empty. If there
     is none, the error is passed on instead of silently showing an empty table.
     """
-    slot = _cache_slot()
-    fresh_until = float(slot.get("expires_at", 0))  # type: ignore[arg-type]
-    if not force_reload and slot.get("frame") is not None and time.monotonic() < fresh_until:
-        return slot["frame"]  # type: ignore[return-value]
+    fresh_until = float(_CACHE.get("expires_at", 0))  # type: ignore[arg-type]
+    if not force_reload and _CACHE.get("frame") is not None and time.monotonic() < fresh_until:
+        return _CACHE["frame"]  # type: ignore[return-value]
 
     try:
         frame = load_materials()
-    except (NotAuthenticatedError, NotAuthorisedError):
-        # Do NOT answer permission errors from the cache: the old snapshot
-        # comes from a session that was allowed to see the data. Passing it on
-        # would be exactly the gap the role key above prevents.
-        raise
     except DataProductError as exc:
-        if slot.get("frame") is not None:
+        if _CACHE.get("frame") is not None:
             log.warning("API unreachable (%s) -- serving the last snapshot.", exc)
-            return slot["frame"]  # type: ignore[return-value]
+            return _CACHE["frame"]  # type: ignore[return-value]
         log.error("API unreachable and no snapshot in the cache: %s", exc)
         raise
 
-    slot["frame"] = frame
-    slot["expires_at"] = time.monotonic() + CACHE_TTL_SECONDS
+    _CACHE["frame"] = frame
+    _CACHE["expires_at"] = time.monotonic() + CACHE_TTL_SECONDS
     return frame
 
 
@@ -260,23 +204,11 @@ def invalidate() -> None:
     creates a mapping, switches to the overview and does not see their own
     change -- exactly the impression that saving has failed.
 
-    ALL role buckets are cleared, not just one's own: the change affects
-    everyone who sees the data.
-
     Limitation: if Dash runs with several worker processes, this only clears
     the cache of the process that handled the click. The others show the old
     snapshot until the TTL expires.
     """
     _CACHE.clear()
-
-
-def truncation() -> tuple[int, int] | None:
-    """(loaded, total) if the last fetch was truncated -- otherwise None.
-
-    The UI reads this to mark the row counter. A table that looks complete and
-    is not is the most expensive class of error.
-    """
-    return _cache_slot().get("truncated")  # type: ignore[return-value]
 
 
 def distinct_values(column: str) -> list[str]:

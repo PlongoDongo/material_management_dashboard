@@ -43,7 +43,7 @@ from dash import (
 
 from config import IDS
 from data.filtering import apply_filters
-from data.repository import get_materials, truncation
+from data.repository import get_materials
 from kpi.kpi_rules import kpi_filter_map
 
 # Value of a filter control as a callback returns it: the new selection -- or
@@ -78,7 +78,7 @@ def filter_state(
     """
     return {
         "status": status or [],
-        "plant": plant or [],
+        "plant_name": plant or [],
         "material_group": material_group or [],
         "search": search or "",
         "ohne_klass": bool(ohne_klass),  # ["on"] -> True, [] -> False
@@ -225,14 +225,6 @@ def register_filter_callbacks(app: Dash) -> None:
         df_all = get_materials()
         df = apply_filters(df_all, filters)
         counter = f"{df.height} / {df_all.height} Datensätze"
-
-        # Does the API hold more rows than we have loaded? Then the table looks
-        # complete but is not -- and the KPI tiles do not count the missing rows
-        # either. That has to be visible.
-        truncated = truncation()
-        if truncated:
-            loaded, total = truncated
-            counter += f"  ⚠ gekürzt: {loaded:,} von {total:,} geladen".replace(",", ".")
         return df.to_dicts(), counter
 
     # ---------------------------------------------------------------
