@@ -35,7 +35,7 @@ from sqlalchemy.exc import (
 
 from app import create_app
 from core.config import Settings
-from core.errors import ConflictError, Problem, UpstreamUnavailableError
+from core.errors import AppError, ConflictError, Problem, UpstreamUnavailableError
 from db.sources import Sources
 
 # --- Test doubles: a driver and a session that fail on demand ---------------
@@ -211,13 +211,14 @@ def test_the_docs_describe_every_error_a_route_can_answer(settings: Settings) ->
     # so `application/json` is listed next to it. Known and accepted -- see the
     # note in api/README.md.
     content = product["responses"]["422"]["content"]
-    assert content["application/json"]["schema"]["$ref"].endswith("ValidationProblem")
+    assert content["application/json"]["schema"]["$ref"].endswith("Problem")
     assert "HTTPValidationError" not in json.dumps(schema), "FastAPI's default 422 is still there"
 
 
 def test_the_documented_model_matches_a_real_error_body(settings: Settings) -> None:
-    """Guards the docs against drift: `Problem` is hand-written, `_problem`
-    builds the body, and nothing else keeps the two in step."""
+    """`_problem` builds the body FROM `Problem`, so /docs cannot describe
+    something else. This pins the part the model alone does not say: which
+    fields actually appear."""
     app = create_app(settings)
 
     @app.get("/boom")
@@ -225,6 +226,37 @@ def test_the_documented_model_matches_a_real_error_body(settings: Settings) -> N
         raise UpstreamUnavailableError("Neo4j unavailable: no route to host")
 
     with TestClient(app, raise_server_exceptions=False) as client:
-        body = client.get("/boom").json()
+        failed = client.get("/boom").json()
+        invalid = client.get("/api/v1/data-products/material-overview/v3",
+                             params={"limit": "many"}).json()
 
-    assert set(body) == set(Problem.model_fields)
+    # `errors` is the one optional member -- only a 422 carries it.
+    assert set(failed) == set(Problem.model_fields) - {"errors"}
+    assert set(invalid) == set(Problem.model_fields)
+    assert invalid["errors"][0]["loc"] == ["query", "limit"]
+
+
+def test_every_error_class_reaches_the_documentation(settings: Settings) -> None:
+    """The one place a new error class can be forgotten.
+
+    Declaring an error is a class; documenting it is passing that class to
+    `documented_errors(...)` on the routes that answer it. This fails if a
+    status code can reach a client that /docs never mentions.
+    """
+    schema = create_app(settings).openapi()
+    documented = {
+        code
+        for path in schema["paths"].values()
+        for operation in path.values()
+        for code in operation.get("responses", {})
+    }
+
+    def subclasses(cls: type) -> set[type]:
+        found = set(cls.__subclasses__())
+        return found | {c for sub in found for c in subclasses(sub)}
+
+    for error in {AppError, *subclasses(AppError)}:
+        assert str(error.status_code) in documented, (
+            f"{error.__name__} answers {error.status_code}, which no route documents -- "
+            f"pass it to responses=documented_errors(...)"
+        )

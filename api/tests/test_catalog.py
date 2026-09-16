@@ -32,4 +32,6 @@ def test_an_unknown_product_returns_problem_details(client: TestClient) -> None:
     response = client.get("/api/v1/catalog/does-not-exist")
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.json()["code"] == "http_error"
+    # `not_found`, not the generic `http_error`: the catalog raises NotFoundError
+    # itself, so a dashboard can tell "no such product" from any other 404.
+    assert response.json()["code"] == "not_found"

@@ -912,6 +912,8 @@ Raise the right one from `core/errors.py`:
 |---|---|---|
 | `UnauthorizedError` | 401 | no token, or not a valid one |
 | `ForbiddenError` | 403 | caller is known but not allowed to see this product |
+| `NotFoundError` | 404 | no such thing — or none this caller may see |
+| `InvalidRequestError` | 422 | the parameters do not fit the contract (FastAPI raises this one itself) |
 | `ConflictError` | 409 | the write contradicts existing data — duplicate key, constraint |
 | `UpstreamUnavailableError` | 503 | Neo4j/Postgres unavailable — "retry later" |
 | `ConfigurationError` | 500 | a required source is not configured |
@@ -941,15 +943,21 @@ line and the 500 response, which are the two places you look first.
 
 FastAPI documents only what it can see: without help it shows its own 422
 (`detail` as a **list**, which this API never sends) and no 401/403/409/500/503
-at all. `problem_responses(...)` in `core/errors.py` declares them, once for
+at all. `documented_errors(...)` in `core/errors.py` declares them, once for
 every route in `create_app`:
 
 ```python
-app = FastAPI(..., responses=problem_responses(401, 403, 422, 500, 503))
+app = FastAPI(..., responses=documented_errors(
+    UnauthorizedError, ForbiddenError, InvalidRequestError, AppError, UpstreamUnavailableError))
 ```
 
-A route that can answer something else adds it to its own `responses`, e.g.
-`responses=problem_responses(409)` on `POST /mappings`.
+A route that can answer something else names that class in its own `responses`,
+e.g. `responses=documented_errors(ConflictError)` on `POST /mappings`.
+
+You pass the **classes**, not status codes: the status, the description Swagger
+shows and the example all come from the class itself. So adding an error type is
+the class plus its name on the routes that answer it — there is no second table
+of descriptions that can fall out of step.
 
 **One quirk to know:** `/docs` lists each error under `application/json` as well.
 FastAPI puts a declared model under the route's default media type, and there is
@@ -957,8 +965,10 @@ no per-response way to change that — only a custom `openapi()` hook, which is
 not worth the maintenance. The API always sends `application/problem+json`; the
 schema shown is the right one.
 
-`tests/test_errors.py` compares the documented `Problem` model against a real
-error body, so the two cannot drift.
+Two tests keep this honest: one compares the documented `Problem` model against
+a real error body, the other fails if any `AppError` subclass answers a status
+that no route documents — the case where somebody adds an error class and stops
+there.
 
 ---
 

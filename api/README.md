@@ -116,7 +116,7 @@ every failure, with a `code` to branch on and the request id:
 ```
 
 `/docs` lists them per route (401, 403, 409, 422, 500, 503), declared through
-`problem_responses(...)` in `core/errors.py`.
+`documented_errors(...)` in `core/errors.py`, which reads them off the error classes.
 
 > **Known quirk in `/docs`:** each error is additionally listed under
 > `application/json`. FastAPI puts a declared response model under the route's
