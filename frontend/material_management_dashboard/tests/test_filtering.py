@@ -12,7 +12,7 @@ def df() -> pl.DataFrame:
             "material_number": ["MAT-1", "MAT-2", "MAT-3", "MAT-4"],
             "description": ["Dichtring", "Schraube", "Kabel", "Ölfilter"],
             "material_group": ["Rohstoffe", "", "Verpackung", None],
-            "plant": ["Werk Köln", "Werk Berlin", "Werk Köln", "Werk Hamburg"],
+            "plant_name": ["Werk Köln", "Werk Berlin", "Werk Köln", "Werk Hamburg"],
             "status": ["Aktiv", "Gesperrt", "Aktiv", "Obsolet"],
             "einheit": ["M", "ST", "M", "L"],
             "stock": [100, 200, 300, 400],
@@ -38,7 +38,7 @@ def test_multi_status_filter(df: pl.DataFrame) -> None:
 
 
 def test_plant_filter(df: pl.DataFrame) -> None:
-    assert apply_filters(df, {"plant": ["Werk Köln"]}).height == 2
+    assert apply_filters(df, {"plant_name": ["Werk Köln"]}).height == 2
 
 
 def test_material_group_filter(df: pl.DataFrame) -> None:
@@ -58,10 +58,10 @@ def test_search_case_insensitive(df: pl.DataFrame) -> None:
 
 
 def test_combined_filters(df: pl.DataFrame) -> None:
-    out = apply_filters(df, {"status": ["Aktiv"], "plant": ["Werk Köln"]})
+    out = apply_filters(df, {"status": ["Aktiv"], "plant_name": ["Werk Köln"]})
     assert out.height == 2
 
 
 def test_normalize_fills_defaults() -> None:
     n = normalize_filters({"status": ["Aktiv"]})
-    assert n["plant"] == [] and n["search"] == "" and n["ohne_klass"] is False
+    assert n["plant_name"] == [] and n["search"] == "" and n["ohne_klass"] is False

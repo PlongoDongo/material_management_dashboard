@@ -75,7 +75,7 @@ def filter_sidebar() -> html.Div:
                                                    _STATUS_OPTIONS)),
                             _field("Werk",
                                    _multi_dropdown(IDS.F_PLANT, "Alle Werke",
-                                                   distinct_values("plant"))),
+                                                   distinct_values("plant_name"))),
                             _field("Warengruppe",
                                    _multi_dropdown(IDS.F_MATERIAL_GROUP, "Alle Warengruppen",
                                                    distinct_values("material_group"))),

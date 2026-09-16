@@ -9,9 +9,10 @@ Now `MATERIAL_COLUMNS` describes every column ONCE (id, label, width, type,
 pinning); everything else is derived from it. Changing a column = changing one
 line.
 
-Deliberately free of Dash and HTTP: the schema describes what the TABLE shows --
-not what the API delivers. The two are mapped onto each other in
-`data/repository.py::_API_TO_UI`.
+Deliberately free of Dash and HTTP. The column ids are the field names of the
+data product, so `data/repository.py` needs no mapping: it keeps the columns
+listed here and drops the rest. The labels are German because they are what the
+user reads.
 
 History: until the move to the API layer there was an `einheit` column here.
 The `material-overview` data product no longer delivers it as of v2, offering
@@ -42,7 +43,7 @@ MATERIAL_COLUMNS: list[Column] = [
     Column("material_number", "Material-Nr.", 130, fixed=True),
     Column("description", "Bezeichnung", 220, fixed=True),
     Column("material_group", "Warengruppe", 160),
-    Column("plant",        "Werk",        140),
+    Column("plant_name",   "Werk",        140),
     Column("status",      "Status",      150),
     Column("stock",     "Bestand",     110, numeric=True),
     Column("stock_value", "Bestandswert", 130, numeric=True),

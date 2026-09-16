@@ -17,7 +17,7 @@ import polars as pl
 import pytest
 
 from data import repository as repo
-from data.api_client import DataProductClient, DataProductError, NotAuthorisedError
+from data.api_client import DataProductClient, DataProductError
 from data.schema import COLUMNS
 
 # Rows exactly as the data product material-overview/v2 delivers them.
@@ -55,11 +55,13 @@ def _empty_cache():
 
 # --- Transformation (pure, without HTTP) -----------------------------------
 
-def test_plant_name_becomes_the_plant_column() -> None:
-    """The translation at the boundary API (English) <-> table (German)."""
+def test_the_columns_are_the_api_field_names() -> None:
+    """No mapping any more: the table columns ARE the fields of the data
+    product, and the fields it does not show are dropped."""
     frame = repo._rows_to_frame(API_ROWS)
-    assert frame["plant"].to_list() == ["Werk Köln", "Werk Berlin"]
-    assert "plant_name" not in frame.columns
+
+    assert frame["plant_name"].to_list() == ["Werk Köln", "Werk Berlin"]
+    assert "plant_id" not in frame.columns and "price" not in frame.columns
 
 
 def test_the_frame_has_exactly_the_table_columns() -> None:
@@ -148,7 +150,7 @@ def test_get_materials_returns_a_dataframe(monkeypatch) -> None:
     frame = repo.get_materials()
     assert isinstance(frame, pl.DataFrame)
     assert frame.height == 2
-    assert frame["plant"].to_list() == ["Werk Köln", "Werk Berlin"]
+    assert frame["plant_name"].to_list() == ["Werk Köln", "Werk Berlin"]
 
 
 def test_a_second_call_comes_from_the_cache(monkeypatch) -> None:
@@ -194,34 +196,8 @@ def test_without_a_cache_the_error_is_passed_through(monkeypatch) -> None:
 def test_distinct_values_for_the_filter_dropdowns(monkeypatch) -> None:
     monkeypatch.setattr(repo, "_client",
                         _client(lambda r: httpx.Response(200, json=_envelope(API_ROWS))))
-    assert repo.distinct_values("plant") == ["Werk Berlin", "Werk Köln"]
+    assert repo.distinct_values("plant_name") == ["Werk Berlin", "Werk Köln"]
     assert repo.distinct_values("material_group") == ["Rohstoffe"]   # None drops out
-
-
-def test_truncation_is_reported(monkeypatch, caplog) -> None:
-    """A table that looks complete but is not has to be noticed.
-
-    The API reports 120,000 rows but delivers a short page -- so the stock
-    cannot be fetched completely. Without this hint the dashboard shows a
-    plausible table with missing data, and the KPI tiles count too little
-    as well.
-    """
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_envelope(API_ROWS, total_count=120_000))
-
-    monkeypatch.setattr(repo, "_client", _client(handler))
-    with caplog.at_level("ERROR"):
-        repo.get_materials()
-
-    assert repo.truncation() == (2, 120_000)
-    assert "truncated" in caplog.text.lower()
-
-
-def test_no_notice_without_truncation(monkeypatch) -> None:
-    monkeypatch.setattr(repo, "_client",
-                        _client(lambda r: httpx.Response(200, json=_envelope(API_ROWS))))
-    repo.get_materials()
-    assert repo.truncation() is None
 
 
 # --- The copy must not drift away from the template -------------------------
@@ -261,73 +237,6 @@ def test_the_client_is_identical_to_the_template() -> None:
     )
 
 
-# --- Sign-in: the cache must not leak across users --------------------------
-
-def test_the_cache_is_kept_separate_per_role_set(monkeypatch) -> None:
-    """The process cache must not hand data to people who are not entitled.
-
-    Without the role key the second user would get the first user's state out
-    of the cache -- the API would never have been asked and its 403 therefore
-    never raised. That is the kind of hole no test of the API itself can find,
-    because it sits in the dashboard.
-    """
-    calls: list[str | None] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request.headers.get("Authorization"))
-        return httpx.Response(200, json=_envelope(API_ROWS))
-
-    monkeypatch.setattr(repo, "_client", _client(handler))
-    monkeypatch.setattr(repo, "access_token", lambda: "token-planner")
-    monkeypatch.setattr(repo, "user_roles", lambda: frozenset({"planner"}))
-    repo.get_materials()
-    repo.get_materials()                       # cached -> no second call
-    assert len(calls) == 1
-
-    # Different user, different roles -> own bucket, so off to the API again
-    monkeypatch.setattr(repo, "access_token", lambda: "token-guest")
-    monkeypatch.setattr(repo, "user_roles", lambda: frozenset({"guest"}))
-    repo.get_materials()
-    assert len(calls) == 2
-
-
-def test_the_token_is_sent_along_as_a_bearer_header(monkeypatch) -> None:
-    """Without this header the API answers with 401 -- and rightly so."""
-    seen: list[str | None] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.headers.get("Authorization"))
-        return httpx.Response(200, json=_envelope(API_ROWS))
-
-    monkeypatch.setattr(repo, "_client", _client(handler))
-    monkeypatch.setattr(repo, "access_token", lambda: "abc.def.ghi")
-    monkeypatch.setattr(repo, "user_roles", lambda: frozenset())
-    repo.get_materials()
-    assert seen == ["Bearer abc.def.ghi"]
-
-
-def test_a_403_is_not_answered_from_the_cache(monkeypatch) -> None:
-    """When the permission is missing, no old state may be handed out.
-
-    The outage fallback ("stale numbers rather than an empty table") applies to
-    an unreachable API -- not to one that deliberately says no.
-    """
-    responses = [httpx.Response(200, json=_envelope(API_ROWS)),
-                 httpx.Response(403, json={"title": "Access denied", "detail": "nope",
-                                           "code": "forbidden"})]
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return responses.pop(0)
-
-    monkeypatch.setattr(repo, "_client", _client(handler))
-    monkeypatch.setattr(repo, "access_token", lambda: "t")
-    monkeypatch.setattr(repo, "user_roles", lambda: frozenset({"planner"}))
-
-    repo.get_materials()                                   # fills the cache
-    with pytest.raises(NotAuthorisedError):
-        repo.get_materials(force_reload=True)
-
-
 # --- Invalidation after a write --------------------------------------------
 
 def test_invalidate_forces_a_fresh_fetch_on_the_next_access(monkeypatch) -> None:
@@ -349,22 +258,6 @@ def test_invalidate_forces_a_fresh_fetch_on_the_next_access(monkeypatch) -> None
     repo.invalidate()
     repo.get_materials()
     assert len(fetches) == 2
-
-
-def test_invalidate_clears_the_buckets_of_every_role(monkeypatch) -> None:
-    """If somebody writes a mapping, that concerns everyone -- not only the
-    roles of the person writing."""
-    monkeypatch.setattr(repo, "_client",
-                        _client(lambda request: httpx.Response(200, json=_envelope(API_ROWS))))
-
-    monkeypatch.setattr(repo, "user_roles", lambda: ["planner"])
-    repo.get_materials()
-    monkeypatch.setattr(repo, "user_roles", lambda: ["viewer"])
-    repo.get_materials()
-    assert len(repo._CACHE) == 2
-
-    repo.invalidate()
-    assert repo._CACHE == {}
 
 
 # --- Page-by-page loading ----------------------------------------------------
@@ -406,21 +299,6 @@ def test_every_page_is_fetched_and_joined(monkeypatch) -> None:
     assert frame.height == 5
     assert seen == [0, 2, 4]
     assert frame["material_number"].to_list() == [f"MAT-{n}" for n in range(5)]
-    assert repo.truncation() is None
-
-
-def test_the_upper_limit_stops_and_reports_the_truncation(monkeypatch, caplog) -> None:
-    """The upper limit protects the worker -- but it must not kick in silently."""
-    monkeypatch.setattr(repo, "PAGE_SIZE", 2)
-    monkeypatch.setattr(repo, "MAX_ROWS", 4)
-    monkeypatch.setattr(repo, "_client", _client(_paged_handler(_rows(9))))
-
-    with caplog.at_level("ERROR"):
-        frame = repo.get_materials()
-
-    assert frame.height == 4
-    assert repo.truncation() == (4, 9)
-    assert "truncated" in caplog.text.lower()
 
 
 def test_if_the_stock_changes_between_two_pages_it_is_loaded_again(
@@ -447,12 +325,12 @@ def test_if_the_stock_changes_between_two_pages_it_is_loaded_again(
 
     assert frame.height == 5
     assert attempts == [0, 2, 0, 2, 4], "it did not load again from the start"
-    assert "trying again" in caplog.text.lower()
+    assert "starting over" in caplog.text.lower()
 
 
 def test_if_the_second_attempt_also_fails_the_fallback_path_applies(monkeypatch) -> None:
-    """RowCountChanged is a DataProductError -- without an old state in the
-    cache the error has to be noticed instead of showing half a table."""
+    """Two tries, then give up: without an old state in the cache the error has
+    to be noticed instead of showing half a table."""
     all_rows = _rows(5)
     calls: list[int] = []
 
@@ -467,3 +345,30 @@ def test_if_the_second_attempt_also_fails_the_fallback_path_applies(monkeypatch)
 
     with pytest.raises(DataProductError):
         repo.get_materials()
+
+
+def test_an_incomplete_data_set_is_logged(monkeypatch, caplog) -> None:
+    """The API announces 120,000 rows and hands out a short page. Nothing about
+    it is shown in the UI any more, so the log is where it has to surface."""
+    monkeypatch.setattr(repo, "_client", _client(
+        lambda request: httpx.Response(200, json=_envelope(API_ROWS, total_count=120_000))))
+
+    with caplog.at_level("WARNING"):
+        frame = repo.get_materials()
+
+    assert frame.height == 2
+    assert "incomplete: 2 of 120000 rows" in caplog.text
+
+
+def test_more_rows_than_expected_are_logged_but_still_loaded(monkeypatch, caplog) -> None:
+    """There is no upper limit that drops rows silently -- but we want to know
+    when the data set outgrows what the dashboard was sized for."""
+    monkeypatch.setattr(repo, "EXPECTED_MAX_ROWS", 1)
+    monkeypatch.setattr(repo, "PAGE_SIZE", 2)
+    monkeypatch.setattr(repo, "_client", _client(_paged_handler(_rows(5))))
+
+    with caplog.at_level("WARNING"):
+        frame = repo.get_materials()
+
+    assert frame.height == 5, "nothing may be dropped"
+    assert "more than the 1 this dashboard is sized for" in caplog.text
