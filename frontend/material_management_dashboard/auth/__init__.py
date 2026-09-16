@@ -1,4 +1,4 @@
-"""Anmeldung des Dashboards gegen Keycloak. Siehe auth/keycloak.py."""
+"""Login of the dashboard against Keycloak. See auth/keycloak.py."""
 from auth.keycloak import (
     access_token,
     auth_enabled,

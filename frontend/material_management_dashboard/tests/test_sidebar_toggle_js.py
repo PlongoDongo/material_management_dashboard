@@ -1,8 +1,8 @@
-"""Tests für das clientseitige Sidebar-Toggle (assets/sidebar_toggle.js).
+"""Tests of the clientside sidebar toggle (assets/sidebar_toggle.js).
 
-Wie bei den anderen clientseitigen Funktionen wird die Logik über node mit
-einem minimalen window-Stub ausgeführt. Geprüft wird das Umschalt-Verhalten:
-Icon = umschalten, Overlay/Schließen = immer schließen.
+As with the other clientside functions, the logic is executed through node with
+a minimal window stub. What is checked is the toggle behaviour:
+icon = toggle, overlay/close = always close.
 """
 import json
 import shutil
@@ -14,7 +14,7 @@ import pytest
 ASSET = Path(__file__).resolve().parents[1] / "assets" / "sidebar_toggle.js"
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None, reason="node nicht installiert"
+    shutil.which("node") is None, reason="node not installed"
 )
 
 _HARNESS = """
@@ -27,7 +27,7 @@ console.log(JSON.stringify(
 
 
 def _call(fn: str, trigger: str, cls: str) -> list[str]:
-    # args: (btn, overlay, close, currentClassName) -- nur cls ist relevant
+    # args: (btn, overlay, close, currentClassName) -- only cls is relevant
     script = _HARNESS % {
         "source": ASSET.read_text(encoding="utf-8"),
         "trigger": json.dumps(trigger),
@@ -39,7 +39,7 @@ def _call(fn: str, trigger: str, cls: str) -> list[str]:
     return json.loads(proc.stdout)
 
 
-# -- Nav-Sidebar ------------------------------------------------------------
+# -- Nav sidebar ------------------------------------------------------------
 def test_menu_click_opens_when_closed() -> None:
     assert _call("toggleNav", "menu-btn.n_clicks", "sidebar sidebar-nav") == [
         "sidebar sidebar-nav open", "sidebar-overlay open"]
@@ -60,7 +60,7 @@ def test_close_button_always_closes() -> None:
         "sidebar sidebar-nav", "sidebar-overlay"]
 
 
-# -- Filter-Sidebar ---------------------------------------------------------
+# -- Filter sidebar ---------------------------------------------------------
 def test_filter_icon_opens_when_closed() -> None:
     assert _call("toggleFilter", "filter-btn.n_clicks", "sidebar sidebar-filter") == [
         "sidebar sidebar-filter open", "sidebar-overlay open"]

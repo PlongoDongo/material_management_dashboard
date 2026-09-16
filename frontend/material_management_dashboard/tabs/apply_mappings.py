@@ -1,5 +1,5 @@
 """
-Tab 3 -- "Apply data mappings": provisorischer Platzhalter.
+Tab 3 -- "Apply data mappings": provisional placeholder.
 """
 from __future__ import annotations
 

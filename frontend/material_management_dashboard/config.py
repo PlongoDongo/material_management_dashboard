@@ -1,25 +1,25 @@
 """
-Zentrale Konfiguration: Farben, Element-IDs und KPI-Definitionen.
+Central configuration: colors, element IDs and KPI definitions.
 
-Alles, was an mehreren Stellen gebraucht wird (Farben, IDs, KPI-Regeln),
-steht hier an EINER Stelle. So vermeidest du ID-Tippfehler zwischen Layout
-und Callbacks und kannst das Look-and-Feel zentral anpassen.
+Everything that is needed in more than one place (colors, IDs, KPI rules)
+lives here in ONE spot. That way you avoid ID typos between layout and
+callbacks, and you can adjust the look and feel centrally.
 """
 
 # --------------------------------------------------------------------------
-# Unternehmensfarben (aus dem Mockup extrahiert)
+# Corporate colors (extracted from the mockup)
 # --------------------------------------------------------------------------
 COLORS = {
-    "primary": "#1565c0",        # Unternehmensblau (Header, Footer)
-    "primary_dark": "#0d47a1",   # dunkleres Blau (Hover, aktive Tabs)
-    "bg": "#eef1f4",             # Seitenhintergrund
-    "surface": "#ffffff",        # Karten-/Tabellenhintergrund
+    "primary": "#1565c0",        # corporate blue (header, footer)
+    "primary_dark": "#0d47a1",   # darker blue (hover, active tabs)
+    "bg": "#eef1f4",             # page background
+    "surface": "#ffffff",        # card/table background
     "border": "#dbe2ea",
     "text": "#1b2733",
     "text_muted": "#5b6b7d",
 }
 
-# KPI-Kachelfarben -- die Reihenfolge ist zugleich die Anzeige-Reihenfolge
+# KPI tile colors -- the order is also the display order
 KPI_COLORS = {
     "green":  "#2e9e5b",   # Aktive Materialien
     "orange": "#ef6c00",   # Nicht gelieferte Teile
@@ -28,7 +28,7 @@ KPI_COLORS = {
     "purple": "#6a4bc0",   # Ohne Klassifizierung
 }
 
-# Statuswerte + zugehörige Punktfarben in der Tabelle
+# Status values + their dot colors in the table
 STATUS_COLORS = {
     "Aktiv":           "#2e9e5b",
     "Nicht geliefert": "#ef6c00",
@@ -37,13 +37,13 @@ STATUS_COLORS = {
 }
 
 # --------------------------------------------------------------------------
-# Element-IDs (eine Wahrheit für Layout UND Callbacks)
+# Element IDs (one source of truth for layout AND callbacks)
 # --------------------------------------------------------------------------
 class IDS:
-    # Header (wiederverwendbar -- IDs stabil halten, dann greifen die
-    # Header-Callbacks in jedem Dashboard unverändert)
-    MENU_BTN = "menu-btn"                 # Burger links  -> linke Nav-Sidebar
-    FILTER_BTN = "filter-btn"             # Filter-Icon rechts -> rechte Filter-Sidebar
+    # Header (reusable -- keep the IDs stable, then the header callbacks work
+    # unchanged in every dashboard)
+    MENU_BTN = "menu-btn"                 # burger on the left -> left nav sidebar
+    FILTER_BTN = "filter-btn"             # filter icon on the right -> right filter sidebar
 
     # Sidebars
     NAV_SIDEBAR = "nav-sidebar"
@@ -53,45 +53,45 @@ class IDS:
     FILTER_OVERLAY = "filter-overlay"
     FILTER_CLOSE = "filter-close"
 
-    # Spaltenauswahl (Popover am Tabellen-Button, ersetzt den früheren
-    # Inline-"Filter"-Button -- der gehört visuell zur Tabelle)
-    COLS_BTN = "columns-btn"              # öffnet das Spalten-Popover
-    COLS_MENU = "columns-menu"            # das Popover-Panel selbst
-    COLS_CHECKLIST = "columns-checklist"  # an-/abwählbare Spalten
-    COLS_ALL = "columns-all"              # "Alle" einblenden
-    COLS_NONE = "columns-none"            # "Keine" (nur die fixierten bleiben)
+    # Column selection (popover on the table button, replaces the former
+    # inline "Filter" button -- that one belongs visually to the table)
+    COLS_BTN = "columns-btn"              # opens the column popover
+    COLS_MENU = "columns-menu"            # the popover panel itself
+    COLS_CHECKLIST = "columns-checklist"  # selectable/deselectable columns
+    COLS_ALL = "columns-all"              # show "Alle"
+    COLS_NONE = "columns-none"            # "Keine" (only the pinned ones remain)
 
-    # Filtersteuerung (rechte Sidebar) -- das sind die "Wahrheitsquellen" des Filters
+    # Filter controls (right sidebar) -- these are the filter's "sources of truth"
     F_STATUS = "filter-status"
-    F_WERK = "filter-werk"
-    F_WARENGRUPPE = "filter-warengruppe"
+    F_PLANT = "filter-plant"
+    F_MATERIAL_GROUP = "filter-material-group"
     F_SEARCH = "filter-search"
     F_OHNE_KLASS = "filter-ohne-klass"
     F_RESET = "filter-reset"
 
-    # Stores (zentraler, persistenter State)
-    STORE_FILTERS = "store-filters"       # kanonischer Filterzustand (session)
-    STORE_ACTIVE_TAB = "store-active-tab" # aktiver Tab (session)
-    STORE_EMPTY_CLICK = "store-empty-click"  # Klick auf leere Fläche (assets/empty_click.js)
-    STORE_KPI_FILTERS = "store-kpi-filters"  # KPI-Regeln für assets/kpi_highlight.js
+    # Stores (central, persistent state)
+    STORE_FILTERS = "store-filters"       # canonical filter state (session)
+    STORE_ACTIVE_TAB = "store-active-tab" # active tab (session)
+    STORE_EMPTY_CLICK = "store-empty-click"  # click on empty area (assets/empty_click.js)
+    STORE_KPI_FILTERS = "store-kpi-filters"  # KPI rules for assets/kpi_highlight.js
 
-    # Tabs im Footer
+    # Tabs in the footer
     TAB_OVERVIEW = "data-overview"
     TAB_MANAGE = "manage-data"
     TAB_MAPPINGS = "apply-data-mappings"
 
-    # Inhaltscontainer je Tab (immer im DOM, Sichtbarkeit per CSS)
+    # Content container per tab (always in the DOM, visibility via CSS)
     CONTENT_OVERVIEW = "content-overview"
     CONTENT_MANAGE = "content-manage"
     CONTENT_MAPPINGS = "content-mappings"
 
-    # Data-Overview-Elemente
+    # Data overview elements
     KPI_ROW = "kpi-row"
     TABLE = "material-table"
     RECORD_COUNTER = "record-counter"
 
 
-# Reihenfolge & Beschriftung der Footer-Tabs
+# Order & labels of the footer tabs
 TABS = [
     (IDS.TAB_OVERVIEW, "Data overview"),
     (IDS.TAB_MANAGE, "Manage data"),
@@ -103,11 +103,11 @@ APP_SUBTITLE = "Stammdaten-Cockpit"
 APP_VERSION = "v0.1"
 
 # --------------------------------------------------------------------------
-# Header-Bausteine (zentral, damit der Header pro Dashboard nur hier bzw. über
-# die Funktionsargumente von header_layout() angepasst werden muss)
+# Header building blocks (central, so that the header only has to be adjusted
+# here resp. via the function arguments of header_layout() per dashboard)
 # --------------------------------------------------------------------------
-RESTRICTION_TEXT = "Restricted"          # Mini-Leiste über dem Header
-LOGO_SRC = "/assets/logo.svg"            # eigenes Logo: hier ersetzen
+RESTRICTION_TEXT = "Restricted"          # mini bar above the header
+LOGO_SRC = "/assets/logo.svg"            # own logo: replace it here
 
-# Hinweis: Das Spaltenschema (inkl. FIXED_COLUMNS, Labels, Breiten) ist EINE
-# Wahrheit in data/schema.py -- dort anpassen, nicht hier.
+# Note: the column schema (incl. FIXED_COLUMNS, labels, widths) is ONE source
+# of truth in data/schema.py -- adjust it there, not here.

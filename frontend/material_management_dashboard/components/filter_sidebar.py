@@ -1,15 +1,15 @@
 """
-Rechte Filter-Sidebar (initial geschlossen, öffnet über das Filter-Icon
-oder den "Filter"-Button neben der Tabelle).
+Right-hand filter sidebar (initially closed, opens via the filter icon or the
+"Filter" button next to the table).
 
-WICHTIG für die Persistenz-Anforderung:
-Diese Sidebar liegt im TOP-LEVEL-Layout (app.layout), NICHT im Tab-Inhalt.
-Dadurch bleibt sie beim Tab-Wechsel dauerhaft im DOM -> ihre Werte gehen nie
-verloren. Zusätzlich sorgt `persistence=True, persistence_type="session"`
-dafür, dass die Auswahl sogar einen Browser-Reload übersteht.
+IMPORTANT for the persistence requirement:
+This sidebar lives in the TOP-LEVEL layout (app.layout), NOT inside the tab
+content. That keeps it permanently in the DOM when switching tabs -> its
+values are never lost. On top of that, `persistence=True,
+persistence_type="session"` makes the selection survive even a browser reload.
 
-Die Steuerelemente sind die "Wahrheitsquelle" des Filters. Ein Callback
-spiegelt sie in den kanonischen `store-filters` (siehe callbacks/).
+The controls are the filter's "source of truth". A callback mirrors them into
+the canonical `store-filters` (see callbacks/).
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def filter_sidebar() -> html.Div:
             html.Div(id=IDS.FILTER_OVERLAY, className="sidebar-overlay", n_clicks=0),
             html.Aside(
                 id=IDS.FILTER_SIDEBAR,
-                className="sidebar sidebar-filter",  # ohne "open" = geschlossen
+                className="sidebar sidebar-filter",  # without "open" = closed
                 children=[
                     html.Div(
                         className="sidebar-header",
@@ -74,11 +74,11 @@ def filter_sidebar() -> html.Div:
                                    _multi_dropdown(IDS.F_STATUS, "Alle Status",
                                                    _STATUS_OPTIONS)),
                             _field("Werk",
-                                   _multi_dropdown(IDS.F_WERK, "Alle Werke",
-                                                   distinct_values("werk"))),
+                                   _multi_dropdown(IDS.F_PLANT, "Alle Werke",
+                                                   distinct_values("plant"))),
                             _field("Warengruppe",
-                                   _multi_dropdown(IDS.F_WARENGRUPPE, "Alle Warengruppen",
-                                                   distinct_values("warengruppe"))),
+                                   _multi_dropdown(IDS.F_MATERIAL_GROUP, "Alle Warengruppen",
+                                                   distinct_values("material_group"))),
                             dcc.Checklist(
                                 id=IDS.F_OHNE_KLASS,
                                 options=[{"label": " Nur ohne Klassifizierung",

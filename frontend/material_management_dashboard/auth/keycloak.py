@@ -1,49 +1,48 @@
 """
-Keycloak-Anmeldung fuer das Dashboard (OIDC Authorization Code Flow).
+Keycloak login for the dashboard (OIDC authorization code flow).
 
-WAS HIER PASSIERT
+WHAT HAPPENS HERE
 =================
-Dash ist eine Flask-Anwendung (`app.server` ist der Flask-Server). Deshalb
-haengt die Anmeldung an Flask, nicht an Dash: drei Routen plus ein
-`before_request`-Wachposten davor.
+Dash is a Flask application (`app.server` is the Flask server). That is why the
+login hangs off Flask and not off Dash: three routes plus a `before_request`
+sentry in front of them.
 
-    1. Nutzer oeffnet /            -> nicht angemeldet -> Weiterleitung /login
-    2. /login                      -> Weiterleitung zu Keycloak
-    3. Nutzer meldet sich an       -> Keycloak leitet auf /auth/callback zurueck
-    4. /auth/callback              -> Code gegen Token tauschen, in die Session
-    5. Weiterleitung auf die urspruenglich gewuenschte Seite
+    1. User opens /                -> not logged in -> redirect to /login
+    2. /login                      -> redirect to Keycloak
+    3. User logs in                -> Keycloak redirects back to /auth/callback
+    4. /auth/callback              -> exchange code for tokens, store in session
+    5. Redirect to the page originally requested
 
-Ab dann liegt das Access-Token in der Flask-Session. `access_token()` holt es
-in Callbacks wieder heraus -- Dash-Callbacks laufen innerhalb eines
-Flask-Request-Kontexts, deshalb funktioniert `session` dort ganz normal.
+From then on the access token lives in the Flask session. `access_token()`
+retrieves it again inside callbacks -- Dash callbacks run within a Flask request
+context, which is why `session` works there just like anywhere else.
 
-WARUM DAS TOKEN UND NICHT DIE ROLLEN WEITERGEREICHT WERDEN
-==========================================================
-Die API bekommt das Token unveraendert weitergereicht und prueft es selbst.
-Naheliegend waere, ihr stattdessen `X-User: m.renner` und
-`X-Groups: planner,admin` zu schicken -- aber solche Header sind einfacher
-Text. Wer die API erreicht, kann sie frei setzen, und die gesamte
-Rechtepruefung waere damit eine Bitte statt einer Kontrolle. Das JWT enthaelt
-dieselbe Information, aber von Keycloak SIGNIERT.
+WHY THE TOKEN IS PASSED ON AND NOT THE ROLES
+============================================
+The API is handed the token unchanged and verifies it itself. The obvious
+alternative would be to send it `X-User: m.renner` and
+`X-Groups: planner,admin` instead -- but such headers are plain text. Anyone who
+can reach the API can set them freely, and the entire permission check would
+become a request rather than a control. The JWT carries the same information,
+but SIGNED by Keycloak.
 
-ZWEI EBENEN MIT ABSICHT
-=======================
-Dieses Modul entscheidet, welche Seiten ein Nutzer zu sehen bekommt; die API
-entscheidet, welche Daten er bekommt. Das ist keine Doppelung: Die Pruefung
-hier ist eine Hoeflichkeit gegenueber dem Nutzer (keine Menuepunkte, die ins
-Leere fuehren), die in der API ist die, auf die es ankommt -- denn `curl`
-kommt an diesem Dashboard vorbei.
+TWO LAYERS ON PURPOSE
+=====================
+This module decides which pages a user gets to see; the API decides which data
+they get. That is not duplication: the check here is a courtesy towards the user
+(no menu entries that lead nowhere), the one in the API is the one that
+matters -- because `curl` bypasses this dashboard entirely.
 
-KONFIGURATION (.env)
+CONFIGURATION (.env)
 ====================
     KEYCLOAK_ISSUER=https://keycloak.example.com/realms/airbus
     KEYCLOAK_CLIENT_ID=material-dashboard
     KEYCLOAK_CLIENT_SECRET=...
-    FLASK_SECRET_KEY=...              # signiert das Session-Cookie
-    DATA_API_AUDIENCE=data-api        # damit das Token fuer die API gilt
+    FLASK_SECRET_KEY=...              # signs the session cookie
+    DATA_API_AUDIENCE=data-api        # so that the token is valid for the API
 
-Ohne KEYCLOAK_ISSUER bleibt die Anmeldung AUS (Entwicklung) -- genauso wie in
-der API, wo ein fehlender OIDC_ISSUER dasselbe bedeutet.
+Without KEYCLOAK_ISSUER the login stays OFF (development) -- exactly as in the
+API, where a missing OIDC_ISSUER means the same thing.
 """
 from __future__ import annotations
 
@@ -57,29 +56,29 @@ from flask import Flask, redirect, request, session, url_for
 
 log = logging.getLogger(__name__)
 
-# Diese Pfade muessen ohne Anmeldung erreichbar sein, sonst kann sich niemand
-# anmelden (/login) und Dash kann sein eigenes JavaScript nicht laden
-# (/_dash-*, /assets/*) -- die Seite bliebe weiss.
+# These paths have to be reachable without logging in, otherwise nobody can log
+# in (/login) and Dash cannot load its own JavaScript (/_dash-*, /assets/*) --
+# the page would stay blank.
 PUBLIC_PREFIXES = ("/login", "/auth/", "/logout", "/_dash-component-suites",
                    "/_dash-layout", "/_dash-dependencies", "/assets", "/_favicon.ico")
 
-# Wieviele Sekunden vor Ablauf schon erneuert wird. Ohne Vorlauf laeuft das
-# Token zwischen Pruefung und Ankunft bei der API ab -- selten, aber genau die
-# Sorte Fehler, die sich nicht nachstellen laesst.
+# How many seconds before expiry we already refresh. Without that lead time the
+# token expires between the check and its arrival at the API -- rare, but exactly
+# the kind of bug that cannot be reproduced.
 REFRESH_MARGIN_SECONDS = 30
 
 
 def auth_enabled() -> bool:
-    """Anmeldung ist an, sobald ein Issuer konfiguriert ist."""
+    """Login is on as soon as an issuer is configured."""
     return bool(os.getenv("KEYCLOAK_ISSUER"))
 
 
 def _oauth_client(server: Flask):
-    """Registriert den Keycloak-Client einmalig am Flask-Server.
+    """Registers the Keycloak client once on the Flask server.
 
-    `server_metadata_url` zeigt auf das Discovery-Dokument -- Authlib holt sich
-    Endpunkte und Signaturschluessel daraus selbst. Ein Tippfehler in einer URL
-    faellt damit beim ersten Login auf und nicht erst beim Token-Tausch.
+    `server_metadata_url` points at the discovery document -- Authlib fetches
+    endpoints and signing keys from it by itself. A typo in a URL therefore shows
+    up on the first login and not only at the token exchange.
     """
     from authlib.integrations.flask_client import OAuth
 
@@ -91,9 +90,9 @@ def _oauth_client(server: Flask):
         client_id=os.environ["KEYCLOAK_CLIENT_ID"],
         client_secret=os.environ.get("KEYCLOAK_CLIENT_SECRET"),
         client_kwargs={
-            # `openid` ist Pflicht. Die API prueft zusaetzlich die `aud`-Claim,
-            # deshalb muss ihre Client-ID hier mit angefragt werden -- sonst
-            # bekommt der Nutzer ein gueltiges Token, das die API ablehnt.
+            # `openid` is mandatory. The API additionally checks the `aud` claim,
+            # which is why its client id has to be requested here as well --
+            # otherwise the user gets a valid token that the API rejects.
             "scope": f"openid profile email {os.getenv('DATA_API_AUDIENCE', '')}".strip(),
         },
     )
@@ -101,22 +100,22 @@ def _oauth_client(server: Flask):
 
 
 def register_auth(server: Flask) -> None:
-    """Haengt Login, Callback, Logout und den Wachposten an den Flask-Server."""
+    """Attaches login, callback, logout and the sentry to the Flask server."""
     server.secret_key = os.getenv("FLASK_SECRET_KEY") or os.urandom(32)
 
     if not auth_enabled():
-        log.warning("KEYCLOAK_ISSUER ist nicht gesetzt -- Anmeldung AUS "
-                    "(nur fuer Entwicklung akzeptabel).")
+        log.warning("KEYCLOAK_ISSUER is not set -- login OFF "
+                    "(acceptable for development only).")
         return
 
     keycloak = _oauth_client(server)
 
     @server.route("/login")
     def login():
-        # Wohin nach dem Login? Der Wachposten unten legt das Ziel ab. Nur
-        # relative Pfade werden akzeptiert: ein "?next=https://fremde-seite"
-        # waere eine offene Weiterleitung, mit der sich Phishing-Links bauen
-        # lassen, die auf der echten Dashboard-Domain beginnen.
+        # Where to go after the login? The sentry below stores the target. Only
+        # relative paths are accepted: a "?next=https://some-other-site" would be
+        # an open redirect, one that lets phishing links be built which start out
+        # on the genuine dashboard domain.
         target = session.get("next_url", "/")
         if urlparse(target).netloc:
             target = "/"
@@ -128,23 +127,23 @@ def register_auth(server: Flask) -> None:
         try:
             tokens = keycloak.authorize_access_token()
         except Exception as error:                      # noqa: BLE001
-            # Abgelaufener State, abgebrochener Login, falsch konfigurierter
-            # Client -- fuer den Nutzer alles dasselbe: nochmal versuchen.
-            log.warning("Login fehlgeschlagen: %s", error)
+            # Expired state, aborted login, misconfigured client -- from the
+            # user's point of view all the same thing: try again.
+            log.warning("Login failed: %s", error)
             return redirect(url_for("login"))
 
         session["tokens"] = tokens
         session["userinfo"] = tokens.get("userinfo", {})
-        log.info("Angemeldet: %s", username() or "?")
+        log.info("Logged in: %s", username() or "?")
         return redirect(session.pop("next_url", "/"))
 
     @server.route("/logout")
     def logout():
         tokens = session.get("tokens") or {}
         session.clear()
-        # Auch bei Keycloak abmelden, nicht nur lokal: sonst ist der Nutzer
-        # beim naechsten /login sofort wieder drin, ohne Passworteingabe --
-        # was auf einem geteilten Rechner genau das Gegenteil von Abmelden ist.
+        # Log out at Keycloak too, not just locally: otherwise the user is right
+        # back in at the next /login without entering a password -- which on a
+        # shared machine is the exact opposite of logging out.
         issuer = os.environ["KEYCLOAK_ISSUER"].rstrip("/")
         end_session = f"{issuer}/protocol/openid-connect/logout"
         home = url_for("index", _external=True) if "index" in server.view_functions else "/"
@@ -155,29 +154,29 @@ def register_auth(server: Flask) -> None:
 
     @server.before_request
     def require_login():
-        """Der Wachposten. Laeuft vor JEDER Anfrage, auch vor Dash-Callbacks."""
+        """The sentry. Runs before EVERY request, including Dash callbacks."""
         if any(request.path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
             return None
         if session.get("tokens"):
             return None
-        # Ziel merken, damit der Nutzer nach dem Login dort landet, wo er
-        # hinwollte -- und nicht immer auf der Startseite.
+        # Remember the target so that after the login the user ends up where they
+        # wanted to go -- and not always on the start page.
         session["next_url"] = request.full_path if request.query_string else request.path
         return redirect(url_for("login"))
 
 
 def access_token() -> str | None:
-    """Das Access-Token des aktuellen Nutzers -- oder None, wenn Auth aus ist.
+    """The current user's access token -- or None when auth is off.
 
-    Wird in Dash-Callbacks aufgerufen und muss deshalb auch dann funktionieren,
-    wenn gerade kein Request laeuft (z.B. in Tests): dann gibt es None zurueck,
-    statt zu fliegen.
+    This is called inside Dash callbacks and therefore has to work even when no
+    request is in flight (e.g. in tests): in that case it returns None instead of
+    blowing up.
     """
     if not auth_enabled():
         return None
     try:
         tokens = session.get("tokens")
-    except RuntimeError:            # ausserhalb eines Request-Kontexts
+    except RuntimeError:            # outside of a request context
         return None
     if not tokens:
         return None
@@ -189,10 +188,10 @@ def access_token() -> str | None:
 
 
 def user_roles() -> frozenset[str]:
-    """Rollen und Gruppen des angemeldeten Nutzers -- fuer die Menuesteuerung.
+    """Roles and groups of the logged-in user -- for driving the menu.
 
-    NUR fuer die Anzeige gedacht. Die verbindliche Pruefung macht die API; hier
-    geht es darum, keine Menuepunkte anzubieten, die ohnehin 403 liefern.
+    Meant for display ONLY. The binding check is done by the API; the point here
+    is not to offer menu entries that would return 403 anyway.
     """
     token = access_token()
     if not token:
@@ -206,7 +205,7 @@ def user_roles() -> frozenset[str]:
 
 
 def username() -> str:
-    """Anzeigename des angemeldeten Nutzers, fuer den Header."""
+    """Display name of the logged-in user, for the header."""
     try:
         info = session.get("userinfo") or {}
     except RuntimeError:
@@ -220,10 +219,10 @@ def _expired(tokens: dict[str, Any]) -> bool:
 
 
 def _refresh(tokens: dict[str, Any]) -> dict[str, Any] | None:
-    """Holt mit dem Refresh-Token ein neues Access-Token.
+    """Uses the refresh token to fetch a new access token.
 
-    Ohne das wird ein Nutzer nach der Token-Laufzeit (bei Keycloak per Default
-    fuenf Minuten) mitten in der Arbeit abgemeldet.
+    Without this a user is logged out in the middle of their work once the token
+    lifetime (five minutes by default in Keycloak) has elapsed.
     """
     refresh_token = tokens.get("refresh_token")
     if not refresh_token:
@@ -240,9 +239,9 @@ def _refresh(tokens: dict[str, Any]) -> dict[str, Any] | None:
             f"{issuer}/protocol/openid-connect/token", refresh_token=refresh_token
         )
     except Exception as error:                          # noqa: BLE001
-        # Refresh-Token ebenfalls abgelaufen oder zurueckgezogen: Session
-        # verwerfen, der Wachposten schickt den Nutzer zum Login.
-        log.info("Token-Refresh fehlgeschlagen (%s) -- Session wird verworfen.", error)
+        # Refresh token expired or revoked as well: discard the session, the
+        # sentry then sends the user to the login.
+        log.info("Token refresh failed (%s) -- discarding the session.", error)
         session.pop("tokens", None)
         return None
 
@@ -251,19 +250,19 @@ def _refresh(tokens: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _claims_without_verification(token: str) -> dict[str, Any]:
-    """Liest den Payload eines JWT, OHNE die Signatur zu pruefen.
+    """Reads the payload of a JWT WITHOUT verifying the signature.
 
-    Das ist hier zulaessig und anderswo ein schwerer Fehler: Das Token kommt
-    aus der eigenen Session, wurde beim Login von Authlib geprueft, und die
-    Rollen steuern nur die Anzeige. Fuer eine Zugriffsentscheidung duerfte man
-    so nie lesen -- die trifft die API, und die prueft die Signatur.
+    That is admissible here and a grave mistake anywhere else: the token comes
+    from our own session, it was verified by Authlib during the login, and the
+    roles only drive the display. One must never read this way for an access
+    decision -- that one is made by the API, and it verifies the signature.
     """
     import base64
     import json
 
     try:
         payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)            # Base64-Padding ergaenzen
+        payload += "=" * (-len(payload) % 4)            # add the Base64 padding
         return json.loads(base64.urlsafe_b64decode(payload))
     except Exception:                                   # noqa: BLE001
         return {}
