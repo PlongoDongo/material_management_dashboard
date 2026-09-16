@@ -27,12 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.v1 import build_v1_router
 from core.config import Settings, __version__, get_settings
-from core.errors import (
-    ConfigurationError,
-    problem_responses,
-    register_exception_handlers,
-    use_problem_media_type,
-)
+from core.errors import ConfigurationError, problem_responses, register_exception_handlers
 from core.logging import configure_logging
 from core.middleware import RequestContextMiddleware
 from db.neo4j import close_driver, create_driver
@@ -145,6 +140,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     register_exception_handlers(app)
-    use_problem_media_type(app)
     app.include_router(build_v1_router())
     return app

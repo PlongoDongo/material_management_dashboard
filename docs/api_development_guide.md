@@ -949,9 +949,13 @@ app = FastAPI(..., responses=problem_responses(401, 403, 422, 500, 503))
 ```
 
 A route that can answer something else adds it to its own `responses`, e.g.
-`responses=problem_responses(409)` on `POST /mappings`. `use_problem_media_type`
-then documents each of them under `application/problem+json` only — FastAPI
-would otherwise list `application/json` as well, which is not what is sent.
+`responses=problem_responses(409)` on `POST /mappings`.
+
+**One quirk to know:** `/docs` lists each error under `application/json` as well.
+FastAPI puts a declared model under the route's default media type, and there is
+no per-response way to change that — only a custom `openapi()` hook, which is
+not worth the maintenance. The API always sends `application/problem+json`; the
+schema shown is the right one.
 
 `tests/test_errors.py` compares the documented `Problem` model against a real
 error body, so the two cannot drift.

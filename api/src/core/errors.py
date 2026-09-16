@@ -159,29 +159,6 @@ def problem_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
     }
 
 
-def use_problem_media_type(app: FastAPI) -> None:
-    """Documents the error responses under application/problem+json only.
-
-    FastAPI lists a declared response under the route's default media type
-    (application/json) and leaves the media type asked for above empty. Errors
-    are only ever sent as problem+json, so /docs would otherwise describe a
-    content type the API never returns -- and show no schema for the one it does.
-    """
-    generate = app.openapi
-
-    def openapi() -> dict[str, Any]:
-        schema = generate()
-        for path in schema.get("paths", {}).values():
-            for operation in path.values():
-                for response in operation.get("responses", {}).values():
-                    content = response.get("content") or {}
-                    if "application/problem+json" in content and "application/json" in content:
-                        content["application/problem+json"] = content.pop("application/json")
-        return schema
-
-    app.openapi = openapi
-
-
 def _problem(
     request: Request,
     status_code: int,

@@ -106,6 +106,24 @@ Response format of every data product:
 
 `meta.source` shows which sources fed the response.
 
+Errors use RFC 9457 Problem Details (`application/problem+json`) — one shape for
+every failure, with a `code` to branch on and the request id:
+
+```json
+{"type": "about:blank", "title": "Upstream data source unavailable", "status": 503,
+ "detail": "Neo4j unavailable: no route to host", "code": "upstream_unavailable",
+ "request_id": "3f2a9c1b4d5e6f70"}
+```
+
+`/docs` lists them per route (401, 403, 409, 422, 500, 503), declared through
+`problem_responses(...)` in `core/errors.py`.
+
+> **Known quirk in `/docs`:** each error is additionally listed under
+> `application/json`. FastAPI puts a declared response model under the route's
+> default media type and offers no per-response way to change it — only a custom
+> `openapi()` hook, which is not worth maintaining. The schema shown is correct;
+> the API always sends `application/problem+json`.
+
 ---
 
 ## Adding a data product
