@@ -51,12 +51,17 @@ log = logging.getLogger(__name__)
 PRODUCT = "material-overview"
 VERSION = "v3"
 
-# Obergrenze der Abfrage. Zugleich das Maximum von ProductParams.limit --
-# mehr geht serverseitig nicht. Wird sie erreicht, MUSS das auffallen (siehe
-# load_materials): eine vollstaendig aussehende Tabelle mit unvollstaendigen
-# Daten ist schlimmer als eine Fehlermeldung, und die KPI-Kacheln zaehlen die
-# fehlenden Zeilen ebenfalls nicht mit.
-MAX_ZEILEN = 50_000
+# Wie viele Zeilen EINE Anfrage holt. 50.000 ist das Maximum von
+# ProductParams.limit -- mehr nimmt die API nicht an.
+PAGE_SIZE = 50_000
+
+# Obergrenze ueber alle Seiten zusammen. Das Dashboard haelt den kompletten
+# Bestand im Speicher, deshalb bricht das Laden hier ab, statt den Worker zu
+# sprengen. Wird sie erreicht, MUSS das auffallen (siehe load_materials): eine
+# vollstaendig aussehende Tabelle mit unvollstaendigen Daten ist schlimmer als
+# eine Fehlermeldung, und die KPI-Kacheln zaehlen die fehlenden Zeilen ebenfalls
+# nicht mit.
+MAX_ZEILEN = 500_000
 
 # Wie lange ein einmal geholter Datenstand im Dashboard-Prozess gilt.
 # Der Server cached zusaetzlich (cache_ttl des Datenprodukts); dieser Cache hier
@@ -132,19 +137,75 @@ def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
     )
 
 
+class BestandVerschoben(DataProductError):
+    """Der Gesamtbestand hat sich zwischen zwei Seiten geaendert.
+
+    Dann passen die Seiten nicht mehr zusammen -- Zeilen koennen doppelt
+    auftauchen oder fehlen. Erbt von DataProductError, damit der Ausfallpfad in
+    `get_materials` greift, falls auch der zweite Versuch scheitert.
+    """
+
+
+def _alle_seiten(token: str | None) -> tuple[list[dict], dict]:
+    """Holt das Datenprodukt seitenweise, bis der Bestand vollstaendig ist.
+
+    Das Dashboard braucht IMMER alle Zeilen: Die KPI-Kacheln rechnen ueber den
+    gesamten Bestand, die Filter-Dropdowns zeigen die Auspraegungen aller
+    Zeilen, und gesucht wird im Browser ueber den kompletten Datensatz. Mit nur
+    einer Seite waeren alle drei still falsch -- es fehlten Eintraege, ohne dass
+    irgendetwas meldet.
+
+    Serverseitig ist das billig: `material-overview` laedt ohnehin den ganzen
+    Bestand und schneidet das Fenster erst danach heraus, und limit/offset gehen
+    bei solchen Produkten NICHT in den Cache-Schluessel ein. Seite zwei und alle
+    weiteren kommen deshalb aus demselben Cache-Eintrag, ohne neue Abfrage --
+    solange `cache_ttl` des Datenprodukts groesser als 0 ist.
+
+    Abgebrochen wird, sobald eine Seite kuerzer als PAGE_SIZE ist: Dann hat die
+    API nichts mehr, egal was `total_count` behauptet. Ohne diese Bedingung
+    wuerde eine API, die weniger liefert als sie meldet, hier ewig kreisen.
+    """
+    rows: list[dict] = []
+    meta: dict = {}
+    gesamt: int | None = None
+
+    while True:
+        seite, meta = _client.fetch(PRODUCT, VERSION, token=token,
+                                    limit=PAGE_SIZE, offset=len(rows))
+        if gesamt is not None and meta.get("total_count") != gesamt:
+            raise BestandVerschoben(
+                f"total_count wechselte von {gesamt} auf {meta.get('total_count')}"
+            )
+        gesamt = meta.get("total_count")
+        rows.extend(seite)
+
+        if (len(seite) < PAGE_SIZE or gesamt is None
+                or len(rows) >= gesamt or len(rows) >= MAX_ZEILEN):
+            return rows, meta
+
+
 def load_materials() -> pl.DataFrame:
     """Holt das Datenprodukt beim API-Layer und formt es fuer die Tabelle."""
-    rows, meta = _client.fetch(PRODUCT, VERSION, token=access_token(), limit=MAX_ZEILEN)
-    log.info("Datenstand %s | Quelle %s | %s Zeilen | Cache %s",
+    token = access_token()
+    try:
+        rows, meta = _alle_seiten(token)
+    except BestandVerschoben as verschoben:
+        # Waehrend des Ladens hat jemand geschrieben. Genau ein neuer Versuch;
+        # scheitert der auch, greift der Ausfallpfad in get_materials.
+        log.warning("Bestand aenderte sich waehrend des Ladens (%s) -- neuer Versuch.",
+                    verschoben)
+        rows, meta = _alle_seiten(token)
+
+    log.info("Datenstand %s | Quelle %s | %s von %s Zeilen | Cache %s",
              meta.get("generated_at"), meta.get("source"),
-             meta.get("total_count"), meta.get("cache"))
+             len(rows), meta.get("total_count"), meta.get("cache"))
 
     gesamt = meta.get("total_count") or len(rows)
     if gesamt > len(rows):
         # Nicht nur loggen: geloggte Fehler sieht im Betrieb niemand, und die
         # Zahl im Management-Meeting waere dann falsch. Die UI zeigt den
         # Hinweis neben dem Zeilenzaehler (siehe tabs/data_overview.py).
-        log.error("Datenprodukt gekuerzt: %s von %s Zeilen geladen (limit=%s). "
+        log.error("Datenprodukt gekuerzt: %s von %s Zeilen geladen (Obergrenze %s). "
                   "KPI-Kacheln und Zaehler sind unvollstaendig.",
                   len(rows), gesamt, MAX_ZEILEN)
         _cache_slot()["gekuerzt"] = (len(rows), gesamt)

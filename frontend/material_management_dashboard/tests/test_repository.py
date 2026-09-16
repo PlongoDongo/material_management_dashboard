@@ -201,9 +201,10 @@ def test_distinct_values_fuer_die_filter_dropdowns(monkeypatch) -> None:
 def test_kuerzung_wird_gemeldet(monkeypatch, caplog) -> None:
     """Eine vollständig aussehende, aber unvollständige Tabelle muss auffallen.
 
-    Die API meldet 120.000 Zeilen, geliefert werden 50.000 (das serverseitige
-    Maximum). Ohne diesen Hinweis zeigt das Dashboard eine plausible Tabelle mit
-    fehlenden Daten -- und die KPI-Kacheln zählen ebenfalls zu wenig.
+    Die API meldet 120.000 Zeilen, liefert aber eine kurze Seite -- damit ist
+    der Bestand nicht vollständig zu holen. Ohne diesen Hinweis zeigt das
+    Dashboard eine plausible Tabelle mit fehlenden Daten, und die KPI-Kacheln
+    zählen ebenfalls zu wenig.
     """
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_envelope(API_ROWS, total_count=120_000))
@@ -365,3 +366,105 @@ def test_invalidate_leert_die_eimer_aller_rollen(monkeypatch) -> None:
 
     repo.invalidate()
     assert repo._CACHE == {}
+
+
+# --- Seitenweises Laden ------------------------------------------------------
+
+def _zeilen(anzahl: int) -> list[dict]:
+    return [dict(API_ROWS[0], material_number=f"MAT-{nummer}") for nummer in range(anzahl)]
+
+
+def _seiten_handler(alle: list[dict], gesehen: list | None = None, gesamt: int | None = None):
+    """Beantwortet limit/offset wie die echte API."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        limit = int(request.url.params["limit"])
+        offset = int(request.url.params.get("offset", 0))
+        if gesehen is not None:
+            gesehen.append(offset)
+        seite = alle[offset:offset + limit]
+        return httpx.Response(200, json=_envelope(seite, total_count=gesamt or len(alle)))
+    return handler
+
+
+def test_ein_vollstaendiges_ergebnis_braucht_nur_eine_anfrage(monkeypatch) -> None:
+    """Der Normalfall: Passt alles in eine Seite, wird nicht weitergeblaettert."""
+    gesehen: list[int] = []
+    monkeypatch.setattr(repo, "_client", _client(_seiten_handler(_zeilen(3), gesehen)))
+
+    assert repo.get_materials().height == 3
+    assert gesehen == [0]
+
+
+def test_alle_seiten_werden_geholt_und_zusammengefuegt(monkeypatch) -> None:
+    """Ohne das fehlen Zeilen in der Tabelle, in den KPI-Kacheln und in den
+    Filter-Dropdowns -- alles drei ohne Fehlermeldung."""
+    gesehen: list[int] = []
+    monkeypatch.setattr(repo, "PAGE_SIZE", 2)
+    monkeypatch.setattr(repo, "_client", _client(_seiten_handler(_zeilen(5), gesehen)))
+
+    frame = repo.get_materials()
+
+    assert frame.height == 5
+    assert gesehen == [0, 2, 4]
+    assert frame["material_nr"].to_list() == [f"MAT-{n}" for n in range(5)]
+    assert repo.kuerzung() is None
+
+
+def test_die_obergrenze_bricht_ab_und_meldet_die_kuerzung(monkeypatch, caplog) -> None:
+    """Die Obergrenze schuetzt den Worker -- aber still darf sie nicht greifen."""
+    monkeypatch.setattr(repo, "PAGE_SIZE", 2)
+    monkeypatch.setattr(repo, "MAX_ZEILEN", 4)
+    monkeypatch.setattr(repo, "_client", _client(_seiten_handler(_zeilen(9))))
+
+    with caplog.at_level("ERROR"):
+        frame = repo.get_materials()
+
+    assert frame.height == 4
+    assert repo.kuerzung() == (4, 9)
+    assert "gekuerzt" in caplog.text.lower()
+
+
+def test_aendert_sich_der_bestand_zwischen_zwei_seiten_wird_neu_geladen(
+    monkeypatch, caplog
+) -> None:
+    """Sonst mischt die Tabelle zwei Staende: Zeilen koennen doppelt auftauchen
+    oder fehlen, und niemand merkt es."""
+    alle = _zeilen(5)
+    versuche: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(request.url.params.get("offset", 0))
+        versuche.append(offset)
+        # Beim ersten Durchlauf meldet die zweite Seite einen anderen Bestand.
+        gewechselt = len(versuche) == 2
+        seite = alle[offset:offset + 2]
+        return httpx.Response(200, json=_envelope(seite, total_count=6 if gewechselt else 5))
+
+    monkeypatch.setattr(repo, "PAGE_SIZE", 2)
+    monkeypatch.setattr(repo, "_client", _client(handler))
+
+    with caplog.at_level("WARNING"):
+        frame = repo.get_materials()
+
+    assert frame.height == 5
+    assert versuche == [0, 2, 0, 2, 4], "es wurde nicht von vorn geladen"
+    assert "neuer versuch" in caplog.text.lower()
+
+
+def test_scheitert_auch_der_zweite_versuch_greift_der_ausfallpfad(monkeypatch) -> None:
+    """BestandVerschoben ist ein DataProductError -- ohne alten Stand im Cache
+    muss der Fehler auffallen statt eine halbe Tabelle zu zeigen."""
+    alle = _zeilen(5)
+    aufrufe: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        aufrufe.append(1)
+        offset = int(request.url.params.get("offset", 0))
+        seite = alle[offset:offset + 2]
+        return httpx.Response(200, json=_envelope(seite, total_count=5 + len(aufrufe)))
+
+    monkeypatch.setattr(repo, "PAGE_SIZE", 2)
+    monkeypatch.setattr(repo, "_client", _client(handler))
+
+    with pytest.raises(DataProductError):
+        repo.get_materials()
