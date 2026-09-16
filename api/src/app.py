@@ -27,7 +27,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.v1 import build_v1_router
 from core.config import Settings, __version__, get_settings
-from core.errors import ConfigurationError, problem_responses, register_exception_handlers
+from core.errors import (
+    AppError,
+    ConfigurationError,
+    ForbiddenError,
+    InvalidRequestError,
+    UnauthorizedError,
+    UpstreamUnavailableError,
+    documented_errors,
+    register_exception_handlers,
+)
 from core.logging import configure_logging
 from core.middleware import RequestContextMiddleware
 from db.neo4j import close_driver, create_driver
@@ -112,8 +121,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description=DESCRIPTION,
         lifespan=lifespan,
         # Every route can answer with these, so they are declared once here
-        # instead of on each route (core/errors.py).
-        responses=problem_responses(401, 403, 422, 500, 503),
+        # instead of on each route (core/errors.py). AppError is the generic 500.
+        responses=documented_errors(UnauthorizedError, ForbiddenError, InvalidRequestError,
+                                    AppError, UpstreamUnavailableError),
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from core.errors import problem_responses
+from core.errors import NotFoundError, documented_errors
 from core.security import CurrentPrincipal
 from products.base import DataProduct
 from products.registry import registry
@@ -101,7 +101,7 @@ async def list_products(principal: CurrentPrincipal) -> list[CatalogEntry]:
 
 
 @router.get("/{name}", summary="One data product with all its versions",
-            responses=problem_responses(404))
+            responses=documented_errors(NotFoundError))
 async def get_product(name: str, principal: CurrentPrincipal) -> CatalogEntry:
     versions = [p for p in registry.versions_of(name)
                 if principal.may_access(p.required_groups)]
@@ -109,5 +109,5 @@ async def get_product(name: str, principal: CurrentPrincipal) -> CatalogEntry:
         # 404 rather than 403, and deliberately the same answer as for a name
         # that does not exist: otherwise the error code itself would tell an
         # unauthorised caller which products exist.
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Unknown: {name}")
+        raise NotFoundError(f"Unknown data product: {name}")
     return _entry(name, versions)

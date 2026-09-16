@@ -11,9 +11,25 @@ Why this matters: the Dash callbacks need ONE path for error handling. If the
 API sometimes returns `{"detail": ...}`, sometimes `{"error": ...}` and an HTML
 stack trace on a Neo4j timeout, that logic gets rewritten in every dashboard.
 
-The rule in code: NEVER `raise HTTPException(...)` in the domain layer. Raise an
-`AppError` subclass instead -- those know nothing about HTTP and are therefore
-testable without a web server. The translation to HTTP happens right here.
+The rule in code: NEVER `raise HTTPException(...)`. Raise an `AppError` subclass
+instead -- those know nothing about HTTP and are therefore testable without a
+web server. The translation to HTTP happens right here.
+
+ONE PLACE PER FACT
+==================
+Everything about an error lives on its class: the status code, the `code` a
+dashboard branches on, and the `title`, which is also its description in /docs.
+
+    class ConflictError(AppError):        -> 409, code "conflict", and the
+        status_code = 409                    heading Swagger shows for it
+        code = "conflict"
+        title = "Conflict with existing data"
+
+`documented_errors(...)` reads those classes for the OpenAPI schema, and
+`_problem()` builds the response body from the same `Problem` model that /docs
+shows. Adding an error type therefore means writing the class and naming it on
+the routes that can answer it -- nothing else, and there is no second table of
+descriptions to keep in step.
 """
 from __future__ import annotations
 
@@ -37,33 +53,21 @@ class AppError(Exception):
     """Base class of all domain errors. Deliberately knows nothing about FastAPI.
 
     An unhandled exception becomes a 500 anyway -- this exists for every error
-    that should NOT be one. A subclass sets the status (503, 409, 403, ...) and
-    a stable `code` the dashboard can branch on; db/ and products/ raise it
-    without importing FastAPI, and `register_exception_handlers` below turns it
-    into the response.
+    that should NOT be one. A subclass sets the status and a stable `code` the
+    dashboard can branch on; db/ and products/ raise it without importing
+    FastAPI, and `register_exception_handlers` below turns it into the response.
+
+    Raised directly, it is the generic 500 -- which is also how the unhandled
+    case is documented.
     """
 
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
     code: str = "internal_error"
     title: str = "Internal server error"
 
-    def __init__(self, detail: str = "", **extra: object) -> None:
+    def __init__(self, detail: str = "") -> None:
         super().__init__(detail or self.title)
         self.detail = detail or self.title
-        self.extra = extra
-
-
-class ForbiddenError(AppError):
-    """The caller is known but is not allowed to see this data product.
-
-    Replaces a `raise HTTPException(403, ...)` in the router: this way the 403
-    also carries a `code` a dashboard can check for, and the rule "no
-    HTTPException in the domain layer" holds without exceptions.
-    """
-
-    status_code = status.HTTP_403_FORBIDDEN
-    code = "forbidden"
-    title = "Access denied"
 
 
 class UnauthorizedError(AppError):
@@ -79,16 +83,37 @@ class UnauthorizedError(AppError):
     title = "Authentication required"
 
 
-class UpstreamUnavailableError(AppError):
-    """A data source (Neo4j/Postgres) is unreachable -> 503, not 500.
+class ForbiddenError(AppError):
+    """The caller is known but is not allowed to see this data product."""
 
-    The distinction matters to the dashboards: 503 means "try again later",
-    500 means "this is a bug, please report it".
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "forbidden"
+    title = "Access denied"
+
+
+class NotFoundError(AppError):
+    """No such thing -- or none this caller may see.
+
+    api/v1/catalog.py answers both cases the same way on purpose: otherwise the
+    status code alone would tell an unauthorised caller which products exist.
     """
 
-    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    code = "upstream_unavailable"
-    title = "Upstream data source unavailable"
+    status_code = status.HTTP_404_NOT_FOUND
+    code = "not_found"
+    title = "Not found"
+
+
+class InvalidRequestError(AppError):
+    """The request parameters do not fit the contract -- 422.
+
+    FastAPI raises this case itself (as `RequestValidationError`) and the
+    handler below translates it. The class exists so the 422 is declared like
+    every other error instead of being a special case in two places.
+    """
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    code = "validation_error"
+    title = "Invalid request"
 
 
 class ConflictError(AppError):
@@ -104,14 +129,31 @@ class ConflictError(AppError):
     title = "Conflict with existing data"
 
 
+class UpstreamUnavailableError(AppError):
+    """A data source (Neo4j/Postgres) is unreachable -> 503, not 500.
+
+    The distinction matters to the dashboards: 503 means "try again later",
+    500 means "this is a bug, please report it".
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "upstream_unavailable"
+    title = "Upstream data source unavailable"
+
+
 class ConfigurationError(AppError):
-    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    """A required setting is missing -- our fault, so it stays a 500."""
+
     code = "configuration_error"
     title = "Server misconfigured"
 
 
 class Problem(BaseModel):
-    """The body of every error response -- what `_problem` below builds."""
+    """The body of every error response -- and the model /docs shows.
+
+    `_problem()` builds its responses from this model, so the documentation
+    cannot describe a shape the API does not send.
+    """
 
     type: str = "about:blank"
     title: str = Field(examples=["Upstream data source unavailable"])
@@ -119,77 +161,60 @@ class Problem(BaseModel):
     detail: str = Field(examples=["Neo4j unavailable: no route to host"])
     code: str = Field(examples=["upstream_unavailable"])
     request_id: str | None = Field(default=None, examples=["3f2a9c1b4d5e6f70"])
-
-
-class ValidationProblem(Problem):
-    """A 422 additionally carries the field-level errors."""
-
-    errors: list[dict[str, Any]] = Field(
+    errors: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Field-level errors. Only present on a 422.",
         examples=[[{"type": "int_parsing", "loc": ["query", "limit"],
-                    "msg": "Input should be a valid integer"}]]
+                    "msg": "Input should be a valid integer"}]],
     )
 
 
-_DESCRIPTIONS = {
-    401: "No token, or not a valid one.",
-    403: "The caller lacks the required role.",
-    404: "Unknown -- or not visible to this caller.",
-    409: "Conflict with existing data; retrying will not help.",
-    422: "The request parameters are invalid.",
-    500: "Unexpected server error. The request_id finds it in the logs.",
-    503: "A data source is unavailable. Retry later.",
-}
+def documented_errors(*errors: type[AppError]) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI `responses` for the errors a route can answer.
 
+        responses=documented_errors(ConflictError)
 
-def problem_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
-    """OpenAPI `responses` for the errors this module produces.
+    Pass the classes, not status codes: status, description and example all come
+    from the class, so documenting a new error type is one name on one route.
 
-    Without them /docs shows FastAPI's default 422 (`detail` as a LIST, which
-    this API never sends) and no 401/403/409/500/503 at all -- so a dashboard
-    would be built against a shape that does not exist.
+    Without this, /docs shows FastAPI's default 422 (`detail` as a LIST, which
+    this API never sends) and no 401/403/409/500/503 at all -- a dashboard would
+    be built against a shape that does not exist.
     """
     return {
-        status_code: {
-            "model": (ValidationProblem if status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-                      else Problem),
-            "description": _DESCRIPTIONS[status_code],
+        error.status_code: {
+            "model": Problem,
+            "description": error.title,
             "content": {"application/problem+json": {}},
         }
-        for status_code in statuses
+        for error in errors
     }
 
 
-def _problem(
-    request: Request,
-    status_code: int,
-    title: str,
-    detail: str,
-    code: str,
-    **extra: object,
-) -> JSONResponse:
+def _problem(request: Request, error: AppError, **extra: Any) -> JSONResponse:  # noqa: ANN401
     """Builds the one and only error response shape of this API.
 
-    `extra` becomes additional top-level members of the problem document --
-    RFC 9457 calls those "extension members" and explicitly allows them. Used
-    by the validation handler for its `errors` list. Values must be
-    JSON-serialisable; the caller is responsible for that.
+    ANN401: `extra` carries RFC 9457 "extension members" -- additional top-level
+    fields the format explicitly allows. Today that is the validation handler's
+    `errors` list; the values have to be JSON-serialisable.
     """
     # Request object first, ContextVar second: on a 500 this handler runs
     # outside RequestContextMiddleware, whose `finally` has already reset the
     # ContextVar.
     request_id = getattr(request.state, "request_id", None) or request_id_var.get()
+    body = Problem(
+        title=error.title,
+        status=error.status_code,
+        detail=error.detail,
+        code=error.code,
+        request_id=request_id,
+        **extra,
+    )
     return JSONResponse(
-        status_code=status_code,
+        status_code=error.status_code,
         media_type="application/problem+json",
-        content={
-            "type": "about:blank",
-            "title": title,
-            "status": status_code,
-            "detail": detail,
-            "code": code,
-            "request_id": request_id,
-            **extra,
-        },
+        # `exclude_none` keeps `errors` out of the responses that have none.
+        content=body.model_dump(exclude_none=True),
         # Also as a header: on a 500 the response no longer passes through the
         # middleware that would otherwise set it.
         headers={"X-Request-ID": request_id},
@@ -215,20 +240,20 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _app_error(request: Request, exc: AppError) -> JSONResponse:
         if HTTPStatus(exc.status_code).is_server_error:
             log.error("AppError: %s", exc.detail, exc_info=exc)
-        return _problem(request, exc.status_code, exc.title, exc.detail, exc.code)
+        return _problem(request, exc)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        return _problem(request, exc.status_code, "HTTP error", str(exc.detail), "http_error")
+        # Raised by the framework, not by us: an unknown route, a wrong method.
+        error = AppError(str(exc.detail))
+        error.status_code, error.code, error.title = exc.status_code, "http_error", "HTTP error"
+        return _problem(request, error)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         return _problem(
             request,
-            422,
-            "Invalid request",
-            "The request parameters are invalid.",
-            "validation_error",
+            InvalidRequestError("The request parameters are invalid."),
             # The field-level errors -- helps when debugging Dash callbacks.
             # Round-tripped through `default=str` because `ctx` can carry
             # exception objects that json.dumps refuses: an error handler that
@@ -239,5 +264,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         log.error("Unhandled error: %s", exc, exc_info=exc)
-        return _problem(request, 500, "Internal server error",
-                        "Unexpected error.", "internal_error")
+        return _problem(request, AppError("Unexpected error."))
