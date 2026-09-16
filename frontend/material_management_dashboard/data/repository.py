@@ -1,30 +1,30 @@
 """
-Datenzugriffsschicht des Dashboards.
+Data access layer of the dashboard.
 
-Diese Datei ist die EINZIGE Stelle, die weiss, woher die Daten kommen. Der Rest
-des Dashboards ruft `get_materials()` auf und bekommt einen Polars-DataFrame --
-genau wie vorher. Deshalb war der Umstieg von Neo4j auf den API-Layer eine
-Aenderung an dieser einen Datei (plus dem Wegfall von `data/neo4j.py`).
+This file is the ONLY place that knows where the data comes from. The rest of
+the dashboard calls `get_materials()` and gets back a Polars DataFrame -- just
+like before. That is why moving from Neo4j to the API layer was a change to
+this single file (plus dropping `data/neo4j.py`).
 
-    frueher:  get_materials() -> Cypher gegen Neo4j -> DataFrame
-    jetzt:    get_materials() -> HTTP an den API-Layer -> DataFrame
+    before:  get_materials() -> Cypher against Neo4j -> DataFrame
+    now:     get_materials() -> HTTP to the API layer -> DataFrame
 
-Was das Dashboard dadurch NICHT mehr braucht:
-  * den neo4j-Treiber und dessen Zugangsdaten
-  * Kenntnis des Graphmodells (Cypher)
-  * eine eigene Vorstellung davon, was "Bestandswert" bedeutet
+What the dashboard therefore no longer needs:
+  * the neo4j driver and its credentials
+  * knowledge of the graph model (Cypher)
+  * an opinion of its own about what "stock value" means
 
-ZWEI NAMENSRAEUME, EINE GRENZE
-==============================
-Der API-Vertrag und die Spaltennamen der Tabelle sind NICHT dasselbe. Die API
-spricht Englisch (`material_number`, `plant_name`, `stock_value`), das Dashboard
-benennt seine Spalten deutsch wie die Oberflaeche. Uebersetzt wird an dieser
-Grenze -- siehe `_API_TO_UI`.
+TWO NAMESPACES, ONE BOUNDARY
+============================
+The API contract and the column names of the table are NOT the same thing. The
+API speaks English (`material_number`, `plant_name`, `stock_value`); the
+dashboard labels its columns in German, like the user interface. The
+translation happens at this boundary -- see `_API_TO_UI`.
 
-Das ist Absicht und kein Notbehelf: Die API gehoert einem anderen Team und darf
-ihre Felder umbenennen, ohne dass das Dashboard bricht. Was sich dann aendert,
-ist eine Zeile hier. Wichtig ist nur, dass die Uebersetzung SICHTBAR an einer
-Stelle steht und nicht ueber den Code verstreut ist.
+That is deliberate and not a stopgap: the API belongs to another team and is
+free to rename its fields without breaking the dashboard. What changes then is
+one line here. All that matters is that the translation sits VISIBLY in one
+place instead of being scattered across the code.
 """
 from __future__ import annotations
 
@@ -41,148 +41,206 @@ from data.api_client import (
     NotAuthenticatedError,
     NotAuthorisedError,
 )
-from data.schema import COLUMN_LABELS, COLUMNS  # noqa: F401  (Re-Export)
+from data.schema import COLUMN_LABELS, COLUMNS  # noqa: F401  (re-export)
 
 log = logging.getLogger(__name__)
 
-# Welches Datenprodukt in welcher Version. Bewusst fest verdrahtet und nicht
-# "latest": ein Versionswechsel soll im Git-Diff auftauchen und getestet werden,
-# nicht still passieren, weil die API ein neues Major ausgerollt hat.
+# Which data product in which version. Deliberately hard-wired and not
+# "latest": a version change should show up in the git diff and be tested, not
+# happen silently because the API rolled out a new major.
 PRODUCT = "material-overview"
 VERSION = "v3"
 
-# Obergrenze der Abfrage. Zugleich das Maximum von ProductParams.limit --
-# mehr geht serverseitig nicht. Wird sie erreicht, MUSS das auffallen (siehe
-# load_materials): eine vollstaendig aussehende Tabelle mit unvollstaendigen
-# Daten ist schlimmer als eine Fehlermeldung, und die KPI-Kacheln zaehlen die
-# fehlenden Zeilen ebenfalls nicht mit.
-MAX_ZEILEN = 50_000
+# How many rows ONE request fetches. 50,000 is the maximum of
+# ProductParams.limit -- the API does not accept more.
+PAGE_SIZE = 50_000
 
-# Wie lange ein einmal geholter Datenstand im Dashboard-Prozess gilt.
-# Der Server cached zusaetzlich (cache_ttl des Datenprodukts); dieser Cache hier
-# spart den HTTP-Roundtrip bei jedem Callback.
+# Upper bound across all pages together. The dashboard keeps the complete data
+# set in memory, so loading stops here instead of blowing up the worker. If the
+# bound is reached, that MUST be noticed (see load_materials): a table that
+# looks complete but holds incomplete data is worse than an error message, and
+# the KPI tiles do not count the missing rows either.
+MAX_ROWS = 500_000
+
+# How long a once-fetched snapshot stays valid inside the dashboard process.
+# The server caches as well (cache_ttl of the data product); this cache here
+# saves the HTTP round trip on every callback.
 CACHE_TTL_SECONDS = int(os.getenv("DATA_CACHE_TTL", "60"))
 
-# API-Feld -> Dashboard-Spalte. Nur was hier steht, landet in der Tabelle.
-# Felder der API, die das Dashboard nicht braucht (werk_id, preis), fehlen
-# bewusst -- neue Felder der API brechen das Dashboard dadurch nie.
+# API field -> dashboard column. Only what is listed here ends up in the table.
+# API fields the dashboard does not need (werk_id, preis) are deliberately
+# missing -- new API fields therefore never break the dashboard.
 _API_TO_UI: dict[str, str] = {
-    "material_number": "material_nr",
-    "description": "bezeichnung",
-    "material_group": "warengruppe",
-    "plant_name": "werk",
+    "material_number": "material_number",
+    "description": "description",
+    "material_group": "material_group",
+    "plant_name": "plant",
     "status": "status",
-    "stock": "bestand",
-    "stock_value": "bestandswert",
-    "changed_on": "geaendert",
+    "stock": "stock",
+    "stock_value": "stock_value",
+    "changed_on": "changed_on",
 }
 
-# EIN Client pro Prozess. Er haelt den Connection-Pool offen; ein
-# `httpx.get(...)` pro Callback wuerde jedes Mal neu verbinden.
+# ONE client per process. It keeps the connection pool open; an
+# `httpx.get(...)` per callback would reconnect every time.
 _client = DataProductClient()
 
-# Cache-Container statt eines nackten Modul-Globals, damit die Funktion unten
-# den Namen nicht per `global` neu binden muss.
+# A cache container instead of a bare module global, so the function below does
+# not have to rebind the name via `global`.
 #
-# WICHTIG: Der Cache ist PROZESSWEIT, das Dashboard bedient aber viele Nutzer.
-# Deshalb liegt er unter einem Schluessel aus den Rollen des Nutzers. Ohne den
-# bekaeme ein Nutzer ohne Berechtigung den Stand serviert, den ein berechtigter
-# Kollege kurz zuvor geholt hat -- die 403 der API wuerde nie gestellt, weil
-# gar keine Anfrage mehr liefe. Rollen und nicht Nutzername als Schluessel:
-# alle mit denselben Rechten sehen dieselben Daten, die Trefferquote bleibt
-# also hoch, und getrennt ist nur, was getrennt sein muss.
+# IMPORTANT: the cache is PROCESS-WIDE, but the dashboard serves many users.
+# That is why it lives under a key derived from the user's roles. Without it, a
+# user without permission would be served the snapshot a permitted colleague
+# fetched moments earlier -- the API's 403 would never be raised, because no
+# request would run at all. Roles and not user name as the key: everyone with
+# the same rights sees the same data, so the hit rate stays high, and only what
+# has to be separated is separated.
 _CACHE: dict[tuple[str, ...], dict[str, object]] = {}
 
 
 def _cache_slot() -> dict[str, object]:
-    """Der Cache-Eimer fuer die Rechte des aktuellen Nutzers."""
+    """The cache bucket for the current user's rights."""
     return _CACHE.setdefault(tuple(sorted(user_roles())), {})
 
 
 def _rows_to_frame(rows: list[dict]) -> pl.DataFrame:
-    """API-Zeilen -> DataFrame mit den Dashboard-Spalten.
+    """API rows -> DataFrame with the dashboard columns.
 
-    Rein und ohne HTTP: bekommt Zeilen herein, gibt einen DataFrame zurueck.
-    Dadurch ohne laufende API testbar (siehe tests/test_repository.py).
+    Pure and without HTTP: takes rows in, returns a DataFrame. That makes it
+    testable without a running API (see tests/test_repository.py).
     """
     if not rows:
-        # Leerer, aber SCHEMA-KORREKTER Frame. Ohne Schema wuerde die Tabelle
-        # beim ersten leeren Ergebnis mit "column not found" abstuerzen.
+        # Empty, but SCHEMA-CORRECT frame. Without a schema the table would
+        # crash with "column not found" on the first empty result.
         return pl.DataFrame(
-            schema={c: (pl.Int64 if c in ("bestand",) else
-                        pl.Float64 if c == "bestandswert" else pl.Utf8)
+            schema={c: (pl.Int64 if c in ("stock",) else
+                        pl.Float64 if c == "stock_value" else pl.Utf8)
                     for c in COLUMNS}
         )
 
     frame = pl.DataFrame(rows)
-    # Nur bekannte Felder uebernehmen und auf die UI-Namen umbenennen.
-    vorhanden = {api: ui for api, ui in _API_TO_UI.items() if api in frame.columns}
-    frame = frame.select(list(vorhanden)).rename(vorhanden)
+    # Take over only known fields and rename them to the UI names.
+    known = {api: ui for api, ui in _API_TO_UI.items() if api in frame.columns}
+    frame = frame.select(list(known)).rename(known)
 
-    # Fehlende Spalten ergaenzen: liefert die API ein Feld (noch) nicht, soll
-    # die Tabelle trotzdem rendern statt zu fliegen.
+    # Add missing columns: if the API does not (yet) deliver a field, the table
+    # should still render instead of blowing up.
     for column in COLUMNS:
         if column not in frame.columns:
-            log.warning("Datenprodukt %s/%s liefert kein Feld fuer Spalte '%s'.",
+            log.warning("Data product %s/%s delivers no field for column '%s'.",
                         PRODUCT, VERSION, column)
             frame = frame.with_columns(pl.lit(None).alias(column))
 
     return frame.select(COLUMNS).with_columns(
-        pl.col("bestand").cast(pl.Int64, strict=False)
+        pl.col("stock").cast(pl.Int64, strict=False)
     )
 
 
-def load_materials() -> pl.DataFrame:
-    """Holt das Datenprodukt beim API-Layer und formt es fuer die Tabelle."""
-    rows, meta = _client.fetch(PRODUCT, VERSION, token=access_token(), limit=MAX_ZEILEN)
-    log.info("Datenstand %s | Quelle %s | %s Zeilen | Cache %s",
-             meta.get("generated_at"), meta.get("source"),
-             meta.get("total_count"), meta.get("cache"))
+class RowCountChanged(DataProductError):
+    """The number of rows changed between two pages.
 
-    gesamt = meta.get("total_count") or len(rows)
-    if gesamt > len(rows):
-        # Nicht nur loggen: geloggte Fehler sieht im Betrieb niemand, und die
-        # Zahl im Management-Meeting waere dann falsch. Die UI zeigt den
-        # Hinweis neben dem Zeilenzaehler (siehe tabs/data_overview.py).
-        log.error("Datenprodukt gekuerzt: %s von %s Zeilen geladen (limit=%s). "
-                  "KPI-Kacheln und Zaehler sind unvollstaendig.",
-                  len(rows), gesamt, MAX_ZEILEN)
-        _cache_slot()["gekuerzt"] = (len(rows), gesamt)
+    The pages then no longer fit together -- rows can show up twice or go
+    missing. Inherits from DataProductError so that the fallback path in
+    `get_materials` applies if the second attempt fails as well.
+    """
+
+
+def _all_pages(token: str | None) -> tuple[list[dict], dict]:
+    """Fetches the data product page by page until the data set is complete.
+
+    The dashboard ALWAYS needs every row: the KPI tiles compute over the entire
+    data set, the filter dropdowns show the distinct values of all rows, and the
+    search runs in the browser over the complete data set. With only one page
+    all three would be silently wrong -- entries would be missing without
+    anything reporting it.
+
+    On the server side this is cheap: `material-overview` loads the whole data set
+    anyway and only cuts out the window afterwards, and for such products
+    limit/offset do NOT enter the cache key. Page two and all further pages
+    therefore come from the same cache entry, without a new query -- as long as
+    the data product's `cache_ttl` is greater than 0.
+
+    Loading stops as soon as a page is shorter than PAGE_SIZE: the API then has
+    nothing left, whatever `total_count` claims. Without that condition an API
+    that delivers less than it reports would loop here forever.
+    """
+    rows: list[dict] = []
+    meta: dict = {}
+    total: int | None = None
+
+    while True:
+        page, meta = _client.fetch(PRODUCT, VERSION, token=token,
+                                   limit=PAGE_SIZE, offset=len(rows))
+        if total is not None and meta.get("total_count") != total:
+            raise RowCountChanged(
+                f"total_count changed from {total} to {meta.get('total_count')}"
+            )
+        total = meta.get("total_count")
+        rows.extend(page)
+
+        if (len(page) < PAGE_SIZE or total is None
+                or len(rows) >= total or len(rows) >= MAX_ROWS):
+            return rows, meta
+
+
+def load_materials() -> pl.DataFrame:
+    """Fetches the data product from the API layer and shapes it for the table."""
+    token = access_token()
+    try:
+        rows, meta = _all_pages(token)
+    except RowCountChanged as shifted:
+        # Someone wrote while we were loading. Exactly one new attempt; if that
+        # fails too, the fallback path in get_materials applies.
+        log.warning("Data set changed while loading (%s) -- trying again.", shifted)
+        rows, meta = _all_pages(token)
+
+    log.info("Snapshot %s | source %s | %s of %s rows | cache %s",
+             meta.get("generated_at"), meta.get("source"),
+             len(rows), meta.get("total_count"), meta.get("cache"))
+
+    total = meta.get("total_count") or len(rows)
+    if total > len(rows):
+        # Not just logging: nobody sees logged errors in production, and the
+        # number in the management meeting would then be wrong. The UI shows
+        # the hint next to the row counter (see tabs/data_overview.py).
+        log.error("Data product truncated: %s of %s rows loaded (upper bound %s). "
+                  "KPI tiles and counters are incomplete.",
+                  len(rows), total, MAX_ROWS)
+        _cache_slot()["truncated"] = (len(rows), total)
     else:
-        _cache_slot().pop("gekuerzt", None)
+        _cache_slot().pop("truncated", None)
 
     if meta.get("deprecated"):
-        log.warning("Datenprodukt %s/%s ist abgekuendigt (Sunset %s) -- bitte migrieren.",
+        log.warning("Data product %s/%s is deprecated (sunset %s) -- please migrate.",
                     PRODUCT, VERSION, meta.get("sunset"))
     return _rows_to_frame(rows)
 
 
 def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
-    """Gecachter Zugriff. Das ist die Funktion, die der Rest des Dashboards nutzt.
+    """Cached access. This is the function the rest of the dashboard uses.
 
-    Verhalten bei API-Ausfall: Gibt es noch einen (abgelaufenen) Stand im Cache,
-    wird dieser weiter ausgeliefert und eine Warnung geloggt -- ein Dashboard,
-    das kurz veraltete Zahlen zeigt, ist besser als eines, das leer ist. Gibt es
-    keinen, wird der Fehler durchgereicht, statt stillschweigend eine leere
-    Tabelle zu zeigen.
+    Behaviour when the API is down: if there is still an (expired) snapshot in
+    the cache, it keeps being served and a warning is logged -- a dashboard
+    showing briefly outdated numbers is better than one that is empty. If there
+    is none, the error is passed on instead of silently showing an empty table.
     """
     slot = _cache_slot()
-    frisch_bis = float(slot.get("expires_at", 0))  # type: ignore[arg-type]
-    if not force_reload and slot.get("frame") is not None and time.monotonic() < frisch_bis:
+    fresh_until = float(slot.get("expires_at", 0))  # type: ignore[arg-type]
+    if not force_reload and slot.get("frame") is not None and time.monotonic() < fresh_until:
         return slot["frame"]  # type: ignore[return-value]
 
     try:
         frame = load_materials()
     except (NotAuthenticatedError, NotAuthorisedError):
-        # Rechtefehler NICHT aus dem Cache beantworten: Der alte Stand stammt
-        # von einer Sitzung, die die Daten sehen durfte. Ihn weiterzureichen
-        # waere genau die Luecke, die der Rollen-Schluessel oben verhindert.
+        # Do NOT answer permission errors from the cache: the old snapshot
+        # comes from a session that was allowed to see the data. Passing it on
+        # would be exactly the gap the role key above prevents.
         raise
     except DataProductError as exc:
         if slot.get("frame") is not None:
-            log.warning("API nicht erreichbar (%s) -- liefere den letzten Stand weiter.", exc)
+            log.warning("API unreachable (%s) -- serving the last snapshot.", exc)
             return slot["frame"]  # type: ignore[return-value]
-        log.error("API nicht erreichbar und kein Stand im Cache: %s", exc)
+        log.error("API unreachable and no snapshot in the cache: %s", exc)
         raise
 
     slot["frame"] = frame
@@ -190,17 +248,39 @@ def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
     return frame
 
 
-def kuerzung() -> tuple[int, int] | None:
-    """(geladen, gesamt), falls der letzte Abruf gekuerzt wurde -- sonst None.
+def invalidate() -> None:
+    """Call after a successful write action -- the next access fetches anew.
 
-    Die UI liest das, um den Zeilenzaehler zu kennzeichnen. Eine Tabelle, die
-    vollstaendig aussieht und es nicht ist, ist die teuerste Fehlerklasse.
+        response = _client.post_mapping(...)     # later: "Apply data mappings" tab
+        repository.invalidate()
+
+    On a write the API layer clears its own cache (the `invalidates(...)`
+    dependency on the route). The dashboard learns nothing about that and would
+    otherwise show the old snapshot for up to CACHE_TTL_SECONDS: the user
+    creates a mapping, switches to the overview and does not see their own
+    change -- exactly the impression that saving has failed.
+
+    ALL role buckets are cleared, not just one's own: the change affects
+    everyone who sees the data.
+
+    Limitation: if Dash runs with several worker processes, this only clears
+    the cache of the process that handled the click. The others show the old
+    snapshot until the TTL expires.
     """
-    return _cache_slot().get("gekuerzt")  # type: ignore[return-value]
+    _CACHE.clear()
+
+
+def truncation() -> tuple[int, int] | None:
+    """(loaded, total) if the last fetch was truncated -- otherwise None.
+
+    The UI reads this to mark the row counter. A table that looks complete and
+    is not is the most expensive class of error.
+    """
+    return _cache_slot().get("truncated")  # type: ignore[return-value]
 
 
 def distinct_values(column: str) -> list[str]:
-    """Eindeutige, sortierte Werte einer Spalte -- fuer die Filter-Dropdowns."""
+    """Unique, sorted values of a column -- for the filter dropdowns."""
     values = (
         get_materials()
         .select(pl.col(column))

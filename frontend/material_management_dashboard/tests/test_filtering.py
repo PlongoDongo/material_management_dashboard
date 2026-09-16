@@ -1,4 +1,4 @@
-"""Tests für die Filterlogik (rein, ohne Dash/DB)."""
+"""Tests of the filter logic (pure, without Dash/DB)."""
 import polars as pl
 import pytest
 
@@ -9,14 +9,14 @@ from data.filtering import apply_filters, normalize_filters, EMPTY_FILTERS
 def df() -> pl.DataFrame:
     return pl.DataFrame(
         {
-            "material_nr": ["MAT-1", "MAT-2", "MAT-3", "MAT-4"],
-            "bezeichnung": ["Dichtring", "Schraube", "Kabel", "Ölfilter"],
-            "warengruppe": ["Rohstoffe", "", "Verpackung", None],
-            "werk": ["Werk Köln", "Werk Berlin", "Werk Köln", "Werk Hamburg"],
+            "material_number": ["MAT-1", "MAT-2", "MAT-3", "MAT-4"],
+            "description": ["Dichtring", "Schraube", "Kabel", "Ölfilter"],
+            "material_group": ["Rohstoffe", "", "Verpackung", None],
+            "plant": ["Werk Köln", "Werk Berlin", "Werk Köln", "Werk Hamburg"],
             "status": ["Aktiv", "Gesperrt", "Aktiv", "Obsolet"],
             "einheit": ["M", "ST", "M", "L"],
-            "bestand": [100, 200, 300, 400],
-            "geaendert": ["01.01.2026"] * 4,
+            "stock": [100, 200, 300, 400],
+            "changed_on": ["01.01.2026"] * 4,
         }
     )
 
@@ -29,7 +29,7 @@ def test_empty_filter_returns_all(df: pl.DataFrame) -> None:
 def test_status_filter(df: pl.DataFrame) -> None:
     out = apply_filters(df, {"status": ["Aktiv"]})
     assert out.height == 2
-    assert set(out["material_nr"].to_list()) == {"MAT-1", "MAT-3"}
+    assert set(out["material_number"].to_list()) == {"MAT-1", "MAT-3"}
 
 
 def test_multi_status_filter(df: pl.DataFrame) -> None:
@@ -37,19 +37,19 @@ def test_multi_status_filter(df: pl.DataFrame) -> None:
     assert out.height == 3
 
 
-def test_werk_filter(df: pl.DataFrame) -> None:
-    assert apply_filters(df, {"werk": ["Werk Köln"]}).height == 2
+def test_plant_filter(df: pl.DataFrame) -> None:
+    assert apply_filters(df, {"plant": ["Werk Köln"]}).height == 2
 
 
-def test_warengruppe_filter(df: pl.DataFrame) -> None:
-    assert apply_filters(df, {"warengruppe": ["Verpackung"]}).height == 1
+def test_material_group_filter(df: pl.DataFrame) -> None:
+    assert apply_filters(df, {"material_group": ["Verpackung"]}).height == 1
 
 
-def test_ohne_klassifizierung(df: pl.DataFrame) -> None:
-    """Erfasst leere UND null-Warengruppen."""
+def test_unclassified_filter(df: pl.DataFrame) -> None:
+    """Catches empty AND null material groups."""
     out = apply_filters(df, {"ohne_klass": True})
     assert out.height == 2
-    assert set(out["material_nr"].to_list()) == {"MAT-2", "MAT-4"}
+    assert set(out["material_number"].to_list()) == {"MAT-2", "MAT-4"}
 
 
 def test_search_case_insensitive(df: pl.DataFrame) -> None:
@@ -58,10 +58,10 @@ def test_search_case_insensitive(df: pl.DataFrame) -> None:
 
 
 def test_combined_filters(df: pl.DataFrame) -> None:
-    out = apply_filters(df, {"status": ["Aktiv"], "werk": ["Werk Köln"]})
+    out = apply_filters(df, {"status": ["Aktiv"], "plant": ["Werk Köln"]})
     assert out.height == 2
 
 
 def test_normalize_fills_defaults() -> None:
     n = normalize_filters({"status": ["Aktiv"]})
-    assert n["werk"] == [] and n["search"] == "" and n["ohne_klass"] is False
+    assert n["plant"] == [] and n["search"] == "" and n["ohne_klass"] is False

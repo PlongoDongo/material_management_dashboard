@@ -1,29 +1,29 @@
 """
-Filter-Callbacks -- das Herzstück der Filter-/KPI-Interaktion.
+Filter callbacks -- the heart of the filter/KPI interaction.
 
-Datenfluss (bewusst zyklusfrei):
+Data flow (deliberately free of cycles):
 
-                                     ┌──►  store-filters   (kanonisch, session)
+                                     ┌──►  store-filters   (canonical, session)
                                      │
-    [Filter-Steuerelemente]  ─────────┼──►  [Tabelle + Zähler]
-            ▲   ▲   ▲                │
-            │   │   │                └──►  [KPI-Kacheln aktiv/inaktiv]  ← im Browser
-            │   │   └──── Klick auf KPI-Kachel  (setzt Status/Flag,
-            │   │                                erneuter Klick hebt auf)
-            │   └──────── Klick auf leere Fläche (hebt den KPI-Filter auf)
-            └──────────── "Zurücksetzen"-Button (leert ALLE Steuerelemente)
+    [filter controls]  ──────────────┼──►  [table + record counter]
+         ▲   ▲   ▲                   │
+         │   │   │                   └──►  [KPI tiles active/inactive]  ← in the browser
+         │   │   └──── click on a KPI tile   (sets status/flag,
+         │   │                                clicking again clears it)
+         │   └──────── click on empty space  (clears the KPI filter)
+         └──────────── "Zurücksetzen" button (clears ALL controls)
 
-Die Steuerelemente in der rechten Sidebar sind die einzige Wahrheitsquelle
-des Filters. KPI-Klick und Reset schreiben NUR in diese Steuerelemente; von
-dort fließt es weiter. Dadurch gibt es keinen Rückkanal zurück in die
-Steuerelemente und damit keinen Callback-Zyklus.
+The controls in the right-hand sidebar are the single source of truth for the
+filter. A KPI click and the reset write ONLY into those controls; from there it
+flows onwards. That way there is no back channel into the controls, and hence
+no callback cycle.
 
-Zur Latenz: Store, Tabelle und Kacheln hängen alle DIREKT an den
-Steuerelementen und laufen damit parallel. Früher war es eine Kette
-(Steuerelement -> Store -> Tabelle -> Kacheln); jede Stufe kostete eine
-eigene Server-Runde, was sich beim Klick als spürbare Verzögerung summierte.
-Die Kachel-Hervorhebung ist reine Darstellung und läuft clientseitig -- also
-ganz ohne Server-Runde (assets/kpi_highlight.js).
+On latency: store, table and tiles all hang DIRECTLY off the controls and
+therefore run in parallel. It used to be a chain (control -> store -> table ->
+tiles); every stage cost a server round trip of its own, which added up to a
+noticeable delay on each click. The tile highlighting is pure presentation and
+runs client-side -- that is, without any server round trip at all
+(assets/kpi_highlight.js).
 """
 from __future__ import annotations
 
@@ -43,22 +43,22 @@ from dash import (
 
 from config import IDS
 from data.filtering import apply_filters
-from data.repository import get_materials, kuerzung
+from data.repository import get_materials, truncation
 from kpi.kpi_rules import kpi_filter_map
 
-# Wert eines Filter-Steuerelements, wie ein Callback ihn zurückgibt: die neue
-# Auswahl -- oder `no_update`, wenn das Element unangetastet bleiben soll.
+# Value of a filter control as a callback returns it: the new selection -- or
+# `no_update` when the control is to be left untouched.
 Selection = list[str] | NoUpdate
 
-# Schneller Lookup: KPI-ID -> Filter-Update
+# Fast lookup: KPI id -> filter update
 _KPI_FILTER = kpi_filter_map()
 
-# Die fünf Steuerelemente, aus denen sich der Filter zusammensetzt. Store und
-# Tabelle hängen beide direkt hier dran, damit sie parallel laufen.
+# The five controls the filter is made up of. Store and table both hang
+# directly off these so that they run in parallel.
 _FILTER_INPUTS = (
     Input(IDS.F_STATUS, "value"),
-    Input(IDS.F_WERK, "value"),
-    Input(IDS.F_WARENGRUPPE, "value"),
+    Input(IDS.F_PLANT, "value"),
+    Input(IDS.F_MATERIAL_GROUP, "value"),
     Input(IDS.F_SEARCH, "value"),
     Input(IDS.F_OHNE_KLASS, "value"),
 )
@@ -66,20 +66,20 @@ _FILTER_INPUTS = (
 
 def filter_state(
     status: list[str] | None,
-    werk: list[str] | None,
-    warengruppe: list[str] | None,
+    plant: list[str] | None,
+    material_group: list[str] | None,
     search: str | None,
     ohne_klass: list[str] | None,
 ) -> dict:
-    """Steuerelement-Werte -> kanonischer Filterzustand.
+    """Control values -> canonical filter state.
 
-    Eine Funktion für beide Verbraucher (Store und Tabelle), damit die
-    Normalisierung nicht auseinanderlaufen kann.
+    One function for both consumers (store and table), so that the
+    normalisation cannot drift apart.
     """
     return {
         "status": status or [],
-        "werk": werk or [],
-        "warengruppe": warengruppe or [],
+        "plant": plant or [],
+        "material_group": material_group or [],
         "search": search or "",
         "ohne_klass": bool(ohne_klass),  # ["on"] -> True, [] -> False
     }
@@ -88,15 +88,15 @@ def filter_state(
 def _kpi_is_active(
     kpi_id: str, status: list[str] | None, ohne_klass: list[str] | None
 ) -> bool:
-    """Greift der Filter dieser Kachel gerade genau so, wie sie ihn setzen würde?
+    """Is this tile's filter currently in effect exactly as the tile would set it?
 
-    Die Aktivität wird bewusst aus dem GEGENWÄRTIGEN Filterzustand abgeleitet
-    und nicht separat gespeichert. So bleibt es korrekt, wenn der User den
-    Status stattdessen von Hand in der Sidebar ändert -- und die Architektur
-    bleibt zyklusfrei (kein Rückkanal Store -> Steuerelement).
+    Whether a tile is active is deliberately derived from the CURRENT filter
+    state instead of being stored separately. That keeps it correct when the
+    user changes the status by hand in the sidebar instead -- and it keeps the
+    architecture free of cycles (no back channel store -> control).
 
-    Werk / Warengruppe / Suche bleiben außen vor: die Kacheln steuern nur die
-    Dimensionen Status und "ohne Klassifizierung".
+    Plant / material group / search stay out of it: the tiles only drive the
+    status and "without classification" dimensions.
     """
     flt = _KPI_FILTER.get(kpi_id, {})
     return (
@@ -108,8 +108,8 @@ def _kpi_is_active(
 def register_filter_callbacks(app: Dash) -> None:
 
     # ---------------------------------------------------------------
-    # 1) Klick auf eine KPI-Kachel  ->  Filter setzen ODER (bei erneutem
-    #    Klick auf die bereits aktive Kachel) wieder aufheben.
+    # 1) Click on a KPI tile  ->  set the filter OR (when the already
+    #    active tile is clicked again) clear it.
     # ---------------------------------------------------------------
     @app.callback(
         Output(IDS.F_STATUS, "value", allow_duplicate=True),
@@ -128,7 +128,7 @@ def register_filter_callbacks(app: Dash) -> None:
         if not trigger or "kpi" not in trigger:
             return no_update, no_update
 
-        # Toggle: dieselbe Kachel erneut -> Status-/Klassifizierungsfilter leeren.
+        # Toggle: the same tile again -> clear the status/classification filter.
         if _kpi_is_active(trigger["kpi"], cur_status, cur_ohne_klass):
             return [], []
 
@@ -138,13 +138,13 @@ def register_filter_callbacks(app: Dash) -> None:
         return status_value, ohne_klass_value
 
     # ---------------------------------------------------------------
-    # 1b) Klick auf eine leere Fläche im Tab-Bereich  ->  KPI-Filter aufheben.
-    #     Der Store wird von assets/empty_click.js gesetzt; dort steckt die
-    #     Prüfung, ob wirklich "ins Leere" geklickt wurde.
+    # 1b) Click on empty space inside the tab area  ->  clear the KPI filter.
+    #     The store is set by assets/empty_click.js; that is where the check
+    #     lives for whether the click really landed "on nothing".
     #
-    #     Bewusst NUR Status + "ohne Klassifizierung": Suche, Werk und
-    #     Warengruppe hat der User explizit in der Sidebar gesetzt -- die
-    #     räumt weiterhin nur "Filter zurücksetzen" ab.
+    #     Deliberately ONLY status + "without classification": search, plant
+    #     and material group were set explicitly by the user in the sidebar --
+    #     those are still only cleared by "Filter zurücksetzen".
     # ---------------------------------------------------------------
     @app.callback(
         Output(IDS.F_STATUS, "value", allow_duplicate=True),
@@ -159,18 +159,18 @@ def register_filter_callbacks(app: Dash) -> None:
         cur_status: list[str] | None,
         cur_ohne_klass: list[str] | None,
     ) -> tuple[Selection, Selection]:
-        # Nichts aktiv -> nichts tun (spart einen überflüssigen Tabellen-Rerender).
+        # Nothing active -> do nothing (saves a pointless table re-render).
         if not cur_status and not cur_ohne_klass:
             return no_update, no_update
         return [], []
 
     # ---------------------------------------------------------------
-    # 2) "Filter zurücksetzen"  ->  leert alle Steuerelemente
+    # 2) "Filter zurücksetzen"  ->  clears all controls
     # ---------------------------------------------------------------
     @app.callback(
         Output(IDS.F_STATUS, "value", allow_duplicate=True),
-        Output(IDS.F_WERK, "value"),
-        Output(IDS.F_WARENGRUPPE, "value"),
+        Output(IDS.F_PLANT, "value"),
+        Output(IDS.F_MATERIAL_GROUP, "value"),
         Output(IDS.F_SEARCH, "value"),
         Output(IDS.F_OHNE_KLASS, "value", allow_duplicate=True),
         Input(IDS.F_RESET, "n_clicks"),
@@ -182,9 +182,9 @@ def register_filter_callbacks(app: Dash) -> None:
         return [], [], [], "", []
 
     # ---------------------------------------------------------------
-    # 3) Steuerelemente  ->  kanonischer Filterzustand (Store)
-    #    Läuft auch beim Laden (prevent_initial_call=False), damit der
-    #    Store initial korrekt gefüllt ist.
+    # 3) Controls  ->  canonical filter state (store)
+    #    Runs on page load as well (prevent_initial_call=False) so that the
+    #    store is filled correctly right from the start.
     # ---------------------------------------------------------------
     @app.callback(
         Output(IDS.STORE_FILTERS, "data"),
@@ -192,22 +192,22 @@ def register_filter_callbacks(app: Dash) -> None:
     )
     def build_filter_state(
         status: list[str] | None,
-        werk: list[str] | None,
-        warengruppe: list[str] | None,
+        plant: list[str] | None,
+        material_group: list[str] | None,
         search: str | None,
         ohne_klass: list[str] | None,
     ) -> dict:
-        return filter_state(status, werk, warengruppe, search, ohne_klass)
+        return filter_state(status, plant, material_group, search, ohne_klass)
 
     # ---------------------------------------------------------------
-    # 4) Steuerelemente  ->  gefilterte Tabelle + Datensatz-Zähler
+    # 4) Controls  ->  filtered table + record counter
     #
-    #    Hängt bewusst an den Steuerelementen und NICHT am Store: sonst
-    #    wäre die Kette Klick -> Filter -> Store -> Tabelle drei serielle
-    #    Server-Runden lang. So laufen Store und Tabelle parallel, und die
-    #    Tabelle ist eine Runde früher da. `store-filters` bleibt der
-    #    kanonische, session-persistente Zustand -- die Tabelle wartet nur
-    #    nicht mehr darauf.
+    #    Deliberately hangs off the controls and NOT off the store: otherwise
+    #    the chain click -> filter -> store -> table would be three serial
+    #    server round trips long. This way store and table run in parallel and
+    #    the table is there one round trip earlier. `store-filters` remains the
+    #    canonical, session-persistent state -- the table simply no longer
+    #    waits for it.
     # ---------------------------------------------------------------
     @app.callback(
         Output(IDS.TABLE, "data"),
@@ -216,34 +216,34 @@ def register_filter_callbacks(app: Dash) -> None:
     )
     def render_table(
         status: list[str] | None,
-        werk: list[str] | None,
-        warengruppe: list[str] | None,
+        plant: list[str] | None,
+        material_group: list[str] | None,
         search: str | None,
         ohne_klass: list[str] | None,
     ) -> tuple[list[dict], str]:
-        filters = filter_state(status, werk, warengruppe, search, ohne_klass)
+        filters = filter_state(status, plant, material_group, search, ohne_klass)
         df_all = get_materials()
         df = apply_filters(df_all, filters)
         counter = f"{df.height} / {df_all.height} Datensätze"
 
-        # Hat die API mehr Zeilen, als wir geladen haben? Dann sieht die Tabelle
-        # vollständig aus, ist es aber nicht -- und die KPI-Kacheln zählen die
-        # fehlenden Zeilen ebenfalls nicht mit. Das muss man sehen können.
-        gekuerzt = kuerzung()
-        if gekuerzt:
-            geladen, gesamt = gekuerzt
-            counter += f"  ⚠ gekürzt: {geladen:,} von {gesamt:,} geladen".replace(",", ".")
+        # Does the API hold more rows than we have loaded? Then the table looks
+        # complete but is not -- and the KPI tiles do not count the missing rows
+        # either. That has to be visible.
+        truncated = truncation()
+        if truncated:
+            loaded, total = truncated
+            counter += f"  ⚠ gekürzt: {loaded:,} von {total:,} geladen".replace(",", ".")
         return df.to_dicts(), counter
 
     # ---------------------------------------------------------------
-    # 5) Steuerelemente  ->  aktive/inaktive KPI-Kacheln   (CLIENTSEITIG)
+    # 5) Controls  ->  active/inactive KPI tiles   (CLIENT-SIDE)
     #
-    #    Reine Darstellung, also im Browser statt auf dem Server: die
-    #    Kacheln schalten um, sobald der Klick-Callback zurück ist, ohne
-    #    eine weitere Server-Runde und ohne auf das Neurendern der
-    #    DataTable zu warten. Die Regel (welcher Filter zu welcher Kachel
-    #    gehört) reicht `store-kpi-filters` aus kpi/kpi_rules.py herein.
-    #    Implementiert in assets/kpi_highlight.js
+    #    Pure presentation, so in the browser instead of on the server: the
+    #    tiles switch over as soon as the click callback is back, without a
+    #    further server round trip and without waiting for the DataTable to
+    #    re-render. The rule (which filter belongs to which tile) is handed in
+    #    by `store-kpi-filters` from kpi/kpi_rules.py.
+    #    Implemented in assets/kpi_highlight.js
     # ---------------------------------------------------------------
     app.clientside_callback(
         ClientsideFunction(namespace="kpi", function_name="highlight"),

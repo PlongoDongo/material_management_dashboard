@@ -1,39 +1,39 @@
 """
-Wiederverwendbarer Header (Team-Standard).
+Reusable header (team standard).
 
-Aufbau (Reihenfolge wie gehabt):
+Structure (same order as before):
 
-    ┌─ Restriction-Mini-Leiste ("Restricted") ─────────────────────────────┐
+    ┌─ Restriction mini bar ("Restricted") ─────────────────────────────────┐
     ├───────────────────────────────────────────────────────────────────────┤
-    │ [☰ Menü] │ Logo │ Titel/Untertitel        …Filler…        │ [⛃ Filter] │
+    │ [☰ Menu] │ Logo │ Title/Subtitle         …Filler…        │ [⛃ Filter] │
     └───────────────────────────────────────────────────────────────────────┘
 
-Wiederverwendung in anderen Dashboards
---------------------------------------
-`header_layout()` ist bewusst parametrisiert -- Titel, Untertitel, Logo und
-Restriction-Text kommen als Argumente herein, die Button-IDs sind einstellbar.
-Ein neues Dashboard ruft einfach `header_layout(title=..., subtitle=...)` auf;
-die zugehörigen Öffnen/Schließen-Callbacks stehen in
-`callbacks/header_callbacks.py`.
+Reuse in other dashboards
+-------------------------
+`header_layout()` is deliberately parameterized -- title, subtitle, logo and
+restriction text come in as arguments, and the button IDs are configurable.
+A new dashboard simply calls `header_layout(title=..., subtitle=...)`; the
+matching open/close callbacks live in `callbacks/header_callbacks.py`.
 
-Der Header enthält bewusst KEINE Sidebars mehr. Nav- und Filter-Sidebar sind
-eigene Komponenten (components/nav_sidebar.py, filter_sidebar.py) und liegen
-im Top-Level-Layout. So bleibt der Header schlank und in jedem Dashboard
-gleich, während jede App ihre eigenen Sidebars daneben hängt.
+The header deliberately contains NO sidebars any more. The nav and filter
+sidebars are components of their own (components/nav_sidebar.py,
+filter_sidebar.py) and live in the top-level layout. That keeps the header
+lean and identical in every dashboard, while each app hangs its own sidebars
+next to it.
 
 Icons
 -----
-Material Icons werden über ein Stylesheet (in app.py als external_stylesheet
-verlinkt) geladen und per Ligatur-Namen referenziert -- also
-`html.I("menu", className="material-icons-outlined")` statt eines
-Sonderzeichens im String. Damit hängt die Darstellung nicht an einem
-kopierten Glyphen und bleibt konsistent.
+Material Icons are loaded via a stylesheet (linked in app.py as an
+external_stylesheet) and referenced by ligature name -- so
+`html.I("menu", className="material-icons-outlined")` instead of a special
+character inside the string. That way the rendering does not depend on a
+copied glyph and stays consistent.
 
 Styling
 -------
-Die verwendeten Klassen (`team-header`, `main-header`, `panel`, `button-icon`,
-`divider` …) sind euer Team-Standard. Eine schlanke Basis-Definition liegt in
-assets/style.css und kann von eurem zentralen Stylesheet überschrieben werden.
+The classes used here (`team-header`, `main-header`, `panel`, `button-icon`,
+`divider` …) are your team standard. A lean base definition lives in
+assets/style.css and can be overridden by your central stylesheet.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ from config import IDS, APP_TITLE, APP_SUBTITLE, RESTRICTION_TEXT, LOGO_SRC
 
 
 def _icon_button(btn_id: str, icon: str, title: str) -> html.Li:
-    """Ein Icon-Button in einer <li> -- passt in die icon-list des Headers."""
+    """An icon button inside an <li> -- fits into the header's icon-list."""
     return html.Li(
         html.Button(
             html.I(icon, className="material-icons-outlined"),
@@ -70,13 +70,13 @@ def header_layout(
     return html.Header(
         className="team-header dark",
         children=[
-            # Restriction-Mini-Leiste darüber
+            # Restriction mini bar on top
             html.Div(restriction_text, className="restriction-header"),
-            # Hauptzeile
+            # Main row
             html.Div(
                 className="main-header horizontal",
                 children=[
-                    # Navigationsmenü (Burger) -> linke Nav-Sidebar
+                    # Navigation menu (burger) -> left nav sidebar
                     html.Div(
                         className="panel panel-content",
                         children=[
@@ -102,7 +102,7 @@ def header_layout(
                         ],
                     ),
                     _divider(),
-                    # Titel + Untertitel
+                    # Title + subtitle
                     html.Div(
                         className="panel panel-fixed-300",
                         children=[
@@ -115,10 +115,10 @@ def header_layout(
                             )
                         ],
                     ),
-                    # Filler schiebt die rechte Seite ans Ende
+                    # Filler pushes the right-hand side to the end
                     html.Div(className="panel panel-stretch"),
                     _divider(),
-                    # Filtermenü -> rechte Filter-Sidebar
+                    # Filter menu -> right filter sidebar
                     html.Div(
                         className="panel panel-content",
                         children=[

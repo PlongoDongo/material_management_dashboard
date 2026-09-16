@@ -14,6 +14,7 @@ import datetime as dt
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from core.errors import problem_responses
 from core.security import CurrentPrincipal
 from products.base import DataProduct
 from products.registry import registry
@@ -99,7 +100,8 @@ async def list_products(principal: CurrentPrincipal) -> list[CatalogEntry]:
     return entries
 
 
-@router.get("/{name}", summary="One data product with all its versions")
+@router.get("/{name}", summary="One data product with all its versions",
+            responses=problem_responses(404))
 async def get_product(name: str, principal: CurrentPrincipal) -> CatalogEntry:
     versions = [p for p in registry.versions_of(name)
                 if principal.may_access(p.required_groups)]

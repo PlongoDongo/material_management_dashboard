@@ -1,4 +1,4 @@
-"""Sorgt dafür, dass PyTest das Projekt-Root im Importpfad hat."""
+"""Makes sure PyTest has the project root on the import path."""
 import os
 import sys
 

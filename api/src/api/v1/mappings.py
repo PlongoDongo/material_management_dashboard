@@ -30,6 +30,7 @@ from fastapi import APIRouter, Body, Depends, status
 from pydantic import BaseModel, Field
 
 from api.deps import SourcesDep
+from core.errors import problem_responses
 from core.security import CurrentPrincipal, requires
 from products.cache import invalidates
 
@@ -73,10 +74,7 @@ class MappingOut(MappingIn):
     status_code=status.HTTP_201_CREATED,
     summary="Create a new mapping",
     dependencies=[Depends(requires(WRITE_ROLE)), Depends(invalidates(*INVALIDATES))],
-    responses={
-        403: {"description": f"The caller lacks the '{WRITE_ROLE}' role."},
-        409: {"description": "The mapping already exists."},
-    },
+    responses=problem_responses(409),
 )
 async def create_mapping(
     payload: Annotated[MappingIn, Body()],
@@ -108,7 +106,7 @@ async def create_mapping(
     "/{mapping_id}",
     summary="Partially change a mapping",
     dependencies=[Depends(requires(WRITE_ROLE)), Depends(invalidates(*INVALIDATES))],
-    responses={403: {"description": f"The caller lacks the '{WRITE_ROLE}' role."}},
+    responses=problem_responses(404, 409),
 )
 async def patch_mapping(
     mapping_id: str,

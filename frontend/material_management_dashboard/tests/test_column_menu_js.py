@@ -1,10 +1,10 @@
-"""Tests für die clientseitige Spaltenauswahl (assets/column_menu.js).
+"""Tests of the clientside column selection (assets/column_menu.js).
 
-Wie beim KPI-Highlight läuft die Logik im Browser; hier wird sie über node
-mit minimalen `window`/`document`-Stubs ausgeführt. Geprüft werden die beiden
-reinen Funktionen:
-  - applyVisibility(values, options) -> auszublendende Spalten
-  - selectAll(nAll, nNone, options)  -> neuer Wert der Checkliste
+As with the KPI highlight, the logic runs in the browser; here it is executed
+through node with minimal `window`/`document` stubs. The two pure functions are
+checked:
+  - applyVisibility(values, options) -> columns to hide
+  - selectAll(nAll, nNone, options)  -> new value of the checklist
 """
 import json
 import shutil
@@ -18,7 +18,7 @@ from data.schema import COLUMNS, FIXED_COLUMNS
 ASSET = Path(__file__).resolve().parents[1] / "assets" / "column_menu.js"
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None, reason="node nicht installiert"
+    shutil.which("node") is None, reason="node not installed"
 )
 
 _TOGGLEABLE = [c for c in COLUMNS if c not in FIXED_COLUMNS]
@@ -62,8 +62,8 @@ def test_partial_selection_hides_complement() -> None:
 
 
 def test_fixed_columns_never_hidden() -> None:
-    """Die fixierten Spalten tauchen gar nicht in den Optionen auf ->
-    können also nie ausgeblendet werden, egal was angehakt ist."""
+    """The fixed columns do not appear in the options at all ->
+    so they can never be hidden, no matter what is ticked."""
     hidden = _run("applyVisibility", [[], _OPTIONS])
     for c in FIXED_COLUMNS:
         assert c not in hidden

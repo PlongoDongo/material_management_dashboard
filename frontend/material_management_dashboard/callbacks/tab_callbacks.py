@@ -1,18 +1,18 @@
 """
-Tab-Callbacks: Umschalten der drei Footer-Tabs.
+Tab callbacks: switching between the three footer tabs.
 
-Ansatz: Alle drei Tab-Inhalte liegen dauerhaft im DOM; wir schalten nur die
-Sichtbarkeit per `display`-Style um. Das ist der robusteste Weg, weil so alle
-Callback-Ziele (v. a. die Tabelle) stets existieren und der Filterzustand
-beim Zurückwechseln sofort greift.
+Approach: all three tab contents stay in the DOM permanently; we only toggle
+their visibility via the `display` style. That is the most robust way, because
+it keeps every callback target (above all the table) in existence at all times,
+so the filter state takes effect immediately when switching back.
 
-Persistenz der Filter über Tabs
--------------------------------
-Weil Header, beide Sidebars UND alle Tab-Inhalte im selben, nie neu
-gerenderten Top-Level-Layout hängen, gehen weder die Filter-Steuerelemente
-noch der `store-filters`-Zustand beim Tab-Wechsel verloren. Genau das ist der
-Grund, warum wir hier NICHT mit Plotly Pages (URL-Routing) arbeiten -- dort
-würde der Seiteninhalt bei jedem Wechsel ausgetauscht (siehe README).
+Persistence of the filters across tabs
+--------------------------------------
+Because the header, both sidebars AND all tab contents hang off the same
+top-level layout, which is never re-rendered, neither the filter controls nor
+the `store-filters` state are lost when switching tabs. That is precisely the
+reason why we do NOT use Plotly Pages (URL routing) here -- with those, the page
+content would be swapped out on every switch (see README).
 """
 from __future__ import annotations
 
@@ -20,13 +20,13 @@ from dash import Dash, Input, Output, ctx
 
 from config import IDS, TABS
 
-# Sichtbar = flex: .tab-content ist ein Spalten-Flex-Container (Höhe füllen,
-# Tabelle unten am Footer verankert). Ein Inline-"block" würde das
-# CSS-Layout überschreiben, darum hier bewusst "flex".
+# Visible = flex: .tab-content is a column flex container (fill the height,
+# table anchored at the bottom against the footer). An inline "block" would
+# override the CSS layout, hence "flex" here on purpose.
 _VISIBLE = {"display": "flex"}
 _HIDDEN = {"display": "none"}
 
-# Zuordnung Tab-ID -> Inhaltscontainer-ID
+# Mapping tab id -> content container id
 _TAB_CONTENT = {
     IDS.TAB_OVERVIEW: IDS.CONTENT_OVERVIEW,
     IDS.TAB_MANAGE: IDS.CONTENT_MANAGE,

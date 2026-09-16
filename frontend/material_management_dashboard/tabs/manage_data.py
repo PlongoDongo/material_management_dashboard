@@ -1,8 +1,8 @@
 """
-Tab 2 -- "Manage data": provisorischer Platzhalter.
+Tab 2 -- "Manage data": provisional placeholder.
 
-Nur Gerüst; Header, Footer und die geteilten Sidebars sind identisch, weil sie
-im Top-Level-Layout liegen und NICHT Teil des Tab-Inhalts sind.
+Scaffolding only; header, footer and the shared sidebars are identical here,
+because they live in the top-level layout and are NOT part of the tab content.
 """
 from __future__ import annotations
 

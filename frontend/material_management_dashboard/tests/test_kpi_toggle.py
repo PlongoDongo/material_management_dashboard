@@ -1,9 +1,9 @@
-"""Tests für das Toggle-Verhalten der KPI-Kacheln.
+"""Tests of the toggle behaviour of the KPI tiles.
 
-Die Callbacks werden ohne laufenden Dash-Server geprüft: `register_filter_callbacks`
-bekommt eine Attrappe untergeschoben, die die Funktionen nur einsammelt statt sie
-zu registrieren. Der `callback_context` (ctx.triggered_id / ctx.outputs_list) wird
-über die ContextVar gesetzt, die Dash intern ohnehin verwendet.
+The callbacks are checked without a running Dash server: `register_filter_callbacks`
+is handed a dummy that only collects the functions instead of registering them.
+The `callback_context` (ctx.triggered_id / ctx.outputs_list) is set through the
+ContextVar that Dash uses internally anyway.
 """
 from collections.abc import Callable
 
@@ -18,12 +18,12 @@ from callbacks.filter_callbacks import (
     register_filter_callbacks,
 )
 
-# Die eingesammelten Callbacks: Funktionsname -> undekorierte Funktion
+# The collected callbacks: function name -> undecorated function
 Callbacks = dict[str, Callable]
 
 
 class _CollectingApp:
-    """Ersetzt `app` und fängt die undekorierten Callback-Funktionen ab."""
+    """Replaces `app` and captures the undecorated callback functions."""
 
     def __init__(self) -> None:
         self.fns: Callbacks = {}
@@ -38,8 +38,8 @@ class _CollectingApp:
     def clientside_callback(
         self, func: ClientsideFunction, *args: object, **_kwargs: object
     ) -> None:
-        # Clientseitige Callbacks haben keine Python-Funktion zum Testen --
-        # nur merken, dass sie registriert wurden (s. tests/test_kpi_highlight_js.py).
+        # Clientside callbacks have no Python function to test --
+        # just remember that they were registered (see tests/test_kpi_highlight_js.py).
         self.clientside.append((func, args))
 
 
@@ -56,7 +56,7 @@ def cb(app_stub: _CollectingApp) -> Callbacks:
 
 
 def test_highlight_is_registered_clientside(app_stub: _CollectingApp) -> None:
-    """Die Hervorhebung darf keine Server-Runde mehr kosten."""
+    """The highlighting must not cost a server round trip any more."""
     assert len(app_stub.clientside) == 1
     func, _ = app_stub.clientside[0]
     assert isinstance(func, ClientsideFunction)
@@ -68,7 +68,7 @@ def _set_ctx(**kwargs: object) -> None:
 
 
 def _tile_click(kpi_id: str) -> None:
-    """Baut den callback_context eines Klicks auf die Kachel `kpi_id`."""
+    """Builds the callback_context of a click on the tile `kpi_id`."""
     _set_ctx(triggered_inputs=[
         {"prop_id": '{"kpi":"%s","type":"kpi-tile"}.n_clicks' % kpi_id}
     ])
@@ -85,14 +85,14 @@ def test_active_when_filter_matches_tile() -> None:
 def test_inactive_on_empty_or_foreign_filter() -> None:
     assert not _kpi_is_active("aktiv", [], [])
     assert not _kpi_is_active("aktiv", ["Obsolet"], [])
-    # Statusfilter passt, aber das Klassifizierungs-Flag steht quer
+    # The status filter matches, but the classification flag is in the way
     assert not _kpi_is_active("aktiv", ["Aktiv"], ["on"])
-    # Kein Filter gesetzt -> auch die "ohne Klassifizierung"-Kachel ist inaktiv
+    # No filter set -> the "without classification" tile is inactive too
     assert not _kpi_is_active("ohne_klassifizierung", [], [])
 
 
 # --------------------------------------------------------------------------
-# 1) Klick auf Kachel: setzen vs. aufheben
+# 1) Click on a tile: set vs. clear
 # --------------------------------------------------------------------------
 def test_click_sets_filter(cb: Callbacks) -> None:
     _tile_click("obsolet")
@@ -100,18 +100,18 @@ def test_click_sets_filter(cb: Callbacks) -> None:
 
 
 def test_click_on_active_tile_clears_filter(cb: Callbacks) -> None:
-    """Kernanforderung: dieselbe Kachel erneut -> Filter weg."""
+    """Core requirement: the same tile again -> filter gone."""
     _tile_click("obsolet")
     assert cb["kpi_click_to_filter"]([2], ["Obsolet"], []) == ([], [])
 
 
 def test_click_switches_between_tiles(cb: Callbacks) -> None:
-    """Andere Kachel -> umschalten, nicht aufheben."""
+    """A different tile -> switch over, do not clear."""
     _tile_click("gesperrt")
     assert cb["kpi_click_to_filter"]([1], ["Obsolet"], []) == (["Gesperrt"], [])
 
 
-def test_ohne_klassifizierung_toggles(cb: Callbacks) -> None:
+def test_the_unclassified_tile_toggles(cb: Callbacks) -> None:
     _tile_click("ohne_klassifizierung")
     assert cb["kpi_click_to_filter"]([1], [], []) == ([], ["on"])
     _tile_click("ohne_klassifizierung")
@@ -119,7 +119,7 @@ def test_ohne_klassifizierung_toggles(cb: Callbacks) -> None:
 
 
 # --------------------------------------------------------------------------
-# 1b) Klick auf leere Fläche
+# 1b) Click on empty space
 # --------------------------------------------------------------------------
 def test_empty_click_clears_active_filter(cb: Callbacks) -> None:
     assert cb["empty_click_clears_kpi_filter"](123, ["Aktiv"], []) == ([], [])
@@ -127,29 +127,29 @@ def test_empty_click_clears_active_filter(cb: Callbacks) -> None:
 
 
 def test_empty_click_is_noop_without_filter(cb: Callbacks) -> None:
-    """Ohne aktiven Filter kein überflüssiger Rerender."""
+    """Without an active filter, no superfluous rerender."""
     assert cb["empty_click_clears_kpi_filter"](123, [], []) == (no_update, no_update)
 
 
 def test_empty_click_keeps_sidebar_filters(cb: Callbacks) -> None:
-    """Suche/Werk/Warengruppe sind nicht Teil der Ausgabe -> bleiben unberührt."""
+    """Search/plant/material group are not part of the output -> stay untouched."""
     outs = cb["empty_click_clears_kpi_filter"](123, ["Aktiv"], [])
-    assert len(outs) == 2  # nur Status + ohne_klass
+    assert len(outs) == 2  # only status + ohne_klass
 
 
 # --------------------------------------------------------------------------
-# 3/4) Filterzustand -- eine Normalisierung für Store UND Tabelle
+# 3/4) Filter state -- one normalization for the store AND the table
 # --------------------------------------------------------------------------
 def test_filter_state_normalizes(cb: Callbacks) -> None:
     assert filter_state(None, None, None, None, None) == {
-        "status": [], "werk": [], "warengruppe": [], "search": "", "ohne_klass": False,
+        "status": [], "plant": [], "material_group": [], "search": "", "ohne_klass": False,
     }
     assert filter_state(["Aktiv"], [], [], "abc", ["on"])["ohne_klass"] is True
 
 
 def test_store_and_table_see_the_same_filter(cb: Callbacks) -> None:
-    """Beide Callbacks leiten aus denselben Eingaben denselben Zustand ab."""
+    """Both callbacks derive the same state from the same inputs."""
     args = (["Aktiv"], ["Werk Köln"], [], "ring", ["on"])
     store = cb["build_filter_state"](*args)
-    # render_table liefert Daten, muss aber intern denselben Filter bauen
+    # render_table returns data, but internally has to build the same filter
     assert store == filter_state(*args)

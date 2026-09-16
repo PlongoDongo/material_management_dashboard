@@ -1,16 +1,16 @@
 """
-Tab 1 -- "Data overview": KPI-Kacheln + Materialtabelle.
+Tab 1 -- "Data overview": KPI tiles + material table.
 
-Layout-Prinzip
---------------
-Der gesamte Tab-Inhalt liegt PERMANENT im DOM; die Sichtbarkeit wird nur per
-CSS umgeschaltet (siehe app.py / tab_callbacks). Dadurch bleibt die Tabelle
-immer als gültiges Callback-Ziel bestehen, und der Filterzustand (im Store)
-wird beim Zurückwechseln sofort wieder angewandt -- ohne Timing-Probleme mit
-dynamisch erzeugten Komponenten.
+Layout principle
+----------------
+The entire tab content stays PERMANENTLY in the DOM; only its visibility is
+toggled via CSS (see app.py / tab_callbacks). That keeps the table around as a
+valid callback target at all times, and the filter state (in the store) is
+re-applied immediately when switching back -- without timing problems caused
+by dynamically created components.
 
-KPI-Werte werden im Backend über `compute_kpis()` (kpi/kpi_rules.py) berechnet.
-Ein Klick auf eine Kachel setzt den zugehörigen Filter (callbacks/).
+KPI values are computed on the backend via `compute_kpis()` (kpi/kpi_rules.py).
+Clicking a tile sets the corresponding filter (callbacks/).
 """
 from __future__ import annotations
 
@@ -29,16 +29,16 @@ from data.schema import (
 from data.repository import get_materials
 from kpi.kpi_rules import compute_kpis
 
-# Spalten, die der User über das Popover an-/abwählen kann (alle außer den
-# fixierten Material-Nr. / Bezeichnung).
+# Columns the user can show/hide via the popover (all except the pinned
+# material number / description).
 _TOGGLEABLE_COLUMNS = [c for c in COLUMNS if c not in FIXED_COLUMNS]
 
 
 # --------------------------------------------------------------------------
-# KPI-Kacheln
+# KPI tiles
 # --------------------------------------------------------------------------
 def _kpi_tile(kpi: dict) -> html.Button:
-    """Eine farbige, anklickbare KPI-Kachel."""
+    """A colored, clickable KPI tile."""
     return html.Button(
         id={"type": "kpi-tile", "kpi": kpi["id"]},
         n_clicks=0,
@@ -61,10 +61,10 @@ def kpi_row() -> html.Div:
 
 
 # --------------------------------------------------------------------------
-# Materialtabelle
+# Material table
 # --------------------------------------------------------------------------
 def _table_columns() -> list[dict]:
-    """DataTable-Spalten aus dem zentralen Schema (data/schema.py)."""
+    """DataTable columns derived from the central schema (data/schema.py)."""
     cols = []
     for c in MATERIAL_COLUMNS:
         col = {"name": c.label.upper(), "id": c.id}
@@ -78,8 +78,8 @@ def _table_columns() -> list[dict]:
 
 
 def _column_width_conditional() -> list[dict]:
-    """Mindestbreite je Spalte (aus dem Schema) -> erzwingt bei Bedarf den
-    Scrollbalken. Numerische Spalten rechtsbündig."""
+    """Minimum width per column (from the schema) -> forces the scrollbar when
+    needed. Numeric columns are right-aligned."""
     styles = [
         {
             "if": {"column_id": c},
@@ -94,7 +94,7 @@ def _column_width_conditional() -> list[dict]:
 
 
 def _status_style_conditional() -> list[dict]:
-    """Färbt den Status-Text passend zur Statusfarbe (Punkt-Ersatz)."""
+    """Colors the status text to match the status color (dot replacement)."""
     return [
         {
             "if": {"filter_query": f'{{status}} = "{status}"', "column_id": "status"},
@@ -109,39 +109,39 @@ def material_table() -> dash_table.DataTable:
     return dash_table.DataTable(
         id=IDS.TABLE,
         columns=_table_columns(),
-        data=[],  # wird per Callback aus dem gefilterten Polars-DF gefüllt
+        data=[],  # filled by a callback from the filtered Polars DF
         page_size=20,
         sort_action="native",
-        # Automatische Filterzeile unter den Spaltenköpfen (neben den Sortier-
-        # pfeilen). Native = Textfilter mit Operatoren (=, >, contains, ...),
-        # case-insensitiv. Ergänzt die globalen Sidebar-Filter; siehe
-        # Erläuterung im Chat zur Werte-Auswahl.
+        # Automatic filter row below the column headers (next to the sort
+        # arrows). Native = text filter with operators (=, >, contains, ...),
+        # case-insensitive. Complements the global sidebar filters; see the
+        # explanation in the chat about picking values.
         filter_action="native",
         filter_options={"case": "insensitive", "placeholder_text": "filtern …"},
-        # Sichtbarkeit der Spalten steuert das Spalten-Popover (Callback ->
-        # hidden_columns). Initial sind alle sichtbar.
+        # Column visibility is driven by the column popover (callback ->
+        # hidden_columns). Initially all of them are visible.
         hidden_columns=[],
-        # Kopf- + Filterzeile bleiben beim vertikalen Scrollen oben stehen; der
-        # Tabellenkörper scrollt INNERHALB der Tabelle (Höhe kommt aus dem
-        # Flex-Layout der Karte, siehe style.css / .table-card).
+        # Header + filter row stay pinned at the top while scrolling
+        # vertically; the table body scrolls INSIDE the table (the height comes
+        # from the card's flex layout, see style.css / .table-card).
         #
-        # Bewusst KEIN fixed_columns (Einfrieren der linken Spalten beim
-        # horizontalen Scrollen): dessen geteilte Render-Struktur zerlegt in
-        # zwei häufigen Zuständen die Kopfzeile -- bei leerer Tabelle
-        # (Filter ohne Treffer) verschwinden ALLE Spaltennamen, und wenn nur die
-        # zwei nicht-abwählbaren Spalten übrig sind, fehlt der zweiten der
-        # Header. Ohne fixed_columns rendern beide Fälle korrekt. Material-Nr.
-        # und Bezeichnung bleiben trotzdem "immer sichtbar", weil sie im
-        # Spalten-Popover nicht abwählbar sind -- nur das Einfrieren beim
-        # Horizontal-Scrollen entfällt (greift ohnehin nur bei schmalen
-        # Fenstern; siehe Chat für die Abwägung/Alternative).
+        # Deliberately NO fixed_columns (freezing the left-hand columns while
+        # scrolling horizontally): its split render structure breaks the header
+        # row in two common states -- with an empty table (filter without
+        # matches) ALL column names disappear, and when only the two
+        # non-deselectable columns are left, the second one is missing its
+        # header. Without fixed_columns both cases render correctly. Material
+        # number and description still stay "always visible", because they
+        # cannot be deselected in the column popover -- only the freezing while
+        # scrolling horizontally is gone (which only matters for narrow windows
+        # anyway; see the chat for the trade-off/alternative).
         fixed_rows={"headers": True},
         style_as_list_view=True,
-        # overflow auto in beide Richtungen: vertikal scrollt der Körper (dank
-        # fixed_rows), horizontal die zu breiten Spalten -- beides INNERHALB der
-        # Tabelle. Die HÖHE gibt bewusst das Flex-Layout der Karte vor (siehe
-        # style.css) und NICHT height:100% -- sonst verdrängte die Tabelle die
-        # darunterliegende Pagination aus der Karte.
+        # overflow auto in both directions: vertically the body scrolls (thanks
+        # to fixed_rows), horizontally the overly wide columns -- both INSIDE
+        # the table. The HEIGHT is deliberately dictated by the card's flex
+        # layout (see style.css) and NOT by height:100% -- otherwise the table
+        # would push the pagination below it out of the card.
         style_table={"overflowY": "auto", "overflowX": "auto",
                      "width": "100%", "minWidth": "100%"},
         style_filter={"backgroundColor": "#fbfcfd"},
@@ -162,32 +162,32 @@ def material_table() -> dash_table.DataTable:
             "borderBottom": "1px solid #eef1f4",
             "color": "#1b2733",
             "textAlign": "left",
-            # Kein Umbruch -> Spalten behalten ihre Breite, statt sich beim
-            # Schrumpfen mehrzeilig zu stapeln.
+            # No wrapping -> columns keep their width instead of stacking onto
+            # several lines when they shrink.
             "whiteSpace": "nowrap",
             "overflow": "hidden",
             "textOverflow": "ellipsis",
         },
         style_cell_conditional=_column_width_conditional(),
         style_data_conditional=_status_style_conditional(),
-        # Sobald hidden_columns gesetzt ist, blendet die DataTable von sich aus
-        # ihr eigenes "Toggle Columns"-Menü ein (.dash-spreadsheet-menu). Das
-        # Ein-/Ausblenden übernimmt bereits unser Spalten-Popover, darum das
-        # eingebaute Menü ausblenden. `css` wird von der Komponente selbst
-        # injiziert -> robuster als eine globale Regel.
+        # As soon as hidden_columns is set, the DataTable shows its own "Toggle
+        # Columns" menu (.dash-spreadsheet-menu) by itself. Showing/hiding is
+        # already handled by our column popover, so the built-in menu gets
+        # hidden. `css` is injected by the component itself -> more robust than
+        # a global rule.
         css=[{"selector": ".dash-spreadsheet-menu", "rule": "display: none;"}],
     )
 
 
 # --------------------------------------------------------------------------
-# Spaltenauswahl-Popover (gehört visuell zur Tabelle)
+# Column selection popover (belongs visually to the table)
 # --------------------------------------------------------------------------
 def _column_menu() -> html.Div:
-    """Button + aufklappbares Panel zum Ein-/Ausblenden von Spalten.
+    """Button + expandable panel for showing/hiding columns.
 
-    Öffnen/Schließen und das Ableiten von hidden_columns laufen clientseitig
-    (assets/column_menu.js, callbacks/column_callbacks.py) -- kein Server-
-    Roundtrip, damit es sich unmittelbar anfühlt.
+    Opening/closing and deriving hidden_columns happen on the client side
+    (assets/column_menu.js, callbacks/column_callbacks.py) -- no server round
+    trip, so that it feels immediate.
     """
     fixed_labels = " und ".join(COLUMN_LABELS[c] for c in FIXED_COLUMNS)
     return html.Div(
@@ -203,7 +203,7 @@ def _column_menu() -> html.Div:
             ),
             html.Div(
                 id=IDS.COLS_MENU,
-                className="col-menu-panel",  # ohne "open" = zu
+                className="col-menu-panel",  # without "open" = closed
                 children=[
                     html.Div(
                         className="col-menu-head",
@@ -224,7 +224,7 @@ def _column_menu() -> html.Div:
                         id=IDS.COLS_CHECKLIST,
                         options=[{"label": COLUMN_LABELS[c], "value": c}
                                  for c in _TOGGLEABLE_COLUMNS],
-                        value=list(_TOGGLEABLE_COLUMNS),  # initial alle sichtbar
+                        value=list(_TOGGLEABLE_COLUMNS),  # all visible initially
                         className="col-menu-list",
                         persistence=True, persistence_type="session",
                     ),
@@ -242,7 +242,7 @@ def _column_menu() -> html.Div:
 
 
 # --------------------------------------------------------------------------
-# Gesamter Tab-Inhalt
+# Complete tab content
 # --------------------------------------------------------------------------
 def data_overview_content() -> html.Div:
     return html.Div(

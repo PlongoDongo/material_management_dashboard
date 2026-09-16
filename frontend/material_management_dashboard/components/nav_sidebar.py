@@ -1,16 +1,16 @@
 """
-Linke Navigations-Sidebar (initial geschlossen, öffnet über das Menü-Icon).
+Left-hand navigation sidebar (initially closed, opens via the menu icon).
 
-Anpassen pro Dashboard -- rein in Python
-----------------------------------------
-Der Inhalt ist eine schlichte Liste `(icon, label)`. Für ein anderes
-Dashboard übergibt man einfach eine eigene Liste:
+Adjusting it per dashboard -- purely in Python
+----------------------------------------------
+The content is a plain list of `(icon, label)`. For a different dashboard you
+simply pass in your own list:
 
     nav_sidebar(items=[("dashboard", "Übersicht"), ("upload", "Import")])
 
-`icon` ist ein Material-Icons-Name (Ligatur), `label` der Anzeigetext. Das
-Styling (Slide-in, Overlay, Farben) steckt zentral in assets/style.css --
-darum muss sich niemand im Team kümmern.
+`icon` is a Material Icons name (ligature), `label` the displayed text. The
+styling (slide-in, overlay, colors) sits centrally in assets/style.css --
+so nobody on the team has to worry about it.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from dash import html
 from config import IDS
 
 
-# Je Eintrag: Material-Icons-Name plus Beschriftung
+# Per entry: Material Icons name plus label
 _DEFAULT_NAV_ITEMS = [
     ("inventory_2", "Material Management"),
     ("history", "Stammdaten-Historie"),
@@ -42,11 +42,11 @@ def nav_sidebar(items: list[tuple[str, str]] | None = None) -> html.Div:
     items = items if items is not None else _DEFAULT_NAV_ITEMS
     return html.Div(
         [
-            # Halbtransparentes Overlay hinter der Sidebar (Klick = schließen)
+            # Semi-transparent overlay behind the sidebar (click = close)
             html.Div(id=IDS.NAV_OVERLAY, className="sidebar-overlay", n_clicks=0),
             html.Nav(
                 id=IDS.NAV_SIDEBAR,
-                className="sidebar sidebar-nav",  # ohne "open" = geschlossen
+                className="sidebar sidebar-nav",  # without "open" = closed
                 children=[
                     html.Div(
                         className="sidebar-header",
