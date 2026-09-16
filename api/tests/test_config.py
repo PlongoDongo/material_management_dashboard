@@ -11,12 +11,13 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import tomllib
 from pathlib import Path
 
 import pytest
 import yaml
 
-from core.config import _CREDENTIAL_FILES, Settings
+from core.config import _CREDENTIAL_FILES, Settings, __version__
 from core.errors import ConfigurationError
 
 NEO4J_FILE = {
@@ -272,3 +273,14 @@ def test_the_loglevel_is_validated_against_its_allowed_values() -> None:
     assert _settings(server_loglevel="debug").server_loglevel == "debug"
     with pytest.raises(ValueError, match="server_loglevel"):
         _settings(server_loglevel="verbose")
+
+
+def test_the_version_is_the_one_in_pyproject() -> None:
+    """The code reads the version from the installed package, which only learns
+    about a bumped number when it is reinstalled."""
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+
+    assert __version__ == pyproject["project"]["version"], (
+        "pyproject.toml has a different version than the installed package -- "
+        'run: uv pip install -e ".[dev]"'
+    )

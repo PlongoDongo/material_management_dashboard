@@ -1,14 +1,5 @@
 [project]
 name = "data-api"
-# Kept in step with `__version__` in src/core/config.py by hand. To make that
-# impossible to get wrong, replace this line with
-#     dynamic = ["version"]
-# and add
-#     [tool.hatch.version]
-#     path = "src/core/config.py"
-# Then this file reads the number out of the code and there is exactly one
-# source of truth. Left as a plain string here because it is one line to keep in
-# sync and the indirection costs a reader more than the duplication does.
 version = "0.1.0"
 description = "API layer between the Dash dashboards and the data sources (Neo4j / Postgres)."
 requires-python = ">=3.11"
