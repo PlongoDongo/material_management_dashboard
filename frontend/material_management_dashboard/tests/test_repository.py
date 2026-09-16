@@ -326,3 +326,42 @@ def test_ein_403_wird_nicht_aus_dem_cache_beantwortet(monkeypatch) -> None:
     repo.get_materials()                                   # fuellt den Cache
     with pytest.raises(NotAuthorisedError):
         repo.get_materials(force_reload=True)
+
+
+# --- Invalidierung nach einem Schreibvorgang --------------------------------
+
+def test_invalidate_erzwingt_beim_naechsten_zugriff_einen_neuen_abruf(monkeypatch) -> None:
+    """Der API-Cache wird beim Schreiben serverseitig geleert -- der Cache hier
+    nicht. Ohne diesen Aufruf sieht der Nutzer seine eigene Aenderung bis zu
+    CACHE_TTL_SECONDS lang nicht."""
+    abrufe = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        abrufe.append(request.url.path)
+        return httpx.Response(200, json=_envelope(API_ROWS))
+
+    monkeypatch.setattr(repo, "_client", _client(handler))
+
+    repo.get_materials()
+    repo.get_materials()
+    assert len(abrufe) == 1, "der zweite Zugriff kam nicht aus dem Cache"
+
+    repo.invalidate()
+    repo.get_materials()
+    assert len(abrufe) == 2
+
+
+def test_invalidate_leert_die_eimer_aller_rollen(monkeypatch) -> None:
+    """Schreibt jemand ein Mapping, betrifft das jeden -- nicht nur die Rollen
+    des Schreibenden."""
+    monkeypatch.setattr(repo, "_client",
+                        _client(lambda request: httpx.Response(200, json=_envelope(API_ROWS))))
+
+    monkeypatch.setattr(repo, "user_roles", lambda: ["planner"])
+    repo.get_materials()
+    monkeypatch.setattr(repo, "user_roles", lambda: ["viewer"])
+    repo.get_materials()
+    assert len(repo._CACHE) == 2
+
+    repo.invalidate()
+    assert repo._CACHE == {}

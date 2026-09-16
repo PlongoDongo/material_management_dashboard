@@ -937,6 +937,25 @@ Every response carries an `X-Request-ID`, in the body *and* as a header, and the
 same id appears in every log line for that request — including the access-log
 line and the 500 response, which are the two places you look first.
 
+### The same shape in `/docs`
+
+FastAPI documents only what it can see: without help it shows its own 422
+(`detail` as a **list**, which this API never sends) and no 401/403/409/500/503
+at all. `problem_responses(...)` in `core/errors.py` declares them, once for
+every route in `create_app`:
+
+```python
+app = FastAPI(..., responses=problem_responses(401, 403, 422, 500, 503))
+```
+
+A route that can answer something else adds it to its own `responses`, e.g.
+`responses=problem_responses(409)` on `POST /mappings`. `use_problem_media_type`
+then documents each of them under `application/problem+json` only — FastAPI
+would otherwise list `application/json` as well, which is not what is sent.
+
+`tests/test_errors.py` compares the documented `Problem` model against a real
+error body, so the two cannot drift.
+
 ---
 
 ## 13. Caching

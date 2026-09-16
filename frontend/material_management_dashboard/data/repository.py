@@ -190,6 +190,29 @@ def get_materials(*, force_reload: bool = False) -> pl.DataFrame:
     return frame
 
 
+def invalidate() -> None:
+    """Nach einer erfolgreichen Schreibaktion aufrufen -- der naechste Zugriff holt neu.
+
+        antwort = _client.post_mapping(...)      # spaeter: Tab "Apply data mappings"
+        repository.invalidate()
+
+    Der API-Layer leert bei einem Schreibvorgang seinen eigenen Cache (die
+    `invalidates(...)`-Dependency an der Route). Davon erfaehrt das Dashboard
+    nichts und wuerde sonst bis zu CACHE_TTL_SECONDS lang den alten Stand
+    zeigen: Der Nutzer legt ein Mapping an, wechselt auf die Uebersicht und
+    sieht seine eigene Aenderung nicht -- also genau der Eindruck, dass das
+    Speichern fehlgeschlagen ist.
+
+    Geleert werden ALLE Rollen-Eimer, nicht nur der eigene: Die Aenderung
+    betrifft jeden, der die Daten sieht.
+
+    Grenze: Laeuft Dash mit mehreren Worker-Prozessen, leert das nur den Cache
+    des Prozesses, der den Klick bearbeitet hat. Die uebrigen zeigen bis zum
+    Ablauf der TTL den alten Stand.
+    """
+    _CACHE.clear()
+
+
 def kuerzung() -> tuple[int, int] | None:
     """(geladen, gesamt), falls der letzte Abruf gekuerzt wurde -- sonst None.
 

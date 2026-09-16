@@ -11,6 +11,7 @@ plain text with no request id to find it in the logs by.
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import AsyncExitStack
 from typing import Any, Self
 
@@ -34,7 +35,7 @@ from sqlalchemy.exc import (
 
 from app import create_app
 from core.config import Settings
-from core.errors import ConflictError, UpstreamUnavailableError
+from core.errors import ConflictError, Problem, UpstreamUnavailableError
 from db.sources import Sources
 
 # --- Test doubles: a driver and a session that fail on demand ---------------
@@ -191,3 +192,37 @@ def test_every_error_has_the_same_shape(settings: Settings) -> None:
 
     assert responses["upstream_unavailable"].status_code == 503
     assert responses["internal_error"].status_code == 500
+
+
+# --- The documented shape is the shape that is sent --------------------------
+
+def test_the_docs_describe_every_error_a_route_can_answer(settings: Settings) -> None:
+    """Without this, /docs shows FastAPI's default 422 (`detail` as a list) and
+    no 401/403/500/503 -- the dashboard would be built against a shape the API
+    never sends."""
+    schema = create_app(settings).openapi()
+    product = schema["paths"]["/api/v1/data-products/material-overview/v3"]["get"]
+
+    assert {"401", "403", "422", "500", "503"} <= set(product["responses"])
+    assert "409" in schema["paths"]["/api/v1/mappings"]["post"]["responses"]
+    assert "404" in schema["paths"]["/api/v1/catalog/{name}"]["get"]["responses"]
+
+    content = product["responses"]["422"]["content"]
+    assert content["application/problem+json"]["schema"]["$ref"].endswith("ValidationProblem")
+    assert "application/json" not in content, "the API never sends errors as application/json"
+    assert "HTTPValidationError" not in json.dumps(schema), "FastAPI's default 422 is still there"
+
+
+def test_the_documented_model_matches_a_real_error_body(settings: Settings) -> None:
+    """Guards the docs against drift: `Problem` is hand-written, `_problem`
+    builds the body, and nothing else keeps the two in step."""
+    app = create_app(settings)
+
+    @app.get("/boom")
+    async def _boom() -> None:
+        raise UpstreamUnavailableError("Neo4j unavailable: no route to host")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        body = client.get("/boom").json()
+
+    assert set(body) == set(Problem.model_fields)

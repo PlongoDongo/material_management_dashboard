@@ -20,10 +20,12 @@ from __future__ import annotations
 import json
 import logging
 from http import HTTPStatus
+from typing import Any
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.logging import request_id_var
@@ -106,6 +108,78 @@ class ConfigurationError(AppError):
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     code = "configuration_error"
     title = "Server misconfigured"
+
+
+class Problem(BaseModel):
+    """The body of every error response -- what `_problem` below builds."""
+
+    type: str = "about:blank"
+    title: str = Field(examples=["Upstream data source unavailable"])
+    status: int = Field(examples=[503])
+    detail: str = Field(examples=["Neo4j unavailable: no route to host"])
+    code: str = Field(examples=["upstream_unavailable"])
+    request_id: str | None = Field(default=None, examples=["3f2a9c1b4d5e6f70"])
+
+
+class ValidationProblem(Problem):
+    """A 422 additionally carries the field-level errors."""
+
+    errors: list[dict[str, Any]] = Field(
+        examples=[[{"type": "int_parsing", "loc": ["query", "limit"],
+                    "msg": "Input should be a valid integer"}]]
+    )
+
+
+_DESCRIPTIONS = {
+    401: "No token, or not a valid one.",
+    403: "The caller lacks the required role.",
+    404: "Unknown -- or not visible to this caller.",
+    409: "Conflict with existing data; retrying will not help.",
+    422: "The request parameters are invalid.",
+    500: "Unexpected server error. The request_id finds it in the logs.",
+    503: "A data source is unavailable. Retry later.",
+}
+
+
+def problem_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI `responses` for the errors this module produces.
+
+    Without them /docs shows FastAPI's default 422 (`detail` as a LIST, which
+    this API never sends) and no 401/403/409/500/503 at all -- so a dashboard
+    would be built against a shape that does not exist.
+    """
+    return {
+        status_code: {
+            "model": (ValidationProblem if status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+                      else Problem),
+            "description": _DESCRIPTIONS[status_code],
+            "content": {"application/problem+json": {}},
+        }
+        for status_code in statuses
+    }
+
+
+def use_problem_media_type(app: FastAPI) -> None:
+    """Documents the error responses under application/problem+json only.
+
+    FastAPI lists a declared response under the route's default media type
+    (application/json) and leaves the media type asked for above empty. Errors
+    are only ever sent as problem+json, so /docs would otherwise describe a
+    content type the API never returns -- and show no schema for the one it does.
+    """
+    generate = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        schema = generate()
+        for path in schema.get("paths", {}).values():
+            for operation in path.values():
+                for response in operation.get("responses", {}).values():
+                    content = response.get("content") or {}
+                    if "application/problem+json" in content and "application/json" in content:
+                        content["application/problem+json"] = content.pop("application/json")
+        return schema
+
+    app.openapi = openapi
 
 
 def _problem(
