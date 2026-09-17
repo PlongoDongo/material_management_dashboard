@@ -207,11 +207,13 @@ def test_the_docs_describe_every_error_a_route_can_answer(settings: Settings) ->
     assert "409" in schema["paths"]["/api/v1/mappings"]["post"]["responses"]
     assert "404" in schema["paths"]["/api/v1/catalog/{name}"]["get"]["responses"]
 
-    # FastAPI documents a declared model under the route's default media type,
-    # so `application/json` is listed next to it. Known and accepted -- see the
-    # note in api/README.md.
+    # Both media types carry schema AND example. FastAPI attaches a declared
+    # model to the route's default media type (application/json) and leaves the
+    # one we ask for empty, which is why documented_errors() fills both.
     content = product["responses"]["422"]["content"]
-    assert content["application/json"]["schema"]["$ref"].endswith("Problem")
+    for media_type in ("application/problem+json", "application/json"):
+        assert content[media_type]["schema"]["$ref"].endswith("Problem"), media_type
+        assert content[media_type]["example"]["code"] == "validation_error", media_type
     assert "HTTPValidationError" not in json.dumps(schema), "FastAPI's default 422 is still there"
 
 
@@ -260,3 +262,27 @@ def test_every_error_class_reaches_the_documentation(settings: Settings) -> None
             f"{error.__name__} answers {error.status_code}, which no route documents -- "
             f"pass it to responses=documented_errors(...)"
         )
+
+
+def test_each_error_shows_its_own_example(settings: Settings) -> None:
+    """One example per error, built through `Problem`.
+
+    Before, every response repeated the model's field examples -- so a 401 was
+    illustrated with a 503 about Neo4j, which is worse than no example.
+    """
+    schema = create_app(settings).openapi()
+    responses = schema["paths"]["/api/v1/data-products/material-overview/v3"]["get"]["responses"]
+    examples = {
+        code: response["content"]["application/problem+json"]["example"]
+        for code, response in responses.items()
+        if "application/problem+json" in (response.get("content") or {})
+    }
+
+    assert {e["code"] for e in examples.values()} == {
+        "unauthorized", "forbidden", "validation_error", "internal_error", "upstream_unavailable"
+    }
+    for code, example in examples.items():
+        assert example["status"] == int(code)
+        Problem.model_validate(example)          # the example IS the documented shape
+    assert examples["422"]["errors"], "the 422 example should show the field errors"
+    assert "errors" not in examples["503"], "only a 422 carries field errors"

@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import logging
 from http import HTTPStatus
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -64,6 +64,9 @@ class AppError(Exception):
     status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
     code: str = "internal_error"
     title: str = "Internal server error"
+    # What /docs shows as the example body for this error.
+    example_detail: str = "Unexpected error."
+    example_errors: ClassVar[list[dict[str, Any]] | None] = None
 
     def __init__(self, detail: str = "") -> None:
         super().__init__(detail or self.title)
@@ -81,6 +84,7 @@ class UnauthorizedError(AppError):
     status_code = status.HTTP_401_UNAUTHORIZED
     code = "unauthorized"
     title = "Authentication required"
+    example_detail = "The token is invalid or has expired."
 
 
 class ForbiddenError(AppError):
@@ -89,6 +93,7 @@ class ForbiddenError(AppError):
     status_code = status.HTTP_403_FORBIDDEN
     code = "forbidden"
     title = "Access denied"
+    example_detail = "This endpoint requires one of the roles: material-planner."
 
 
 class NotFoundError(AppError):
@@ -101,6 +106,7 @@ class NotFoundError(AppError):
     status_code = status.HTTP_404_NOT_FOUND
     code = "not_found"
     title = "Not found"
+    example_detail = "Unknown data product: material-overviev"
 
 
 class InvalidRequestError(AppError):
@@ -111,9 +117,14 @@ class InvalidRequestError(AppError):
     every other error instead of being a special case in two places.
     """
 
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
     code = "validation_error"
     title = "Invalid request"
+    example_detail = "The request parameters are invalid."
+    example_errors: ClassVar[list[dict[str, Any]]] = [
+        {"type": "int_parsing", "loc": ["query", "limit"],
+         "msg": "Input should be a valid integer"}
+    ]
 
 
 class ConflictError(AppError):
@@ -127,6 +138,8 @@ class ConflictError(AppError):
     status_code = status.HTTP_409_CONFLICT
     code = "conflict"
     title = "Conflict with existing data"
+    example_detail = ('Postgres constraint violated: duplicate key value violates '
+                      'unique constraint "mapping_pkey"')
 
 
 class UpstreamUnavailableError(AppError):
@@ -139,6 +152,7 @@ class UpstreamUnavailableError(AppError):
     status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     code = "upstream_unavailable"
     title = "Upstream data source unavailable"
+    example_detail = "Neo4j unavailable: no route to host"
 
 
 class ConfigurationError(AppError):
@@ -146,6 +160,7 @@ class ConfigurationError(AppError):
 
     code = "configuration_error"
     title = "Server misconfigured"
+    example_detail = "Neo4j is not configured (NEO4J_HOST is missing) but is required here."
 
 
 class Problem(BaseModel):
@@ -156,16 +171,13 @@ class Problem(BaseModel):
     """
 
     type: str = "about:blank"
-    title: str = Field(examples=["Upstream data source unavailable"])
-    status: int = Field(examples=[503])
-    detail: str = Field(examples=["Neo4j unavailable: no route to host"])
-    code: str = Field(examples=["upstream_unavailable"])
-    request_id: str | None = Field(default=None, examples=["3f2a9c1b4d5e6f70"])
+    title: str
+    status: int
+    detail: str
+    code: str
+    request_id: str | None = None
     errors: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="Field-level errors. Only present on a 422.",
-        examples=[[{"type": "int_parsing", "loc": ["query", "limit"],
-                    "msg": "Input should be a valid integer"}]],
+        default=None, description="Field-level errors. Only present on a 422."
     )
 
 
@@ -180,15 +192,39 @@ def documented_errors(*errors: type[AppError]) -> dict[int | str, dict[str, Any]
     Without this, /docs shows FastAPI's default 422 (`detail` as a LIST, which
     this API never sends) and no 401/403/409/500/503 at all -- a dashboard would
     be built against a shape that does not exist.
+
+    Both media types are filled in on purpose: `model=` registers `Problem` in
+    the schema section, but FastAPI attaches it to the route's default media
+    type (application/json) and leaves the one asked for here empty -- Swagger
+    would then show problem+json without a schema and without an example.
     """
     return {
         error.status_code: {
             "model": Problem,
             "description": error.title,
-            "content": {"application/problem+json": {}},
+            "content": {
+                "application/problem+json": {
+                    "schema": {"$ref": "#/components/schemas/Problem"},
+                    "example": _example(error),
+                },
+                "application/json": {"example": _example(error)},
+            },
         }
         for error in errors
     }
+
+
+def _example(error: type[AppError]) -> dict[str, Any]:
+    """The body /docs shows for one error -- built through `Problem`, so an
+    example cannot describe a shape the API does not send."""
+    return Problem(
+        title=error.title,
+        status=error.status_code,
+        detail=error.example_detail,
+        code=error.code,
+        request_id="3f2a9c1b4d5e6f70",
+        errors=error.example_errors,
+    ).model_dump(exclude_none=True)
 
 
 def _problem(request: Request, error: AppError, **extra: Any) -> JSONResponse:  # noqa: ANN401

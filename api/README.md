@@ -91,7 +91,13 @@ GET   /api/v1/data-products/{name}/v{major}            the data
 GET   /api/v1/data-products/{name}/latest              alias (not for dashboards!)
 POST  /api/v1/mappings                                 write-side example
 PATCH /api/v1/mappings/{id}
+POST   /api/v1/material-relationships                  record "these two are the same"
+DELETE /api/v1/material-relationships                  record that it no longer holds
 ```
+
+The two relationship routes append to the `changelog` table instead of changing
+anything: a separate process picks those entries up and applies them (the table's
+`sync_status` / `synced_at` columns). That is why `DELETE` deletes nothing here.
 
 Response format of every data product:
 
@@ -118,11 +124,15 @@ every failure, with a `code` to branch on and the request id:
 `/docs` lists them per route (401, 403, 409, 422, 500, 503), declared through
 `documented_errors(...)` in `core/errors.py`, which reads them off the error classes.
 
-> **Known quirk in `/docs`:** each error is additionally listed under
-> `application/json`. FastAPI puts a declared response model under the route's
-> default media type and offers no per-response way to change it — only a custom
-> `openapi()` hook, which is not worth maintaining. The schema shown is correct;
-> the API always sends `application/problem+json`.
+Every error response carries its own example — a 401 is illustrated with a 401,
+not with a generic one.
+
+> **Known quirk in `/docs`:** each error is listed under `application/json` as
+> well, and Swagger preselects that one. FastAPI attaches a declared response
+> model to the route's default media type and offers no per-response way to
+> change it; removing the extra entry would need a custom `openapi()` hook.
+> Both entries carry the same schema and example, and the API always sends
+> `application/problem+json`.
 
 ---
 
