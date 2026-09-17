@@ -959,11 +959,14 @@ shows and the example all come from the class itself. So adding an error type is
 the class plus its name on the routes that answer it — there is no second table
 of descriptions that can fall out of step.
 
-**One quirk to know:** `/docs` lists each error under `application/json` as well.
-FastAPI puts a declared model under the route's default media type, and there is
-no per-response way to change that — only a custom `openapi()` hook, which is
-not worth the maintenance. The API always sends `application/problem+json`; the
-schema shown is the right one.
+Each error also gets its own example, built through `Problem` from the class's
+`example_detail`: a 401 is illustrated with a 401 instead of a generic body.
+
+**One quirk to know:** `/docs` lists each error under `application/json` as well
+and preselects it. FastAPI attaches a declared model to the route's default media
+type, and there is no per-response way to change that — only a custom `openapi()`
+hook. Both entries carry the same schema and example, and the API always sends
+`application/problem+json`.
 
 Two tests keep this honest: one compares the documented `Problem` model against
 a real error body, the other fails if any `AppError` subclass answers a status
