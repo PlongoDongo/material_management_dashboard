@@ -14,7 +14,7 @@ from tests.fakes import FakeSources
 from tests.types import AuthHeader
 
 from api.deps import get_sources
-from api.v1.relationships import INSERT_CHANGELOG, SYSTEM_ID
+from api.v1.relationships import INSERT_CHANGELOG, SYSTEM_USER
 from app import create_app
 from core.config import Settings
 
@@ -24,7 +24,6 @@ RELATIONSHIP = {
     "material_rep_2_id": "22222222-2222-2222-2222-222222222222",
     "relationship_type": "IS_SAME",
 }
-TOKEN_SUBJECT = "0f2c1e5a-1111-2222-3333-444455556666"
 
 
 def _secured(settings: Settings) -> tuple[TestClient, FakeSources]:
@@ -64,24 +63,27 @@ def test_a_removed_relationship_is_recorded_rather_than_deleted(
 def test_without_authentication_the_entry_belongs_to_the_system(
     client: TestClient, fake_sources: FakeSources
 ) -> None:
-    """`user_id` is a UUID column, and with auth off there is no user to name."""
+    """With auth off there is no user to name, so the entry looks like any other
+    unattributed one -- the default the column declares."""
     client.post(PATH, json=RELATIONSHIP)
 
     _sql, parameters = fake_sources.calls[0]
-    assert parameters["user_id"] == SYSTEM_ID
+    assert parameters["user_id"] == SYSTEM_USER
 
 
 def test_the_entry_names_the_authenticated_user(
     oidc_settings: Settings, auth_header: AuthHeader
 ) -> None:
-    """Keycloak's `sub` is a UUID, which is exactly what the column wants."""
+    """The readable name, not the raw `sub` UUID: somebody has to recognise the
+    entry in the changelog later."""
     client, fake = _secured(oidc_settings)
     with client:
         response = client.post(PATH, json=RELATIONSHIP,
-                               headers=auth_header(roles=["material-planner"]))
+                               headers=auth_header(username="a.schmidt",
+                                                   roles=["material-planner"]))
 
     assert response.status_code == 201
-    assert str(fake.calls[0][1]["user_id"]) == TOKEN_SUBJECT
+    assert fake.calls[0][1]["user_id"] == "a.schmidt"
 
 
 def test_without_the_role_nothing_is_written(

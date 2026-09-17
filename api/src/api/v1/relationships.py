@@ -42,9 +42,11 @@ WRITE_ROLE = "material-planner"
 # missing `invalidates(...)` is an oversight and an empty one is a decision.
 INVALIDATES: tuple[str, ...] = ()
 
-# Written when nobody is authenticated -- which is the normal case while the API
-# runs without OIDC. The columns are UUIDs, so "system" cannot be spelled out.
-SYSTEM_ID = UUID("00000000-0000-0000-0000-000000000000")
+# Written when nobody is authenticated -- the normal case while the API runs
+# without OIDC. Both are text columns; these are the defaults the table itself
+# declares, so an entry from this API looks like any other unattributed one.
+SYSTEM_USER = "system"
+UNKNOWN_SESSION = "unknown"
 
 # Appends one entry. `payload` is handed over as JSON text: that is what the
 # driver expects for a json/jsonb column, and it keeps the shape of the entry
@@ -92,10 +94,10 @@ async def _record(
     [row] = await sources.postgres(
         INSERT_CHANGELOG,
         changelog_id=uuid4(),
-        user_id=_user_id(principal),
+        user_id=_user(principal),
         change_type=change_type,
         payload=relationship.model_dump_json(),
-        session_id=SYSTEM_ID,
+        session_id=UNKNOWN_SESSION,
     )
     log.info("Changelog %s: %s by %s", row["changelog_id"], change_type, principal.label)
     return ChangelogEntry(
@@ -105,13 +107,13 @@ async def _record(
     )
 
 
-def _user_id(principal: Principal) -> UUID:
-    """The changelog stores a UUID. Keycloak's `sub` is one; with authentication
-    switched off there is nobody to name, so the entry belongs to the system."""
-    try:
-        return UUID(principal.subject)
-    except ValueError:
-        return SYSTEM_ID
+def _user(principal: Principal) -> str:
+    """Who to record: the readable name, not the raw Keycloak `sub`.
+
+    With authentication switched off there is nobody to name, so the entry
+    belongs to the system -- the default the column declares anyway.
+    """
+    return principal.label if principal.auth_enabled else SYSTEM_USER
 
 
 @router.post(
