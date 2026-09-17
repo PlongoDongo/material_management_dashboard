@@ -49,13 +49,24 @@ SYSTEM_USER = "system"
 UNKNOWN_SESSION = "unknown"
 
 # Appends one entry. `payload` is handed over as JSON text: that is what the
-# driver expects for a json/jsonb column, and it keeps the shape of the entry
-# in one place -- the model below.
+# driver expects for a json column, and it keeps the shape of the entry in one
+# place -- the model below.
+#
+# `sync_status` and `sync_attempts` are set explicitly although the table
+# declares defaults for them: those are PYTHON defaults on the model class and
+# only apply when a row is created through it. This INSERT goes to the table
+# directly, so without them the columns would be NULL -- and they are NOT NULL.
+# `created_at` is the exception: it has a real DDL default (`now()`).
 INSERT_CHANGELOG = """
-INSERT INTO changelog (changelog_id, user_id, change_type, payload, session_id)
-VALUES (:changelog_id, :user_id, :change_type, :payload, :session_id)
+INSERT INTO changelog (changelog_id, user_id, change_type, payload, session_id,
+                       sync_status, sync_attempts)
+VALUES (:changelog_id, :user_id, :change_type, :payload, :session_id,
+        :sync_status, 0)
 RETURNING changelog_id, created_at
 """
+
+# What the sync process looks for. The value comes from the table's own default.
+PENDING = "pending"
 
 router = APIRouter(prefix="/material-relationships", tags=["Material relationships (write)"])
 
@@ -98,6 +109,7 @@ async def _record(
         change_type=change_type,
         payload=relationship.model_dump_json(),
         session_id=UNKNOWN_SESSION,
+        sync_status=PENDING,
     )
     log.info("Changelog %s: %s by %s", row["changelog_id"], change_type, principal.label)
     return ChangelogEntry(

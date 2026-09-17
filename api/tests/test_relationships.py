@@ -45,6 +45,9 @@ def test_a_new_relationship_is_appended_to_the_changelog(
     assert parameters["change_type"] == "MATERIALS_RELATIONSHIP_CREATED"
     assert json.loads(parameters["payload"]) == RELATIONSHIP
     assert response.json()["changelog_id"] == str(parameters["changelog_id"])
+    # Set explicitly: the table's `default="pending"` is a Python default on the
+    # model class and does not apply to an INSERT that goes to the table.
+    assert parameters["sync_status"] == "pending"
 
 
 def test_a_removed_relationship_is_recorded_rather_than_deleted(

@@ -233,7 +233,8 @@ tests/test_data_products.py     end-to-end over HTTP
 tests/test_operations.py        request ids, cache metadata, auth, readiness
 tests/test_health.py            operational endpoints
 tests/test_write_routes.py      every write route has a role and an invalidation
-tests/test_integration_neo4j.py against a REAL database (skipped without NEO4J_URI)
+tests/test_integration_neo4j.py against a REAL graph (skipped without NEO4J_HOST)
+tests/test_integration_postgres.py against a REAL Postgres (skipped without SQL_HOST)
 tests/fakes.py                  test doubles (a tool, not a test)
 ```
 
