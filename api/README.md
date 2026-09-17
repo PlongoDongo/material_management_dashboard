@@ -91,7 +91,13 @@ GET   /api/v1/data-products/{name}/v{major}            the data
 GET   /api/v1/data-products/{name}/latest              alias (not for dashboards!)
 POST  /api/v1/mappings                                 write-side example
 PATCH /api/v1/mappings/{id}
+POST   /api/v1/material-relationships                  record "these two are the same"
+DELETE /api/v1/material-relationships                  record that it no longer holds
 ```
+
+The two relationship routes append to the `changelog` table instead of changing
+anything: a separate process picks those entries up and applies them (the table's
+`sync_status` / `synced_at` columns). That is why `DELETE` deletes nothing here.
 
 Response format of every data product:
 
