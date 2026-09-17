@@ -167,7 +167,7 @@ api/
 │       │       ├── __init__.py     #   baut die API-Version v1 zusammen
 │       │       ├── health.py       #   /healthz, /readyz
 │       │       ├── catalog.py      #   /catalog
-│       │       └── mappings.py     #   Schreibseite (POST/PATCH)
+│       │       └── relationships.py #   Schreibseite (POST/DELETE)
 │       │
 │       └── clients/
 │           └── dash_client.py      # Vorlage für die Dash-Apps
@@ -247,7 +247,7 @@ def build_v1_router() -> APIRouter:
     router.include_router(health.router)
     router.include_router(catalog.router)
     router.include_router(build_products_router())
-    router.include_router(mappings.router)
+    router.include_router(relationships.router)
     return router
 ```
 
@@ -292,8 +292,8 @@ GET   /api/v1/data-products/material-overview/v3_OLD            [deprecated]
 GET   /api/v1/data-products/material-overview/v3
 GET   /api/v1/data-products/material-overview/latest        Alias
 GET   /api/v1/data-products/supplier-risk/v2
-POST  /api/v1/mappings                                      Schreibseite
-PATCH /api/v1/mappings/{mapping_id}
+POST   /api/v1/material-relationships                       Schreibseite
+DELETE /api/v1/material-relationships
 ```
 
 ---
@@ -636,13 +636,14 @@ haben unterschiedliche Verträge:
 
 Ein Generator kann das Zweite nicht sinnvoll erzeugen. Kommandos sind deshalb
 normale, handgeschriebene Router unter `/api/v1/<thema>`
-(Beispiel: [`api/v1/mappings.py`](../api/src/api/v1/mappings.py)).
+(Beispiel: [`api/v1/relationships.py`](../api/src/api/v1/relationships.py)).
 
 Zwei Konventionen dort:
 
-1. **Eingabe- und Ausgabemodell trennen** (`MappingIn` / `MappingOut`). Der Client
-   darf `id` und `geaendert_am` nicht setzen. Zwei kleine Modelle sind einfacher
-   als ein großes mit Ausnahmen.
+1. **Eingabe- und Ausgabemodell trennen** (`MaterialRelationship` /
+   `ChangelogEntry`). Der Client darf die Changelog-ID und ihren Zeitstempel
+   nicht setzen. Zwei kleine Modelle sind einfacher als ein großes mit
+   Ausnahmen.
 2. **Nach jedem Schreiben den Cache der betroffenen Produkte invalidieren.** Sonst
    zeigt das Dashboard bis zu `cache_ttl` Sekunden lang den alten Stand, und der
    Nutzer glaubt, das Speichern habe nicht funktioniert:

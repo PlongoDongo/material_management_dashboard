@@ -143,20 +143,6 @@ def test_openapi_contains_each_product_with_its_own_schema(client: TestClient) -
     assert "SupplierRiskRow" in spec["components"]["schemas"]
 
 
-def test_a_write_endpoint_invalidates_the_cache(client: TestClient) -> None:
-    path = "/api/v1/data-products/material-overview/v3"
-    client.get(path)
-    assert client.get(path).json()["meta"]["cache"] == "hit"
-
-    created = client.post(
-        "/api/v1/mappings",
-        json={"material_number": "MAT-100777", "target_material_group": "Rohstoffe"},
-    )
-    assert created.status_code == 201
-
-    assert client.get(path).json()["meta"]["cache"] == "miss"
-
-
 def test_a_filter_is_passed_to_the_query_as_a_parameter(client: TestClient, fake_sources: FakeSources) -> None:
     """Filters that live in the query are passed through as parameters.
 

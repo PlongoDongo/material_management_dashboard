@@ -52,7 +52,7 @@ further services later on).
 * **Data products** (`/api/v1/data-products/...`) -- versioned, read-only
   contracts with a fixed schema.
 * **Catalog** (`/api/v1/catalog`) -- which products exist in which versions.
-* **Commands** (e.g. `/api/v1/mappings`) -- write endpoints.
+* **Commands** (e.g. `/api/v1/material-relationships`) -- write endpoints.
 
 Versioning: the path carries the MAJOR (`/v3`), the full `MAJOR.MINOR` is in
 `meta.version` of the response. New field = MINOR, same route. Field removed or

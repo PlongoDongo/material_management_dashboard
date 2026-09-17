@@ -27,6 +27,7 @@ from fastapi import APIRouter, Body, Depends, Query, status
 from pydantic import BaseModel
 
 from api.deps import SourcesDep
+from core.errors import ConflictError, documented_errors
 from core.security import CurrentPrincipal, Principal, requires
 from db.sources import Sources
 from products.cache import invalidates
@@ -119,6 +120,7 @@ def _user_id(principal: Principal) -> UUID:
     status_code=status.HTTP_201_CREATED,
     summary="Record that two material representations are the same",
     dependencies=[Depends(requires(WRITE_ROLE)), Depends(invalidates(*INVALIDATES))],
+    responses=documented_errors(ConflictError),
 )
 async def create_relationship(
     relationship: Annotated[MaterialRelationship, Body()],
@@ -132,6 +134,7 @@ async def create_relationship(
     "",
     summary="Record that the relationship no longer holds",
     dependencies=[Depends(requires(WRITE_ROLE)), Depends(invalidates(*INVALIDATES))],
+    responses=documented_errors(ConflictError),
 )
 async def delete_relationship(
     relationship: Annotated[MaterialRelationship, Query()],

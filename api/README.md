@@ -89,8 +89,6 @@ GET   /api/v1/catalog                                  all data products + versi
 GET   /api/v1/catalog/{name}                           one product in detail
 GET   /api/v1/data-products/{name}/v{major}            the data
 GET   /api/v1/data-products/{name}/latest              alias (not for dashboards!)
-POST  /api/v1/mappings                                 write-side example
-PATCH /api/v1/mappings/{id}
 POST   /api/v1/material-relationships                  record "these two are the same"
 DELETE /api/v1/material-relationships                  record that it no longer holds
 ```

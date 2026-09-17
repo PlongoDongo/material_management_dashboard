@@ -13,9 +13,15 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
+from fastapi import Depends, FastAPI
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+from tests.fakes import FakeSources
 
+from api.deps import get_sources
 from api.v1 import API_V1_PREFIX, TOPIC_ROUTERS
+from app import create_app
+from core.config import Settings
 from products.cache import cache, invalidates
 from products.registry import discover, registry
 
@@ -45,7 +51,7 @@ def test_write_routes_are_found_and_reads_are_not() -> None:
     would let every test below pass for the wrong reason."""
     paths = {path for path, _ in _write_routes()}
 
-    assert f"{API_V1_PREFIX}/mappings" in paths, "is TOPIC_ROUTERS still right?"
+    assert f"{API_V1_PREFIX}/material-relationships" in paths, "is TOPIC_ROUTERS still right?"
     assert f"{API_V1_PREFIX}/healthz" not in paths
 
 
@@ -96,3 +102,30 @@ async def _drain(generator: AsyncIterator[None]) -> None:
     await generator.__anext__()
     with contextlib.suppress(StopAsyncIteration):
         await generator.__anext__()
+
+
+def test_a_declared_invalidation_really_evicts_the_product(settings: Settings) -> None:
+    """The mechanism end to end: after a write the next read goes to the source
+    again instead of being answered from the cache.
+
+    On a route declared here rather than on a real one: no production route
+    invalidates a product today -- the relationship routes feed an outbox that a
+    separate process applies later -- and a route claiming otherwise would put a
+    false statement into /docs.
+    """
+    application: FastAPI = create_app(settings)
+    application.dependency_overrides[get_sources] = FakeSources
+
+    @application.post("/test-write", dependencies=[Depends(invalidates("material-overview"))])
+    async def _write() -> dict[str, bool]:
+        return {"written": True}
+
+    path = f"{API_V1_PREFIX}/data-products/material-overview/v3"
+    cache.invalidate()
+    with TestClient(application) as client:
+        client.get(path)
+        assert client.get(path).json()["meta"]["cache"] == "hit"
+
+        assert client.post("/test-write").status_code == 200
+
+        assert client.get(path).json()["meta"]["cache"] == "miss"

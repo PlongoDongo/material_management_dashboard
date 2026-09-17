@@ -26,6 +26,12 @@ from core.errors import ConfigurationError
 from core.security import ANONYMOUS, Principal, _groups_from
 from products.registry import registry
 
+RELATIONSHIP_PATH = "/api/v1/material-relationships"
+RELATIONSHIP = {
+    "material_rep_1_id": "11111111-1111-1111-1111-111111111111",
+    "material_rep_2_id": "22222222-2222-2222-2222-222222222222",
+}
+
 CATALOG = "/api/v1/catalog"
 PRODUCT = "/api/v1/data-products/material-overview/v3"
 
@@ -128,13 +134,20 @@ def test_missing_claims_do_not_crash(oidc_settings: Settings) -> None:
     assert _groups_from({"realm_access": {}, "groups": None}, oidc_settings) == frozenset()
 
 
-def test_the_username_becomes_the_readable_label(secured: TestClient, auth_header: AuthHeader) -> None:
-    response = secured.post(
-        "/api/v1/mappings",
-        headers=auth_header(username="a.schmidt", roles=["material-planner"]),
-        json={"material_number": "MAT-1", "target_material_group": "Rohstoffe"},
-    )
-    assert response.json()["changed_by"] == "a.schmidt"
+def test_the_username_becomes_the_readable_label(
+    secured: TestClient, auth_header: AuthHeader, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The audit trail has to say WHO, in a form a human recognises -- the raw
+    `sub` UUID is correct but unreadable."""
+    with caplog.at_level("INFO", logger="api.v1.relationships"):
+        response = secured.post(
+            RELATIONSHIP_PATH,
+            headers=auth_header(username="a.schmidt", roles=["material-planner"]),
+            json=RELATIONSHIP,
+        )
+
+    assert response.status_code == 201
+    assert "a.schmidt" in caplog.text
 
 
 def test_a_service_account_without_a_username_falls_back_to_the_subject() -> None:
@@ -298,20 +311,18 @@ def test_writing_needs_more_than_reading(secured: TestClient, auth_header: AuthH
     """`requires()` on the route, next to the route -- the same idea as
     `required_groups` on a data product. Reading master data and rewriting it
     are different privileges, so a read token must not be enough."""
-    payload = {"material_number": "MAT-1", "target_material_group": "Rohstoffe"}
-
-    reader = secured.post("/api/v1/mappings", headers=auth_header(roles=["viewer"]),
-                          json=payload)
+    reader = secured.post(RELATIONSHIP_PATH, headers=auth_header(roles=["viewer"]),
+                          json=RELATIONSHIP)
     assert reader.status_code == 403
     assert reader.json()["code"] == "forbidden"
     assert "material-planner" in reader.json()["detail"]
 
-    planner = secured.post("/api/v1/mappings",
-                           headers=auth_header(roles=["material-planner"]), json=payload)
+    planner = secured.post(RELATIONSHIP_PATH,
+                           headers=auth_header(roles=["material-planner"]), json=RELATIONSHIP)
     assert planner.status_code == 201
 
 
 def test_the_required_role_is_documented_in_openapi(secured: TestClient, auth_header: AuthHeader) -> None:
     """A 403 nobody can find in /docs is a support ticket waiting to happen."""
     schema = secured.get("/openapi.json", headers=auth_header()).json()
-    assert "403" in schema["paths"]["/api/v1/mappings"]["post"]["responses"]
+    assert "403" in schema["paths"][RELATIONSHIP_PATH]["post"]["responses"]
