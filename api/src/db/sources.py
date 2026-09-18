@@ -216,6 +216,34 @@ class Sources:
         Same rule as above: `:name` in the SQL, `name=...` here. Never splice
         values into the text -- that would be a SQL injection hole.
         """
+        session = await self._sql_session()
+        with _postgres_errors():
+            result = await session.execute(text(sql), parameters)
+            return [dict(row) for row in result.mappings()]
+
+    # ANN401: an ORM object is whatever db/models.py declares.
+    async def add(self, *rows: Any) -> None:  # noqa: ANN401
+        """Writes table objects from db/models.py -- the way this API writes to Postgres.
+
+            await sources.add(Changelog(change_type="...", payload={...}))
+
+        Same session, same transaction and the same error translation as
+        `postgres()`; only the way the statement comes about differs.
+
+        `flush()` sends it now instead of at commit time, so a violated
+        constraint surfaces here as a 409 rather than in the request scope.
+        `refresh()` then reads back what the database filled in -- `created_at`
+        has a DDL default.
+        """
+        session = await self._sql_session()
+        with _postgres_errors():
+            session.add_all(rows)
+            await session.flush()
+            for row in rows:
+                await session.refresh(row)
+
+    async def _sql_session(self) -> Any:  # noqa: ANN401
+        """The one SQL session of this request, opened on first use."""
         if self._sessionmaker is None:
             raise ConfigurationError(
                 "Postgres is not configured (SQL_HOST is missing) but is required here."
@@ -225,9 +253,7 @@ class Sources:
                 self._sessionmaker()
             )
         self.used.add("postgres")
-        with _postgres_errors():
-            result = await self._sessions["sql"].execute(text(sql), parameters)
-            return [dict(row) for row in result.mappings()]
+        return self._sessions["sql"]
 
     async def commit(self) -> None:
         """Commits the SQL transaction. Called by the request scope.
