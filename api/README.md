@@ -91,6 +91,8 @@ GET   /api/v1/data-products/{name}/v{major}            the data
 GET   /api/v1/data-products/{name}/latest              alias (not for dashboards!)
 POST   /api/v1/material-relationships                  record "these two are the same"
 DELETE /api/v1/material-relationships                  record that it no longer holds
+POST   /api/v1/material-relationships-orm              the same, written via the ORM
+DELETE /api/v1/material-relationships-orm
 ```
 
 The two relationship routes append to the `changelog` table instead of changing

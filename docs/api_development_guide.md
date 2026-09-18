@@ -785,6 +785,28 @@ Register the router in `api/v1/__init__.py` — the one place that assembles the
 Add it to `TOPIC_ROUTERS` in the same file, or `tests/test_write_routes.py` will
 not see it.
 
+### Two ways to write: SQL or ORM
+
+Both are in the repo side by side while the team decides, on the same endpoints:
+
+| | A — `api/v1/relationships.py` | B — `api/v1/relationships_orm.py` |
+|---|---|---|
+| the write | `await sources.postgres(INSERT_CHANGELOG, ...)` | `await sources.add(Changelog(...))` |
+| where the table is described | in the `INSERT` | in `db/models.py` as a class |
+| columns with a Python default (`sync_status`, `sync_attempts`) | must be set by hand | filled in by the class |
+| a typo in a column name | fails at runtime | fails in Python, and the editor completes the field |
+| what actually runs | visible in the file | assembled by SQLAlchemy |
+| validation of what a caller sends | the request model in the router | the same — a `table=True` class does **not** validate |
+
+Everything else is identical: role check, cache declaration, one transaction per
+request, error translation, request and response models. `sources.add(...)` uses
+the same session as `sources.postgres(...)`, so the two can even be mixed inside
+one request.
+
+Rule of thumb: for a single append, the `INSERT` says exactly what happens. As
+soon as rows are loaded, changed and written back, or several tables hang
+together, the class earns its keep.
+
 **Why writes are not generated.** The obvious question is whether write routes
 could be data products too — one file in `catalog/`, and `router.py` does the
 rest. They could not, usefully. For reads the generator *supplies behaviour*:

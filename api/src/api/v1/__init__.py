@@ -20,7 +20,7 @@ a changed auth mechanism must not re-version every data product.
 """
 from fastapi import APIRouter
 
-from api.v1 import catalog, health, relationships
+from api.v1 import catalog, health, relationships, relationships_orm
 from products.router import build_products_router
 
 API_V1_PREFIX = "/api/v1"
@@ -34,7 +34,8 @@ API_V1_PREFIX = "/api/v1"
 #
 # The generated data product router is deliberately NOT in here: it has no
 # hand-written dependencies to inspect, and the registry already describes it.
-TOPIC_ROUTERS = (health.router, catalog.router, relationships.router)
+TOPIC_ROUTERS = (health.router, catalog.router, relationships.router,
+                 relationships_orm.router)
 
 
 def build_v1_router() -> APIRouter:
@@ -43,4 +44,5 @@ def build_v1_router() -> APIRouter:
     router.include_router(catalog.router)
     router.include_router(build_products_router())   # generated from the registry
     router.include_router(relationships.router)      # hand-written (write side)
+    router.include_router(relationships_orm.router)  # the same, via the ORM
     return router

@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from api.v1.relationships import INSERT_CHANGELOG, PENDING
 from core.config import Settings
 from core.errors import ConflictError
+from db.models import Changelog
 from db.sources import Sources
 from db.sql import create_engine, create_sessionmaker, dispose_engine
 
@@ -155,3 +156,32 @@ async def test_leaving_out_sync_status_violates_not_null(sources: Sources) -> No
             """,
             changelog_id=uuid4(),
         )
+
+
+async def test_the_orm_write_path_reaches_the_same_table(
+    sources: Sources, engine: AsyncEngine
+) -> None:
+    """Variant B (api/v1/relationships_orm.py) against the real table.
+
+    Two things only a database can confirm: that the model's Python defaults do
+    end up in the row, and that `refresh()` reads the server-generated
+    `created_at` back.
+    """
+    entry = Changelog(
+        user_id="a.schmidt",
+        change_type="MATERIALS_RELATIONSHIP_CREATED",
+        payload=RELATIONSHIP,
+        session_id="unknown",
+    )
+    try:
+        await sources.add(entry)
+        await sources.commit()
+
+        assert entry.created_at is not None, "refresh() did not read the server default back"
+
+        row = await _row(engine, entry.changelog_id)
+        assert row["user_id"] == "a.schmidt"
+        assert row["sync_status"] == PENDING       # from the class, not from the route
+        assert row["sync_attempts"] == 0
+    finally:
+        await _delete(engine, entry.changelog_id)

@@ -217,6 +217,8 @@ class FakeSources:
         # test would end up checking the fake. Whether a filter really filters
         # belongs in tests/test_integration_neo4j.py against a real database.
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        # What the ORM write path handed over (see Sources.add).
+        self.added: list[Any] = []
 
     @property
     def queries(self) -> list[str]:
@@ -278,6 +280,22 @@ class FakeSources:
             "FakeSources does not know this SQL query. New data product? "
             "Then add a matching answer in tests/fakes.py.\n\n" + sql
         )
+
+    # ANN401: mirrors Sources.add, which takes whatever db/models.py declares.
+    async def add(self, *rows: Any) -> None:  # noqa: ANN401
+        """Records the objects instead of writing them.
+
+        The real `add()` also reads back what the database generated. The fake
+        fills in `created_at` for the same reason: otherwise a route returning
+        it would fail for a reason that has nothing to do with the route.
+        """
+        self.used.add("postgres")
+        self.added.extend(rows)
+        for row in rows:
+            if getattr(row, "created_at", None) is None:
+                # DTZ001: the column is TIMESTAMP WITHOUT TIME ZONE, so the
+                # value the database returns is naive too.
+                row.created_at = dt.datetime(2026, 9, 17, 8, 30)  # noqa: DTZ001
 
     async def commit(self) -> None:
         """No-op -- there is no transaction to commit."""
