@@ -18,9 +18,9 @@ table says so:
     sync_status   VARCHAR(50) NOT NULL               <- default="pending" is NOT here
     sync_attempts INTEGER NOT NULL                   <- default=0 is NOT here
 
-So an INSERT written by hand has to set those columns itself (see
-api/v1/relationships.py), while this class fills them in. That difference is
-the main reason the two write paths exist side by side.
+So `sources.add(...)` gets them from the class, while an INSERT written by hand
+(`sources.postgres(...)`) would have to set those columns itself. Write through
+the class and the question does not come up.
 
 A second one: a class with `table=True` does NOT validate on instantiation --
 `Changelog(sync_attempts="many")` is accepted here and rejected by the database.

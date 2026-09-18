@@ -1,22 +1,21 @@
 """
-The write side for material relationships.
+The write side for material relationships (api/v1/relationships.py).
 
-These routes change no relationship: they append one row to the `changelog`
-outbox, which a separate process applies later. So the tests check what is
-WRITTEN -- change type, payload, who -- and not any state in a graph.
+These routes change no relationship: they hand one `Changelog` object to the
+outbox, which a separate process applies later. The tests therefore look at the
+object that was handed over -- change type, payload, who -- and not at any state
+in a graph.
 """
 from __future__ import annotations
-
-import json
 
 from fastapi.testclient import TestClient
 from tests.fakes import FakeSources
 from tests.types import AuthHeader
 
 from api.deps import get_sources
-from api.v1.relationships import INSERT_CHANGELOG, SYSTEM_USER
 from app import create_app
 from core.config import Settings
+from db.models import Changelog
 
 PATH = "/api/v1/material-relationships"
 RELATIONSHIP = {
@@ -40,14 +39,25 @@ def test_a_new_relationship_is_appended_to_the_changelog(
     response = client.post(PATH, json=RELATIONSHIP)
 
     assert response.status_code == 201
-    sql, parameters = fake_sources.calls[0]
-    assert sql is INSERT_CHANGELOG
-    assert parameters["change_type"] == "MATERIALS_RELATIONSHIP_CREATED"
-    assert json.loads(parameters["payload"]) == RELATIONSHIP
-    assert response.json()["changelog_id"] == str(parameters["changelog_id"])
-    # Set explicitly: the table's `default="pending"` is a Python default on the
-    # model class and does not apply to an INSERT that goes to the table.
-    assert parameters["sync_status"] == "pending"
+    [entry] = fake_sources.added
+    assert isinstance(entry, Changelog)
+    assert entry.change_type == "MATERIALS_RELATIONSHIP_CREATED"
+    assert entry.payload == RELATIONSHIP
+    assert response.json()["changelog_id"] == str(entry.changelog_id)
+
+
+def test_the_class_fills_in_what_the_route_does_not_say(
+    client: TestClient, fake_sources: FakeSources
+) -> None:
+    """The id and the sync columns come from the defaults on the table class --
+    the route never mentions them, and a new table class works the same way."""
+    client.post(PATH, json=RELATIONSHIP)
+
+    [entry] = fake_sources.added
+    assert entry.changelog_id is not None
+    assert entry.sync_status == "pending"
+    assert entry.sync_attempts == 0
+    assert entry.sync_error is None and entry.synced_at is None
 
 
 def test_a_removed_relationship_is_recorded_rather_than_deleted(
@@ -57,21 +67,20 @@ def test_a_removed_relationship_is_recorded_rather_than_deleted(
     response = client.delete(PATH, params=RELATIONSHIP)
 
     assert response.status_code == 200
-    sql, parameters = fake_sources.calls[0]
-    assert sql is INSERT_CHANGELOG, "the route must not delete anything itself"
-    assert parameters["change_type"] == "MATERIALS_RELATIONSHIP_DELETED"
+    [entry] = fake_sources.added
+    assert entry.change_type == "MATERIALS_RELATIONSHIP_DELETED"
     assert response.json()["change_type"] == "MATERIALS_RELATIONSHIP_DELETED"
 
 
 def test_without_authentication_the_entry_belongs_to_the_system(
     client: TestClient, fake_sources: FakeSources
 ) -> None:
-    """With auth off there is no user to name, so the entry looks like any other
-    unattributed one -- the default the column declares."""
+    """With auth off there is nobody to name: the class defaults apply."""
     client.post(PATH, json=RELATIONSHIP)
 
-    _sql, parameters = fake_sources.calls[0]
-    assert parameters["user_id"] == SYSTEM_USER
+    [entry] = fake_sources.added
+    assert entry.user_id == "system"
+    assert entry.session_id == "unknown"
 
 
 def test_the_entry_names_the_authenticated_user(
@@ -86,7 +95,7 @@ def test_the_entry_names_the_authenticated_user(
                                                    roles=["material-planner"]))
 
     assert response.status_code == 201
-    assert fake.calls[0][1]["user_id"] == "a.schmidt"
+    assert fake.added[0].user_id == "a.schmidt"
 
 
 def test_without_the_role_nothing_is_written(
@@ -98,7 +107,7 @@ def test_without_the_role_nothing_is_written(
         response = client.post(PATH, json=RELATIONSHIP, headers=auth_header(roles=["viewer"]))
 
     assert response.status_code == 403
-    assert fake.calls == []
+    assert fake.added == []
 
 
 def test_an_unknown_relationship_type_is_rejected(client: TestClient) -> None:
@@ -109,3 +118,14 @@ def test_an_unknown_relationship_type_is_rejected(client: TestClient) -> None:
     assert response.status_code == 422
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["code"] == "validation_error"
+
+
+def test_the_table_class_does_not_validate() -> None:
+    """Why the request model in the router is not redundant.
+
+    A SQLModel class with `table=True` skips validation: this assignment is
+    accepted here and only refused by the database.
+    """
+    entry = Changelog(change_type="X", sync_attempts="many")
+
+    assert entry.sync_attempts == "many"

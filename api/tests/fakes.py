@@ -18,7 +18,6 @@ import datetime as dt
 import random
 from typing import Any
 
-from api.v1 import relationships
 from products.catalog import example_1_plain as ex1
 from products.catalog import example_2_paged as ex2
 from products.catalog import example_3_filtered as ex3
@@ -272,10 +271,6 @@ class FakeSources:
         self.calls.append((sql, parameters))
         if sql is sr2.SQL:
             return delivery_rows(parameters["since"])
-        if sql is relationships.INSERT_CHANGELOG:
-            # What the RETURNING clause hands back.
-            return [{"changelog_id": parameters["changelog_id"],
-                     "created_at": dt.datetime(2026, 9, 17, 8, 30, tzinfo=dt.UTC)}]
         raise AssertionError(
             "FakeSources does not know this SQL query. New data product? "
             "Then add a matching answer in tests/fakes.py.\n\n" + sql

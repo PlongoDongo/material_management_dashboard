@@ -223,7 +223,7 @@ class Sources:
 
     # ANN401: an ORM object is whatever db/models.py declares.
     async def add(self, *rows: Any) -> None:  # noqa: ANN401
-        """Writes ORM objects -- the alternative to writing the INSERT by hand.
+        """Writes table objects from db/models.py -- the way this API writes to Postgres.
 
             await sources.add(Changelog(change_type="...", payload={...}))
 
