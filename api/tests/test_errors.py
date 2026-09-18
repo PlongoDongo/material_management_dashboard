@@ -204,7 +204,7 @@ def test_the_docs_describe_every_error_a_route_can_answer(settings: Settings) ->
     product = schema["paths"]["/api/v1/data-products/material-overview/v3"]["get"]
 
     assert {"401", "403", "422", "500", "503"} <= set(product["responses"])
-    assert "409" in schema["paths"]["/api/v1/mappings"]["post"]["responses"]
+    assert "409" in schema["paths"]["/api/v1/material-relationships"]["post"]["responses"]
     assert "404" in schema["paths"]["/api/v1/catalog/{name}"]["get"]["responses"]
 
     # Both media types carry schema AND example. FastAPI attaches a declared

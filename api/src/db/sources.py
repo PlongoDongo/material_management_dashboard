@@ -233,10 +233,9 @@ class Sources:
         """Commits the SQL transaction. Called by the request scope.
 
         Without this call SQLAlchemy rolls back when the session closes. For the
-        read-only side that is harmless -- but anyone following the TODO in
-        api/v1/mappings.py and adding an INSERT would get an endpoint that
-        answers 201, invalidates the cache, logs success and writes nothing.
-        Silent again, plausible-looking again.
+        read-only side that is harmless -- but the INSERT in
+        api/v1/relationships.py would otherwise answer 201, log success and
+        write nothing. Silent again, plausible-looking again.
 
         Called ONLY on the success path (see api/deps.py): if the endpoint
         raises, the AsyncExitStack rolls back instead. And called BEFORE the

@@ -58,7 +58,7 @@ class TTLCache:
         self._store[key] = (time.monotonic() + ttl, value)
 
     def invalidate(self, product: str | None = None) -> int:
-        """Clear selectively after a write (see api/v1/mappings.py)."""
+        """Clear selectively after a write (see api/v1/relationships.py)."""
         if product is None:
             count = len(self._store)
             self._store.clear()

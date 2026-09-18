@@ -127,7 +127,7 @@ api/
 │   │
 │   ├── api/                    hand-written routers
 │   │   ├── deps.py
-│   │   └── v1/                 health, catalog, mappings
+│   │   └── v1/                 health, catalog, relationships
 │   │
 │   └── clients/dash_client.py  template for the Dash apps
 ├── seed/                       mock data for sources we do not have yet
@@ -601,13 +601,13 @@ different rules. So the rules are different from a data product's:
 | Status code or error semantics change | breaking; treat like row three |
 
 The reason a new *path* is usually enough: the URL is the version.
-`POST /api/v1/mappings` and `POST /api/v1/mappings/bulk` are two commands, not
-two versions of one. When you genuinely need the same command with different
+`POST /api/v1/material-relationships` and `POST /api/v1/material-relationships/bulk`
+are two commands, not two versions of one. When you genuinely need the same command with different
 semantics, name it for what makes it different rather than numbering it:
 
 ```python
 @router.post("", ...)                    # the existing contract, untouched
-async def create_mapping(...): ...
+async def create_relationship(...): ...
 
 @router.post("/with-review", ...)        # new: requires an approver
 async def create_mapping_with_review(...): ...
@@ -656,7 +656,7 @@ src/api/
 │   ├── __init__.py         API_V1_PREFIX = "/api/v1"
 │   ├── health.py
 │   ├── catalog.py
-│   └── mappings.py
+│   └── relationships.py
 └── v2/                     the new transport contract
     ├── __init__.py         API_V2_PREFIX = "/api/v2"
     └── ...
@@ -728,10 +728,12 @@ Reads are a contract about the *shape* of data; writes are a contract about an
 *action*, with preconditions, side effects and transactions. Put them in a
 hand-written router under `api/v1/`.
 
-See `api/v1/mappings.py` for the reference. Three conventions:
+See `api/v1/relationships.py` for the reference. Three conventions:
 
-**Separate input and output models.** The client must not set `id` or
-`geaendert_am`. Two small models beat one large model with exceptions.
+**Separate input and output models.** `MaterialRelationship` is what the caller
+sends, `ChangelogEntry` what the API confirms — the caller must not set the
+changelog id or its timestamp. Two small models beat one large model with
+exceptions.
 
 **Pick the right method.** There is no `UPDATE` in HTTP:
 
@@ -752,7 +754,7 @@ value for up to `cache_ttl` seconds — the user concludes the save failed.
     "",
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(requires(WRITE_ROLE)), Depends(invalidates(*INVALIDATES))],
-    responses={409: {"description": "The mapping already exists."}},
+    responses=documented_errors(ConflictError),
 )
 ```
 
@@ -952,7 +954,7 @@ app = FastAPI(..., responses=documented_errors(
 ```
 
 A route that can answer something else names that class in its own `responses`,
-e.g. `responses=documented_errors(ConflictError)` on `POST /mappings`.
+e.g. `responses=documented_errors(ConflictError)` on `POST /material-relationships`.
 
 You pass the **classes**, not status codes: the status, the description Swagger
 shows and the example all come from the class itself. So adding an error type is

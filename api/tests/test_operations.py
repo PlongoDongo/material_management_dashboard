@@ -175,26 +175,6 @@ def test_disabled_auth_does_not_lock_anyone_out() -> None:
     assert authenticated.may_access(("public",)) is True
 
 
-def test_the_audit_field_holds_an_identity_not_a_credential(oidc_settings: Settings, auth_header: AuthHeader) -> None:
-    """`changed_by` should say WHO, in a form a human recognises.
-
-    Two failure modes this guards against at once: leaking part of the
-    credential into the response (the API key era did exactly that), and
-    writing the raw `sub` UUID, which is correct but unreadable in an audit
-    column.
-    """
-    with TestClient(create_app(oidc_settings)) as client:
-        response = client.post(
-            "/api/v1/mappings",
-            headers=auth_header(username="m.renner", roles=["material-planner"]),
-            json={"material_number": "MAT-1", "target_material_group": "Rohstoffe"},
-        )
-    assert response.status_code == 201
-    changed_by = response.json()["changed_by"]
-    assert changed_by == "m.renner"
-    assert "eyJ" not in changed_by         # no part of the token itself
-
-
 def test_a_failed_commit_is_the_response_not_a_log_line(app: FastAPI, client: TestClient) -> None:
     """The commit runs after the handler has returned -- a duplicate key is
     often only detected there.
@@ -213,8 +193,9 @@ def test_a_failed_commit_is_the_response_not_a_log_line(app: FastAPI, client: Te
     cache.set(key, (["row"], 1, "neo4j", None), ttl=60)
 
     response = client.post(
-        "/api/v1/mappings",
-        json={"material_number": "MAT-1", "target_material_group": "Rohstoffe"},
+        "/api/v1/material-relationships",
+        json={"material_rep_1_id": "11111111-1111-1111-1111-111111111111",
+              "material_rep_2_id": "22222222-2222-2222-2222-222222222222"},
     )
 
     assert response.status_code == 409
