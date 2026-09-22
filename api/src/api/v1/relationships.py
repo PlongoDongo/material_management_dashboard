@@ -13,7 +13,9 @@ they append a row to the `changelog` table:
 entries up and applies them to the source system. That is why the DELETE route
 deletes nothing here -- it records the intent, and the sync carries it out.
 
-The table is owned elsewhere; this API only appends to it (see INSERT_CHANGELOG).
+The row is written through the table class in db/models.py: the route names what
+it knows, and the class fills in the rest -- the id, the sync columns, and
+"system" / "unknown" when nobody is signed in.
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ import datetime as dt
 import logging
 from enum import StrEnum
 from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Query, status
 from pydantic import BaseModel
@@ -29,45 +31,19 @@ from pydantic import BaseModel
 from api.deps import SourcesDep
 from core.errors import ConflictError, documented_errors
 from core.security import CurrentPrincipal, Principal, requires
+from db.models import Changelog
 from db.sources import Sources
 from products.cache import invalidates
 
 log = logging.getLogger(__name__)
 
-# The Keycloak role a caller needs to change master data -- the same one the
-# other write routes use.
+# The Keycloak role a caller needs to change master data.
 WRITE_ROLE = "material-planner"
 
 # No data product goes stale: the overview is fed from Neo4j and only changes
 # once the sync has applied the changelog entry. Declared explicitly, because a
 # missing `invalidates(...)` is an oversight and an empty one is a decision.
 INVALIDATES: tuple[str, ...] = ()
-
-# Written when nobody is authenticated -- the normal case while the API runs
-# without OIDC. Both are text columns; these are the defaults the table itself
-# declares, so an entry from this API looks like any other unattributed one.
-SYSTEM_USER = "system"
-UNKNOWN_SESSION = "unknown"
-
-# Appends one entry. `payload` is handed over as JSON text: that is what the
-# driver expects for a json column, and it keeps the shape of the entry in one
-# place -- the model below.
-#
-# `sync_status` and `sync_attempts` are set explicitly although the table
-# declares defaults for them: those are PYTHON defaults on the model class and
-# only apply when a row is created through it. This INSERT goes to the table
-# directly, so without them the columns would be NULL -- and they are NOT NULL.
-# `created_at` is the exception: it has a real DDL default (`now()`).
-INSERT_CHANGELOG = """
-INSERT INTO changelog (changelog_id, user_id, change_type, payload, session_id,
-                       sync_status, sync_attempts)
-VALUES (:changelog_id, :user_id, :change_type, :payload, :session_id,
-        :sync_status, 0)
-RETURNING changelog_id, created_at
-"""
-
-# What the sync process looks for. The value comes from the table's own default.
-PENDING = "pending"
 
 router = APIRouter(prefix="/material-relationships", tags=["Material relationships (write)"])
 
@@ -77,7 +53,11 @@ class RelationshipType(StrEnum):
 
 
 class MaterialRelationship(BaseModel):
-    """Which two material representations are related, and how."""
+    """Which two material representations are related, and how.
+
+    A plain Pydantic model on purpose: it checks what a CALLER sends. The table
+    class cannot -- with `table=True` SQLModel does not validate (db/models.py).
+    """
 
     material_rep_1_id: UUID
     material_rep_2_id: UUID
@@ -103,30 +83,23 @@ async def _record(
     relationship: MaterialRelationship,
 ) -> ChangelogEntry:
     """Appends one changelog entry and returns what was written."""
-    [row] = await sources.postgres(
-        INSERT_CHANGELOG,
-        changelog_id=uuid4(),
-        user_id=_user(principal),
+    entry = Changelog(
         change_type=change_type,
-        payload=relationship.model_dump_json(),
-        session_id=UNKNOWN_SESSION,
-        sync_status=PENDING,
+        # `mode="json"`: the column is JSON, and a UUID is not.
+        payload=relationship.model_dump(mode="json"),
     )
-    log.info("Changelog %s: %s by %s", row["changelog_id"], change_type, principal.label)
+    if principal.auth_enabled:
+        # The readable name, not the raw Keycloak `sub`. Without sign-in the
+        # class default applies: "system".
+        entry.user_id = principal.label
+    await sources.add(entry)
+
+    log.info("Changelog %s: %s by %s", entry.changelog_id, change_type, principal.label)
     return ChangelogEntry(
-        changelog_id=row["changelog_id"],
-        change_type=change_type,
-        recorded_at=row["created_at"],
+        changelog_id=entry.changelog_id,
+        change_type=entry.change_type,
+        recorded_at=entry.created_at,
     )
-
-
-def _user(principal: Principal) -> str:
-    """Who to record: the readable name, not the raw Keycloak `sub`.
-
-    With authentication switched off there is nobody to name, so the entry
-    belongs to the system -- the default the column declares anyway.
-    """
-    return principal.label if principal.auth_enabled else SYSTEM_USER
 
 
 @router.post(

@@ -19,6 +19,9 @@ dependencies = [
     "pyjwt[crypto]>=2.9",
     # Reads the mounted credentials files (core/config.py).
     "pyyaml>=6.0",
+    # Table classes for the ORM write path (db/models.py). Pydantic and
+    # SQLAlchemy in one class -- see api/v1/relationships.py.
+    "sqlmodel>=0.0.42",
 ]
 
 [project.optional-dependencies]

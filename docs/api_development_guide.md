@@ -785,6 +785,37 @@ Register the router in `api/v1/__init__.py` — the one place that assembles the
 Add it to `TOPIC_ROUTERS` in the same file, or `tests/test_write_routes.py` will
 not see it.
 
+### Writing to Postgres: table classes
+
+Tables are described once, as SQLModel classes in `db/models.py`, and written
+through `sources.add(...)`:
+
+```python
+entry = Changelog(change_type="MATERIALS_RELATIONSHIP_CREATED", payload={...})
+await sources.add(entry)            # same session and transaction as sources.postgres()
+```
+
+`sources.add` flushes right away, so a violated constraint surfaces at the route
+as a 409, and reads back what the database generated (`created_at`). The commit
+still happens once, in the request scope, before the response is sent.
+
+Two things to know about these classes:
+
+* **`default=` is a Python default, not a DDL default.** The class fills the value
+  in; the table itself has no default. That is fine as long as rows are written
+  through the class — an `INSERT` written by hand would have to set those columns.
+* **A class with `table=True` does not validate.** `Changelog(sync_attempts="many")`
+  is accepted and only refused by the database. What a *caller* sends is therefore
+  checked by a plain Pydantic model in the router (`MaterialRelationship`), not by
+  the table class.
+
+`tests/test_integration_postgres.py` writes through a class into a real table
+(skipped without `SQL_HOST`) — the one place a mismatch between class and table
+shows up before production.
+
+Hand-written SQL remains where a class adds nothing: analytic reads in data
+products (`sources.postgres(SQL)`, e.g. supplier-risk) and every Neo4j query.
+
 **Why writes are not generated.** The obvious question is whether write routes
 could be data products too — one file in `catalog/`, and `router.py` does the
 rest. They could not, usefully. For reads the generator *supplies behaviour*:
