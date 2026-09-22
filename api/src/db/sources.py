@@ -7,6 +7,15 @@ through it:
     rows = await sources.neo4j(CYPHER)
     rows = await sources.postgres(SQL, since=params.since)
 
+Postgres tables that have a class in db/models.py are read and written as
+objects instead:
+
+    entries = await sources.exec(select(Changelog).where(Changelog.sync_status == "pending"))
+    entry = await sources.get(Changelog, changelog_id)
+    entry.sync_status = "done"              # written by the commit, see below
+    await sources.add(Changelog(...))
+    await sources.delete(entry)
+
 That is all there is to know. `Sources` takes care of three things every data
 product would otherwise have to get right on its own:
 
@@ -24,14 +33,14 @@ import base64
 import logging
 from collections.abc import Iterator
 from contextlib import AsyncExitStack, contextmanager
-from typing import Any
+from typing import Any, TypeVar
 
 from neo4j import AsyncDriver
 from neo4j.exceptions import ConstraintError, ServiceUnavailable, SessionExpired, TransientError
 from neo4j.graph import Entity, Path
 from neo4j.spatial import Point
 from neo4j.time import Date, DateTime, Duration, Time
-from sqlalchemy import text
+from sqlalchemy import Executable, text
 from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, ProgrammingError
 
 from core.config import Settings
@@ -42,6 +51,9 @@ log = logging.getLogger(__name__)
 
 # One result row is a plain dict: column name -> value.
 Row = dict[str, Any]
+
+# A table class from db/models.py.
+TableRow = TypeVar("TableRow")
 
 
 # ANN401 twice: the driver hands back arbitrary values (nodes, temporals,
@@ -242,6 +254,45 @@ class Sources:
             for row in rows:
                 await session.refresh(row)
 
+    # ANN401: a statement built with `select(...)`; the objects it returns are
+    # whatever table class it names.
+    async def exec(self, statement: Executable) -> list[Any]:
+        """Reads table objects (db/models.py).
+
+            pending = await sources.exec(
+                select(Changelog).where(Changelog.sync_status == "pending")
+            )
+
+        The objects stay attached to this request: change a field and the commit
+        at the end of the request writes it -- there is no separate "save".
+
+        For anything that is not a table class -- aggregates, joins across
+        systems -- `postgres(SQL)` is still the way.
+        """
+        session = await self._sql_session()
+        with _postgres_errors():
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
+    # ANN401: the primary key, whatever type the class declares for it.
+    async def get(self, model: type[TableRow], key: Any) -> TableRow | None:  # noqa: ANN401
+        """One row by primary key, or None if there is none.
+
+            entry = await sources.get(Changelog, changelog_id)
+        """
+        session = await self._sql_session()
+        with _postgres_errors():
+            return await session.get(model, key)
+
+    # ANN401: table objects, see `add`.
+    async def delete(self, *rows: Any) -> None:  # noqa: ANN401
+        """Removes table objects that were read in this request."""
+        session = await self._sql_session()
+        with _postgres_errors():
+            for row in rows:
+                await session.delete(row)
+            await session.flush()
+
     async def _sql_session(self) -> Any:  # noqa: ANN401
         """The one SQL session of this request, opened on first use."""
         if self._sessionmaker is None:
@@ -257,6 +308,10 @@ class Sources:
 
     async def commit(self) -> None:
         """Commits the SQL transaction. Called by the request scope.
+
+        This is also where a CHANGE to an object read in this request is
+        written: `entry.sync_status = "done"` alone sends nothing, the commit
+        does (SQLAlchemy calls that a unit of work).
 
         Without this call SQLAlchemy rolls back when the session closes. For the
         read-only side that is harmless -- but the INSERT in
