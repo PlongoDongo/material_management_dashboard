@@ -785,19 +785,33 @@ Register the router in `api/v1/__init__.py` — the one place that assembles the
 Add it to `TOPIC_ROUTERS` in the same file, or `tests/test_write_routes.py` will
 not see it.
 
-### Writing to Postgres: table classes
+### Reading and writing Postgres: table classes
 
-Tables are described once, as SQLModel classes in `db/models.py`, and written
-through `sources.add(...)`:
+Tables are described once, as SQLModel classes in `db/models.py`, and read and
+written as objects:
 
 ```python
 entry = Changelog(change_type="MATERIALS_RELATIONSHIP_CREATED", payload={...})
-await sources.add(entry)            # same session and transaction as sources.postgres()
+await sources.add(entry)                                   # INSERT
+
+pending = await sources.exec(                              # SELECT
+    select(Changelog).where(Changelog.sync_status == "pending")
+)
+entry = await sources.get(Changelog, changelog_id)         # SELECT by primary key
+entry.sync_status = "done"                                 # UPDATE -- see below
+await sources.delete(entry)                                # DELETE
 ```
 
-`sources.add` flushes right away, so a violated constraint surfaces at the route
-as a 409, and reads back what the database generated (`created_at`). The commit
-still happens once, in the request scope, before the response is sent.
+**There is no "save".** A field you change on an object read in this request is
+written by the commit at the end of it (SQLAlchemy calls that a unit of work).
+That commit runs once, before the response is sent, so a request that reads,
+writes and changes either lands completely or not at all.
+
+`add` and `delete` flush right away, so a violated constraint surfaces at the
+route as a 409 instead of in the request scope; `add` also reads back what the
+database generated (`created_at`). Every one of these goes through the same
+session and the same error translation as `sources.postgres(...)` -- an outage
+during a read is a 503, not a 500.
 
 Two things to know about these classes:
 

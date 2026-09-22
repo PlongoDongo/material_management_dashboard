@@ -216,8 +216,12 @@ class FakeSources:
         # test would end up checking the fake. Whether a filter really filters
         # belongs in tests/test_integration_neo4j.py against a real database.
         self.calls: list[tuple[str, dict[str, Any]]] = []
-        # What the ORM write path handed over (see Sources.add).
+        # What the ORM path handed over or asked for (see Sources.add/exec/...).
         self.added: list[Any] = []
+        self.deleted: list[Any] = []
+        self.statements: list[Any] = []
+        # What a read hands back. A test that needs rows sets this.
+        self.orm_rows: list[Any] = []
 
     @property
     def queries(self) -> list[str]:
@@ -291,6 +295,30 @@ class FakeSources:
                 # DTZ001: the column is TIMESTAMP WITHOUT TIME ZONE, so the
                 # value the database returns is naive too.
                 row.created_at = dt.datetime(2026, 9, 17, 8, 30)  # noqa: DTZ001
+
+    # ANN401: mirrors Sources.exec.
+    async def exec(self, statement: Any) -> list[Any]:  # noqa: ANN401
+        """Records the statement and hands back whatever the test prepared.
+
+        Deliberately NOT executing it: a fake that interpreted `where(...)`
+        would reimplement SQLAlchemy in Python, and the test would end up
+        checking the fake. Whether a filter really filters belongs in
+        tests/test_integration_postgres.py.
+        """
+        self.used.add("postgres")
+        self.statements.append(statement)
+        return list(self.orm_rows)
+
+    # ANN401: mirrors Sources.get.
+    async def get(self, model: type, key: Any) -> Any:  # noqa: ANN401
+        self.used.add("postgres")
+        self.statements.append((model, key))
+        return self.orm_rows[0] if self.orm_rows else None
+
+    # ANN401: mirrors Sources.delete.
+    async def delete(self, *rows: Any) -> None:  # noqa: ANN401
+        self.used.add("postgres")
+        self.deleted.extend(rows)
 
     async def commit(self) -> None:
         """No-op -- there is no transaction to commit."""

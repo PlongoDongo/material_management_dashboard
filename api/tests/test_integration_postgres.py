@@ -28,6 +28,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlmodel import select
 
 from core.config import Settings
 from db.models import Changelog
@@ -95,6 +96,14 @@ async def _row(engine: AsyncEngine, changelog_id: object) -> dict:
         return dict(result.mappings().one())
 
 
+async def _exists(engine: AsyncEngine, changelog_id: object) -> bool:
+    async with engine.connect() as connection:
+        result = await connection.execute(
+            text("SELECT 1 FROM changelog WHERE changelog_id = :id"), {"id": changelog_id}
+        )
+        return result.first() is not None
+
+
 async def _delete(engine: AsyncEngine, changelog_id: object) -> None:
     async with engine.begin() as connection:
         await connection.execute(
@@ -135,3 +144,34 @@ async def test_the_table_class_matches_the_real_table(
         assert (json.loads(payload) if isinstance(payload, str) else payload) == RELATIONSHIP
     finally:
         await _delete(engine, entry.changelog_id)
+
+
+async def test_reading_changing_and_deleting_through_the_class(
+    sources: Sources, engine: AsyncEngine
+) -> None:
+    """The round trip an endpoint makes -- and the part no fake can show: the
+    change is written although no UPDATE appears anywhere in the code.
+    """
+    entry = Changelog(change_type="MATERIALS_RELATIONSHIP_CREATED", payload=RELATIONSHIP)
+    await sources.add(entry)
+    await sources.commit()
+    changelog_id = entry.changelog_id
+
+    try:
+        [found] = await sources.exec(
+            select(Changelog).where(Changelog.changelog_id == changelog_id)
+        )
+        assert found.sync_status == "pending"
+
+        found.sync_status = "done"
+        await sources.commit()
+        assert (await _row(engine, changelog_id))["sync_status"] == "done"
+
+        by_key = await sources.get(Changelog, changelog_id)
+        assert by_key is not None and by_key.change_type == "MATERIALS_RELATIONSHIP_CREATED"
+
+        await sources.delete(by_key)
+        await sources.commit()
+        assert not await _exists(engine, changelog_id)
+    finally:
+        await _delete(engine, changelog_id)
